@@ -1,3 +1,8 @@
+
+SURGE: discrete event Simulator for Unsolicited and Reservation Group based
+       Edge-driven load balancing
+
+
 # Overview
 
 SURGE is a discrete event simulation framework written in Go. Targeted
