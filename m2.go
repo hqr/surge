@@ -34,6 +34,7 @@ var m2 ModelTwo = ModelTwo{}
 func init() {
 	d := NewStatsDescriptors("two")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
+	d.Register("busy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "identical clustered nodes exchanging random events"
@@ -122,7 +123,7 @@ func (m *ModelTwo) sendrecv(r *RunnerBase, rxcallback processEvent) {
 }
 
 func (m *ModelTwo) send(r *RunnerBase) bool {
-	trip := config.timePhysTrip * 4
+	trip := config.timeClusterTrip * 4
 	peer := r.selectRandomPeer(64)
 	if peer != nil {
 		txch, _ := r.getChannels(peer)

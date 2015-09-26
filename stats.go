@@ -46,6 +46,7 @@ type ModelStats struct {
 	totalgwy     map[string]int64
 	totalsrv     map[string]int64
 	allNodeStats []NodeStats
+	iter         int64
 }
 
 //
@@ -92,6 +93,7 @@ func (mstats *ModelStats) init(mname ModelName) {
 			mstats.allNodeStats[ij][n] = 0
 		}
 	}
+	mstats.iter = 0
 }
 
 //============================== stats =============================================
@@ -103,8 +105,8 @@ func (mstats *ModelStats) init(mname ModelName) {
 // results of the last timeStatsIval iteration folded into => mstats
 //
 func (mstats *ModelStats) update(elapsed time.Duration) {
+	mstats.iter++
 	for n := range mdtors.x {
-		i, j := 0, 0
 		d := mdtors.x[n]
 		newgwy, newsrv := int64(0), int64(0)
 		for ij := 0; ij < config.numGateways+config.numServers; ij++ {
@@ -117,39 +119,57 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 			_, ok := nodestats[n]
 			if ok {
 				val := nodestats[n]
-				mstats.allNodeStats[ij][n] += val
-
-				if scope == StatsScopeGateway {
-					newgwy += val
-					mstats.totalgwy[n] += val
-					i++
-				} else if scope == StatsScopeServer {
-					newsrv += val
-					mstats.totalsrv[n] += val
-					j++
+				if d.kind == StatsKindCount {
+					mstats.allNodeStats[ij][n] += val
+					if scope == StatsScopeGateway {
+						newgwy += val
+						mstats.totalgwy[n] += val
+					} else if scope == StatsScopeServer {
+						newsrv += val
+						mstats.totalsrv[n] += val
+					}
+				} else if d.kind == StatsKindPercentage {
+					// adjust the average
+					mstats.allNodeStats[ij][n] = (mstats.allNodeStats[ij][n]*(mstats.iter-1) + val + 1) / mstats.iter
+					// running average optional & later..
+					// mstats.allNodeStats[ij][n] = (mstats.allNodeStats[ij][n]*60 + val*40) / 100
+					if scope == StatsScopeGateway {
+						newgwy += val
+					} else if scope == StatsScopeServer {
+						newsrv += val
+					}
 				}
-
 			}
 		}
+
 		// log one iter
-		spgwy := float64(newgwy) * (float64(time.Millisecond) / float64(elapsed))
-		spsrv := float64(newsrv) * (float64(time.Millisecond) / float64(elapsed))
-		if i > 0 {
-			log(fmt.Sprintf("new-gwy-%ss,%d,total-gwy-%ss,%d,%ss/ms, %.0f", n, newgwy, n, mstats.totalgwy[n], n, spgwy))
-		}
-		if j > 0 {
-			log(fmt.Sprintf("new-srv-%ss,%d,total-srv-%ss,%d,%ss/ms, %.0f", n, newsrv, n, mstats.totalsrv[n], n, spsrv))
+		if d.kind == StatsKindCount {
+			spgwy := float64(newgwy) * (float64(time.Millisecond) / float64(elapsed))
+			spsrv := float64(newsrv) * (float64(time.Millisecond) / float64(elapsed))
+			if d.scope&StatsScopeGateway > 0 {
+				log(fmt.Sprintf("new-gwy-%ss,%d,total-gwy-%ss,%d,%ss/ms, %.0f", n, newgwy, n, mstats.totalgwy[n], n, spgwy))
+			}
+			if d.scope&StatsScopeServer > 0 {
+				log(fmt.Sprintf("new-srv-%ss,%d,total-srv-%ss,%d,%ss/ms, %.0f", n, newsrv, n, mstats.totalsrv[n], n, spsrv))
+			}
+		} else if d.kind == StatsKindPercentage {
+			busygwy := float64(newgwy) / float64(config.numGateways)
+			busysrv := float64(newsrv) / float64(config.numServers)
+			if (d.scope & StatsScopeGateway) > 0 {
+				log(fmt.Sprintf("gwy-%s(%%),%.0f", n, busygwy))
+			}
+			if (d.scope & StatsScopeServer) > 0 {
+				log(fmt.Sprintf("srv-%s(%%),%.0f", n, busysrv))
+			}
 		}
 	}
 }
 
 func inScope(d *StatsDescriptor, ij int) StatsScopeEnum {
-	assert(d.kind == StatsKindCount, "not implemented yet")
-
-	if ij < config.numGateways && (d.scope&StatsScopeGateway > 0) {
+	if (ij < config.numGateways) && ((d.scope & StatsScopeGateway) > 0) {
 		return StatsScopeGateway
 	}
-	if ij >= config.numGateways && (d.scope&StatsScopeServer > 0) {
+	if (ij >= config.numGateways) && ((d.scope & StatsScopeServer) > 0) {
 		return StatsScopeServer
 	}
 	return StatsScopeUndef
@@ -157,40 +177,108 @@ func inScope(d *StatsDescriptor, ij int) StatsScopeEnum {
 
 func (mstats *ModelStats) log() {
 	for n := range mdtors.x {
-		log(LOG_BOTH, n+"s:")
 		d := mdtors.x[n]
-		log(LOG_BOTH, fmt.Sprintf("    total (Srv,Gwy): (%d, %d)", mstats.totalsrv[n], mstats.totalgwy[n]))
 
-		serverspeed := float64(mstats.totalsrv[n]) * (float64(time.Millisecond) / float64(config.timeToRun))
-		gatewayspeed := float64(mstats.totalgwy[n]) * (float64(time.Millisecond) / float64(config.timeToRun))
-		log(LOG_BOTH, fmt.Sprintf("    average (Srv,Gwy) %ss/ms: (%.0f, %.0f)", n, serverspeed, gatewayspeed))
+		mstats.logTotal(d)
 
-		spsrv, spgwy := "    per-Srv,", "    per-Gwy,"
-		loggwy, logsrv := false, false
+		if d.kind == StatsKindCount {
+			mstats.logNodeCounters(d)
+		} else if d.kind == StatsKindPercentage {
+			mstats.logNodePercentages(d)
+		}
+	}
+}
+
+func (mstats *ModelStats) logNodeCounters(d *StatsDescriptor) {
+	n := d.name
+	spsrv, spgwy := "    per-Srv,", "    per-Gwy,"
+	for ij := 0; ij < config.numGateways+config.numServers; ij++ {
+		scope := inScope(d, ij)
+		if scope == StatsScopeUndef {
+			continue
+		}
+		sp := float64(mstats.allNodeStats[ij][n]) * (float64(time.Millisecond) / float64(config.timeToRun))
+		if scope == StatsScopeServer {
+			spsrv += fmt.Sprintf("%.0f,", sp)
+		} else if scope == StatsScopeGateway {
+			spgwy += fmt.Sprintf("%.0f,", sp)
+		}
+	}
+
+	if (d.scope & StatsScopeGateway) > 0 {
+		log(LOG_BOTH, strings.TrimSuffix(spgwy, ","))
+	}
+	if (d.scope & StatsScopeServer) > 0 {
+		log(LOG_BOTH, strings.TrimSuffix(spsrv, ","))
+	}
+}
+
+func (mstats *ModelStats) logNodePercentages(d *StatsDescriptor) {
+	n := d.name
+	spsrv, spgwy := "    per-Srv,", "    per-Gwy,"
+	for ij := 0; ij < config.numGateways+config.numServers; ij++ {
+		scope := inScope(d, ij)
+		if scope == StatsScopeUndef {
+			continue
+		}
+		if scope == StatsScopeServer {
+			spsrv += fmt.Sprintf("%d,", mstats.allNodeStats[ij][n])
+		} else if scope == StatsScopeGateway {
+			spgwy += fmt.Sprintf("%d,", mstats.allNodeStats[ij][n])
+		}
+	}
+
+	if (d.scope & StatsScopeGateway) > 0 {
+		log(LOG_BOTH, strings.TrimSuffix(spgwy, ","))
+	}
+	if (d.scope & StatsScopeServer) > 0 {
+		log(LOG_BOTH, strings.TrimSuffix(spsrv, ","))
+	}
+}
+
+func (mstats *ModelStats) logTotal(d *StatsDescriptor) {
+	n := d.name
+	if d.kind == StatsKindCount {
+		log(LOG_BOTH, n+"s:")
+		if ((d.scope & StatsScopeGateway) > 0) && ((d.scope & StatsScopeServer) > 0) {
+			log(LOG_BOTH, fmt.Sprintf("    total (Srv,Gwy): (%d, %d)", mstats.totalsrv[n], mstats.totalgwy[n]))
+
+			serverspeed := float64(mstats.totalsrv[n]) * (float64(time.Millisecond) / float64(config.timeToRun))
+			gatewayspeed := float64(mstats.totalgwy[n]) * (float64(time.Millisecond) / float64(config.timeToRun))
+			log(LOG_BOTH, fmt.Sprintf("    average (Srv,Gwy) %ss/ms: (%.0f, %.0f)", n, serverspeed, gatewayspeed))
+		} else if (d.scope & StatsScopeGateway) > 0 {
+			log(LOG_BOTH, fmt.Sprintf("    total Gateway: %d", mstats.totalgwy[n]))
+
+			gatewayspeed := float64(mstats.totalgwy[n]) * (float64(time.Millisecond) / float64(config.timeToRun))
+			log(LOG_BOTH, fmt.Sprintf("    average Gateway %ss/ms: %.0f", n, gatewayspeed))
+		} else if (d.scope & StatsScopeServer) > 0 {
+			log(LOG_BOTH, fmt.Sprintf("    total Server: %d", mstats.totalsrv[n]))
+
+			serverspeed := float64(mstats.totalsrv[n]) * (float64(time.Millisecond) / float64(config.timeToRun))
+			log(LOG_BOTH, fmt.Sprintf("    average Server %ss/ms: %.0f", n, serverspeed))
+		}
+	} else if d.kind == StatsKindPercentage {
+		log(LOG_BOTH, n+"(%):")
+		sumgateway, sumserver := int64(0), int64(0)
 		for ij := 0; ij < config.numGateways+config.numServers; ij++ {
 			scope := inScope(d, ij)
 			if scope == StatsScopeUndef {
 				continue
 			}
-			sp := float64(mstats.allNodeStats[ij][n]) * (float64(time.Millisecond) / float64(config.timeToRun))
 			if scope == StatsScopeServer {
-				spsrv += fmt.Sprintf("%.0f,", sp)
-				if mstats.allNodeStats[ij][n] > 0 {
-					logsrv = true
-				}
+				sumserver += mstats.allNodeStats[ij][n]
 			} else if scope == StatsScopeGateway {
-				spgwy += fmt.Sprintf("%.0f,", sp)
-				if mstats.allNodeStats[ij][n] > 0 {
-					loggwy = true
-				}
+				sumgateway += mstats.allNodeStats[ij][n]
 			}
 		}
-
-		if logsrv {
-			log(LOG_BOTH, strings.TrimSuffix(spsrv, ","))
-		}
-		if loggwy {
-			log(LOG_BOTH, strings.TrimSuffix(spgwy, ","))
+		ag := float64(sumgateway) / float64(config.numGateways)
+		as := float64(sumserver) / float64(config.numServers)
+		if ((d.scope & StatsScopeGateway) > 0) && ((d.scope & StatsScopeServer) > 0) {
+			log(LOG_BOTH, fmt.Sprintf("    average (Srv,Gwy) %s(%%): (%.1f, %.1f)", n, ag, as))
+		} else if (d.scope & StatsScopeGateway) > 0 {
+			log(LOG_BOTH, fmt.Sprintf("    average Gateway %s(%%): %.1f", n, ag))
+		} else if (d.scope & StatsScopeServer) > 0 {
+			log(LOG_BOTH, fmt.Sprintf("    average Server %s(%%): %.1f", n, as))
 		}
 	}
 }

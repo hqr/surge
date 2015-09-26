@@ -12,7 +12,7 @@ type Config struct {
 	numGateways, numServers, numDisksPer int
 	mprefix                              string
 	timeIncStep                          time.Duration
-	timePhysTrip                         time.Duration
+	timeClusterTrip                      time.Duration
 	timeStatsIval                        time.Duration
 	timeTrackIval                        time.Duration
 	timeToRun                            time.Duration
@@ -30,11 +30,11 @@ var config = Config{
 
 	mprefix: "",
 
-	timeIncStep:   time.Nanosecond * 10,
-	timePhysTrip:  time.Microsecond,
-	timeStatsIval: time.Microsecond * 100,
-	timeTrackIval: time.Millisecond,
-	timeToRun:     time.Millisecond * 1, // total time to run
+	timeIncStep:     time.Nanosecond * 10,
+	timeClusterTrip: time.Microsecond,
+	timeStatsIval:   time.Microsecond * 100,
+	timeTrackIval:   time.Millisecond,
+	timeToRun:       time.Millisecond, // total time to run
 
 	channelBuffer: 32,
 

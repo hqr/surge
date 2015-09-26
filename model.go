@@ -147,6 +147,7 @@ func RunAllModels() {
 	stdout := bufio.NewWriter(os.Stdout)
 	defer stdout.Flush()
 	hasprefix := 0
+
 	for name, model := range allModels {
 		if !strings.HasPrefix(string(name), config.mprefix) {
 			continue
@@ -168,17 +169,14 @@ func RunAllModels() {
 		// run it servers first (as they typically do not start generating load)
 		//
 		Now = time.Time{}
-		nextTrackTime := Now.Add(config.timeTrackIval)
 		for j := 0; j < config.numServers; j++ {
 			srv := allServers[j]
 			srv.Run()
 		}
-		// reset time again
 		time.Sleep(time.Microsecond)
 		Now = time.Time{}
-		endtime := Now.Add(config.timeToRun)
 
-		// now the gateways
+		// now the gateways..
 		for i := 0; i < config.numGateways; i++ {
 			gwy := allGateways[i]
 			gwy.Run()
@@ -186,46 +184,57 @@ func RunAllModels() {
 
 		log(LOG_V, "Model @"+string(name)+" running now...")
 
-		// advance the model's TIME and report stats periodically
-		nextStatsTime := Now.Add(config.timeStatsIval)
-		pct := 0
-		for {
-			if Now.Equal(nextTrackTime) || Now.After(nextTrackTime) {
-				pct += 10
-				fmt.Printf("\r====  %2d%% done", pct)
-				stdout.Flush()
-				nextTrackTime = nextTrackTime.Add(config.timeTrackIval)
-			}
-			if NowIsDone() {
-				if Now.Equal(nextStatsTime) || Now.After(nextStatsTime) {
-					// new stats iteration
-					mstats.update(config.timeStatsIval)
-					nextStatsTime = Now.Add(config.timeStatsIval)
-				}
-				Now = Now.Add(config.timeIncStep)
-			} else {
-				time.Sleep(config.timeIncStep)
-			}
+		//
+		// ONE MODEL MAIN LOOP
+		//
+		oneModelTimeLoop(model, stdout)
 
-			// past time-to-run gracefully terminate all model's runners
-			if Now.Equal(endtime) || Now.After(endtime) {
-				prepareToStopModel(model)
-				break
-			}
-			// Or, the model itself may have decided to stop running
-			if finishedRunning() {
-				break
-			}
-		}
-		if Now.Before(endtime) && endtime.Sub(Now) <= config.timePhysTrip {
-			Now = endtime
-		}
 		fmt.Printf("\r")
 		// benchmark results
 		mstats.log()
 	}
 	if hasprefix == 0 {
 		fmt.Printf("No registered models matched prefix '%s': nothing to do\n", config.mprefix)
+	}
+}
+
+func oneModelTimeLoop(model ModelInterface, stdout *bufio.Writer) {
+	nextStatsTime := Now.Add(config.timeStatsIval)
+	nextTrackTime := Now.Add(config.timeTrackIval)
+	endtime := Now.Add(config.timeToRun)
+	pct := 0
+
+	// advance the model's TIME and report stats periodically
+	for {
+		if Now.Equal(nextTrackTime) || Now.After(nextTrackTime) {
+			pct += 10
+			fmt.Printf("\r====  %2d%% done", pct)
+			stdout.Flush()
+			nextTrackTime = nextTrackTime.Add(config.timeTrackIval)
+		}
+		if NowIsDone() {
+			if Now.Equal(nextStatsTime) || Now.After(nextStatsTime) {
+				// new stats iteration
+				mstats.update(config.timeStatsIval)
+				nextStatsTime = Now.Add(config.timeStatsIval)
+			}
+			Now = Now.Add(config.timeIncStep)
+		} else {
+			time.Sleep(config.timeIncStep)
+		}
+
+		// past time-to-run gracefully terminate all model's runners
+		if Now.Equal(endtime) || Now.After(endtime) {
+			prepareToStopModel(model)
+			break
+		}
+		// Or, the model itself may have decided to stop running
+		if finishedRunning() {
+			break
+		}
+	}
+	if Now.Before(endtime) && endtime.Sub(Now) < config.timeClusterTrip {
+		Now = endtime
 	}
 }
 

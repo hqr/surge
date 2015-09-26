@@ -12,7 +12,6 @@ package surge
 
 import (
 	"math/rand"
-	"sync/atomic"
 	"time"
 )
 
@@ -46,6 +45,7 @@ func init() {
 
 	d := NewStatsDescriptors("four")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
+	d.Register("busy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
 	d.Register("tio", StatsKindCount, StatsScopeGateway)
 
 	props := make(map[string]interface{}, 1)
@@ -89,7 +89,7 @@ func (r *GatewayFour) Run() {
 
 				tio := m4.pipeline.NewTio(r)
 				outstanding++
-				when := rand.Int63n(int64(config.timePhysTrip)) + int64(config.timePhysTrip)
+				when := rand.Int63n(int64(config.timeClusterTrip)) + int64(config.timeClusterTrip)
 
 				tio.next(r, time.Duration(when), tgt)
 				time.Sleep(time.Microsecond)
@@ -109,7 +109,7 @@ func (r *GatewayFour) Run() {
 func (r *GatewayFour) Putreqack(ev EventInterface) error {
 	log(LOG_VV, r.String(), "::Putreqack()", ev.String())
 
-	when := rand.Int63n(int64(config.timePhysTrip)) + int64(config.timePhysTrip)
+	when := rand.Int63n(int64(config.timeClusterTrip)) + int64(config.timeClusterTrip)
 	tioevent := ev.(*TimedTioEvent)
 	tioevent.tio.next(r, time.Duration(when), ev.GetSource())
 	return nil
@@ -122,14 +122,11 @@ func (r *GatewayFour) Putxferack(ev EventInterface) error {
 }
 
 func (r *GatewayFour) GetStats(reset bool) NodeStats {
-	s := r.RunnerBase.GetStats(true)
+	tiostatscopy := r.tiostats
 
-	if !reset {
-		s["tio"] = r.tiostats
-		return s
-	}
-	t := atomic.SwapInt64(&r.tiostats, 0)
-	s["tio"] = t
+	// add and reset..
+	s := r.RunnerBase.GetStats(true)
+	s["tio"] = tiostatscopy
 	return s
 }
 
@@ -167,7 +164,7 @@ func (r *ServerFour) Run() {
 func (r *ServerFour) Putrequest(ev EventInterface) error {
 	log(LOG_VV, r.String(), "::Putrequest()", ev.String())
 
-	when := rand.Int63n(int64(config.timePhysTrip)) + int64(config.timePhysTrip)
+	when := rand.Int63n(int64(config.timeClusterTrip)) + int64(config.timeClusterTrip)
 	tioevent := ev.(*TimedTioEvent)
 	tioevent.tio.next(r, time.Duration(when), ev.GetSource())
 	return nil
@@ -176,7 +173,7 @@ func (r *ServerFour) Putrequest(ev EventInterface) error {
 func (r *ServerFour) Putxfer(ev EventInterface) error {
 	log(LOG_VV, r.String(), "::Putxfer()", ev.String())
 
-	when := rand.Int63n(int64(config.timePhysTrip)) + int64(config.timePhysTrip)
+	when := rand.Int63n(int64(config.timeClusterTrip)) + int64(config.timeClusterTrip)
 	tioevent := ev.(*TimedTioEvent)
 	tioevent.tio.next(r, time.Duration(when), ev.GetSource())
 	return nil
@@ -193,6 +190,9 @@ func (r *ServerFour) Putxfer(ev EventInterface) error {
 func (m *ModelFour) NewGateway(i int) RunnerInterface {
 	gwy := &GatewayFour{RunnerBase{id: i, strtype: "GWY"}, int64(0)}
 	gwy.init(config.numServers)
+
+	// common reset..
+	gwy.addStatsPtr(&gwy.tiostats)
 	return gwy
 }
 

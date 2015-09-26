@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"reflect"
 	"sync"
-	"sync/atomic"
+	"time"
 )
 
 type RunnerStateEnum int
@@ -53,17 +53,24 @@ type RunnerBase struct {
 	cases        []reflect.SelectCase
 	pending      []EventInterface
 	pendingMutex *sync.Mutex
-	rxcount      int
-	reserved     int
+	// stats
+	statsMutex   *sync.Mutex
+	statsPtrArr  []*int64
 	eventstats   int64
-	busypct      int64
-	strtype      string
+	busycnt      int64
+	idlecnt      int64
+	busyidletick time.Time
+	// log
+	strtype string
+	// num live Rx connections
+	rxcount int
 }
 
 //
 // const
 //
-const INITIAL_SERVER_QUEUE int = 64
+const INITIAL_PENDING_CNT int = 64
+const INITIAL_STATS_COUNTERS int = 4
 
 type processEvent func(ev EventInterface) bool
 
@@ -110,21 +117,30 @@ func (r *RunnerBase) GetState() RunnerStateEnum { return r.state }
 func (r *RunnerBase) GetId() int                { return r.id }
 
 //
-// generic stats descriptors: "event" and "busy" stats for all runners
+// generic "event" and "busy" d-tors/stats
 //
 func (r *RunnerBase) GetStats(reset bool) NodeStats {
-	if !reset {
-		return map[string]int64{
-			"event": r.eventstats,
-			"busy":  r.busypct,
+	r.statsMutex.Lock()
+	defer r.statsMutex.Unlock()
+
+	busypct := int64(0)
+	estatcopy := r.eventstats
+
+	if r.busycnt > 0 {
+		busypct = r.busycnt * 100 / (r.busycnt + r.idlecnt)
+	}
+	nodestats := map[string]int64{
+		"event": estatcopy,
+		"busy":  busypct,
+	}
+	if reset {
+		// if overriding, must save a copy..
+		for k := 0; k < len(r.statsPtrArr); k++ {
+			cntPtr := r.statsPtrArr[k]
+			*cntPtr = int64(0)
 		}
 	}
-	e := atomic.SwapInt64(&r.eventstats, 0)
-	b := atomic.SwapInt64(&r.busypct, 0)
-	return map[string]int64{
-		"event": e,
-		"busy":  b,
-	}
+	return nodestats
 }
 
 func (r *RunnerBase) String() string { return fmt.Sprintf("[%s#%v]", r.strtype, r.id) }
@@ -145,9 +161,24 @@ func (r *RunnerBase) init(numPeers int) {
 	r.rxchans[0] = nil
 	r.eps[0] = nil
 
-	initialQ := make([]EventInterface, INITIAL_SERVER_QUEUE)
+	initialQ := make([]EventInterface, INITIAL_PENDING_CNT)
 	r.pending = initialQ[0:0]
 	r.pendingMutex = &sync.Mutex{}
+
+	r.eventstats, r.busycnt, r.idlecnt = int64(0), int64(0), int64(0)
+	r.busyidletick = time.Now() // != Now
+	r.statsMutex = &sync.Mutex{}
+
+	statsPtrArr := make([]*int64, INITIAL_STATS_COUNTERS)
+	r.statsPtrArr = statsPtrArr[0:0]
+
+	r.addStatsPtr(&r.eventstats)
+	r.addStatsPtr(&r.busycnt)
+	r.addStatsPtr(&r.idlecnt)
+}
+
+func (r *RunnerBase) addStatsPtr(ptr *int64) {
+	r.statsPtrArr = append(r.statsPtrArr, ptr)
 }
 
 func (r *RunnerBase) selectRandomPeer(maxload int) RunnerInterface {
@@ -271,19 +302,42 @@ func (r *RunnerBase) NowIsDone() bool {
 	defer r.pendingMutex.Unlock()
 
 	if r.GetState() > RstateRunning {
-		// drop to the floor, empty the queue..
+		// empty the queue..
+		for k := 0; k < cap(r.pending); k++ {
+			r.pending[k] = nil
+		}
 		r.pending = r.pending[0:0]
 		return true
 	}
-
+	done := true
+	realpendingdepth := 0
 	for k := 0; k < len(r.pending); k++ {
 		ev := r.pending[k]
+
+		ct := ev.GetCreationTime()
+		// cluster trip time enforced: earlier must be in flight
+		if Now.Sub(ct) < config.timeClusterTrip {
+			continue
+		}
+
+		realpendingdepth++
+
 		t := ev.GetTriggerTime()
 		if t.Before(Now) || t.Equal(Now) {
-			return false
+			done = false
 		}
 	}
-	return true
+	if !r.busyidletick.Equal(Now) {
+		// nothing *really* pending => idle, otherwise busy
+		if realpendingdepth == 0 {
+			r.idlecnt++
+		} else {
+			r.busycnt++
+		}
+		r.busyidletick = Now
+	}
+
+	return done
 }
 
 func (r *RunnerBase) closeTxChannels() {

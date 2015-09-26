@@ -34,6 +34,7 @@ type ServerOne struct {
 func init() {
 	d := NewStatsDescriptors("one")
 	d.Register("event", StatsKindCount, StatsScopeServer)
+	d.Register("busy", StatsKindPercentage, StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "unidirectional storm of random events"
@@ -61,7 +62,7 @@ func (r *GatewayOne) Run() {
 }
 
 func (r *GatewayOne) send() {
-	trip := config.timePhysTrip
+	trip := config.timeClusterTrip
 	sr := r.selectRandomPeer(64) // hardcoded max load
 	if sr != nil {
 		txch, _ := r.getChannels(sr)

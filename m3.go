@@ -50,6 +50,7 @@ func newTimedUniqueEvent(src RunnerInterface, when time.Duration, tgt RunnerInte
 func init() {
 	d := NewStatsDescriptors("three")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
+	d.Register("busy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "ping-pong with a random target selection"
@@ -85,7 +86,7 @@ func (r *GatewayThree) Run() {
 	}
 
 	go func() {
-		trip := config.timePhysTrip
+		trip := config.timeClusterTrip
 		for r.state == RstateRunning {
 			// send
 			for i := 0; i < 10; i++ {
@@ -152,7 +153,7 @@ func (r *ServerThree) Run() {
 		assert(ok)
 
 		// send the response
-		trip := config.timePhysTrip
+		trip := config.timeClusterTrip
 		gwysrc := ev.GetSource()
 		txch, _ := r.getChannels(gwysrc)
 		at := rand.Int63n(int64(trip)) + int64(trip)
