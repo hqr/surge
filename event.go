@@ -27,7 +27,7 @@ type TimedUcastEvent struct {
 }
 
 func newTimedUcastEvent(src RunnerInterface, when time.Duration, tgt RunnerInterface) *TimedUcastEvent {
-	assert(int64(when) > 0)
+	assert(when > 0)
 	triggertime := Now.Add(when)
 	return &TimedUcastEvent{
 		crtime: Now,

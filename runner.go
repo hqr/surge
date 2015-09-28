@@ -30,13 +30,15 @@ type RunnerInterface interface {
 	NowIsDone() bool
 	PrepareToStop()
 
-	NumPendingEvents() int
+	NumPendingEvents(exact bool) int64
 
 	GetState() RunnerStateEnum
 	GetId() int
 	GetStats(reset bool) NodeStats
 
 	String() string
+
+	Send(ev EventInterface, wait bool) bool
 }
 
 //==================================================================
@@ -54,12 +56,13 @@ type RunnerBase struct {
 	pending      []EventInterface
 	pendingMutex *sync.Mutex
 	// stats
-	statsMutex   *sync.Mutex
-	statsPtrArr  []*int64
-	eventstats   int64
-	busycnt      int64
-	idlecnt      int64
-	busyidletick time.Time
+	statsMutex       *sync.Mutex
+	statsPtrArr      []*int64
+	eventstats       int64
+	busycnt          int64
+	idlecnt          int64
+	busyidletick     time.Time
+	realpendingdepth int64
 	// log
 	strtype string
 	// num live Rx connections
@@ -145,6 +148,23 @@ func (r *RunnerBase) GetStats(reset bool) NodeStats {
 
 func (r *RunnerBase) String() string { return fmt.Sprintf("[%s#%v]", r.strtype, r.id) }
 
+func (r *RunnerBase) Send(ev EventInterface, wait bool) bool {
+	peer := ev.GetTarget()
+	txch, _ := r.getChannels(peer)
+	if wait {
+		txch <- ev
+		return true
+	}
+	select {
+	case txch <- ev:
+		// all good, do nothing
+	default:
+		log("WARNING: channel full", r.String(), peer.String())
+		return false
+	}
+	return true
+}
+
 //==================================================================
 // RunnerBase private methods that can be used by concrete models' runners
 //==================================================================
@@ -167,6 +187,7 @@ func (r *RunnerBase) init(numPeers int) {
 
 	r.eventstats, r.busycnt, r.idlecnt = int64(0), int64(0), int64(0)
 	r.busyidletick = time.Now() // != Now
+	r.realpendingdepth = int64(0)
 	r.statsMutex = &sync.Mutex{}
 
 	statsPtrArr := make([]*int64, INITIAL_STATS_COUNTERS)
@@ -187,19 +208,21 @@ func (r *RunnerBase) selectRandomPeer(maxload int) RunnerInterface {
 		return r.eps[1]
 	}
 	idx := rand.Intn(numPeers)
+	if maxload == 0 { // unlimited
+		return r.eps[idx+1]
+	}
 	cnt := 0
 	for {
 		peer := r.eps[idx+1]
-		if maxload == 0 || peer.NumPendingEvents() <= maxload {
+		if peer.NumPendingEvents(false) <= int64(maxload) {
 			return peer
 		}
 		idx++
-		cnt++
 		if idx >= numPeers {
 			idx = 0
 		}
-		if cnt >= numPeers {
-			// is overloaded
+		cnt++
+		if cnt >= numPeers { // is overloaded
 			return nil
 		}
 	}
@@ -242,11 +265,14 @@ func (r *RunnerBase) recvNextEvent() (EventInterface, error) {
 	return nil, errors.New(r.String() + ": all receive channels closed by peers")
 }
 
-func (r *RunnerBase) NumPendingEvents() int {
+func (r *RunnerBase) NumPendingEvents(exact bool) int64 {
+	if !exact {
+		return int64(len(r.pending))
+	}
+	// FIXME: read lock
 	r.pendingMutex.Lock()
-	l := len(r.pending)
-	r.pendingMutex.Unlock()
-	return l
+	defer r.pendingMutex.Unlock()
+	return r.realpendingdepth
 }
 
 func (r *RunnerBase) insertEvent(ev EventInterface) {
@@ -277,24 +303,25 @@ func (r *RunnerBase) processPendingEvents(rxcallback processEvent) bool {
 	r.pendingMutex.Lock()
 	defer r.pendingMutex.Unlock()
 
-	var haveMore bool = false
+	ontime := true
 	for k := 0; k < len(r.pending); k++ {
 		ev := r.pending[k]
 		t := ev.GetTriggerTime()
-		if t.Before(Now) || t.Equal(Now) {
-			if rxcallback(ev) {
-				r.deleteEvent(k)
-			}
-			nowMinusStep := Now.Add(-config.timeIncStep)
-			if t.Before(nowMinusStep) {
-				eventsPastDeadline++
-				log(LOG_V, "WARNING: events handled past deadline", eventsPastDeadline)
-			}
-		} else {
-			haveMore = true
+		if t.After(Now) {
+			continue
+		}
+		if rxcallback(ev) {
+			r.deleteEvent(k)
+		}
+		nowMinusStep := Now.Add(-config.timeIncStep)
+		if t.Before(nowMinusStep) {
+			ontime = false
+			eventsPastDeadline++
+			diff := Now.Sub(t)
+			log(LOG_BOTH, "WARNING: past trigger time", diff, eventsPastDeadline)
 		}
 	}
-	return haveMore
+	return ontime
 }
 
 func (r *RunnerBase) NowIsDone() bool {
@@ -310,7 +337,7 @@ func (r *RunnerBase) NowIsDone() bool {
 		return true
 	}
 	done := true
-	realpendingdepth := 0
+	realpendingdepth := int64(0)
 	for k := 0; k < len(r.pending); k++ {
 		ev := r.pending[k]
 
@@ -335,6 +362,7 @@ func (r *RunnerBase) NowIsDone() bool {
 			r.busycnt++
 		}
 		r.busyidletick = Now
+		r.realpendingdepth = realpendingdepth
 	}
 
 	return done

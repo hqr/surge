@@ -11,7 +11,6 @@
 package surge
 
 import (
-	"math/rand"
 	"time"
 )
 
@@ -80,8 +79,8 @@ func (r *GatewayFour) Run() {
 		for r.state == RstateRunning {
 			// issue TIOs
 			for k := 0; k < 10; k++ {
-				// no more than num-servers outstanding TIOs
-				if outstanding >= config.numServers {
+				// somewhat limit outstanding TIOs
+				if outstanding >= 10*config.numServers {
 					break
 				}
 				tgt := r.selectRandomPeer(0)
@@ -89,9 +88,8 @@ func (r *GatewayFour) Run() {
 
 				tio := m4.pipeline.NewTio(r)
 				outstanding++
-				when := rand.Int63n(int64(config.timeClusterTrip)) + int64(config.timeClusterTrip)
-
-				tio.next(r, time.Duration(when), tgt)
+				at := clusterTripPlusRandom()
+				tio.next(r, at, tgt)
 				time.Sleep(time.Microsecond)
 			}
 
@@ -109,9 +107,9 @@ func (r *GatewayFour) Run() {
 func (r *GatewayFour) Putreqack(ev EventInterface) error {
 	log(LOG_VV, r.String(), "::Putreqack()", ev.String())
 
-	when := rand.Int63n(int64(config.timeClusterTrip)) + int64(config.timeClusterTrip)
+	at := clusterTripPlusRandom()
 	tioevent := ev.(*TimedTioEvent)
-	tioevent.tio.next(r, time.Duration(when), ev.GetSource())
+	tioevent.tio.next(r, at, ev.GetSource())
 	return nil
 }
 
@@ -164,18 +162,18 @@ func (r *ServerFour) Run() {
 func (r *ServerFour) Putrequest(ev EventInterface) error {
 	log(LOG_VV, r.String(), "::Putrequest()", ev.String())
 
-	when := rand.Int63n(int64(config.timeClusterTrip)) + int64(config.timeClusterTrip)
+	at := clusterTripPlusRandom()
 	tioevent := ev.(*TimedTioEvent)
-	tioevent.tio.next(r, time.Duration(when), ev.GetSource())
+	tioevent.tio.next(r, at, ev.GetSource())
 	return nil
 }
 
 func (r *ServerFour) Putxfer(ev EventInterface) error {
 	log(LOG_VV, r.String(), "::Putxfer()", ev.String())
 
-	when := rand.Int63n(int64(config.timeClusterTrip)) + int64(config.timeClusterTrip)
+	at := clusterTripPlusRandom()
 	tioevent := ev.(*TimedTioEvent)
-	tioevent.tio.next(r, time.Duration(when), ev.GetSource())
+	tioevent.tio.next(r, at, ev.GetSource())
 	return nil
 }
 

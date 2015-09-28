@@ -74,7 +74,7 @@ func log(level string, args ...interface{}) {
 	}
 	if logfd != nil {
 		logstream.WriteString(message)
-		if time.Now().Sub(lastflush) > 2*time.Second {
+		if time.Now().Sub(lastflush) > time.Millisecond*10 {
 			logstream.Flush()
 			lastflush = time.Now()
 		}
@@ -116,9 +116,14 @@ func calcAvgStd(vec []int) (int, float64, float64) {
 }
 
 //
-// random globally-unique 64bit
-// FIXME: rewrite using crypto..
+// random globally-unique 64bit FIXME: rewrite using crypto
 //
 func uqrandom64(multiplier int) int64 {
 	return rand.Int63n(time.Now().UTC().UnixNano() / 10007 * int64(multiplier))
+}
+
+func clusterTripPlusRandom() time.Duration {
+	trip := config.timeClusterTrip
+	at := rand.Int63n(int64(trip)) + int64(trip) + 1
+	return time.Duration(at)
 }

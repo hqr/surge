@@ -63,8 +63,8 @@ func (tio *Tio) next(caller RunnerInterface, when time.Duration, tgt RunnerInter
 	tio.index++
 
 	log(LOG_V, "stage-next-started", tio.String(), tio.event.String())
-	txch, _ := src.getChannels(tgt)
-	txch <- tio.event
+
+	src.Send(tio.event, true) // blocking send
 }
 
 func (tio *Tio) doStage(r RunnerInterface) error {

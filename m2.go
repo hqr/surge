@@ -10,7 +10,6 @@
 package surge
 
 import (
-	"math/rand"
 	"time"
 )
 
@@ -55,13 +54,7 @@ func (r *GatewayTwo) Run() {
 		return true
 	}
 
-	go func() {
-		for r.state == RstateRunning {
-			m2.sendrecv(&r.RunnerBase, rxcallback)
-		}
-
-		r.closeTxChannels()
-	}()
+	go m2.run(&r.RunnerBase, rxcallback)
 }
 
 //==================================================================
@@ -79,13 +72,7 @@ func (r *ServerTwo) Run() {
 		return true
 	}
 
-	go func() {
-		for r.state == RstateRunning {
-			m2.sendrecv(&r.RunnerBase, rxcallback)
-		}
-
-		r.closeTxChannels()
-	}()
+	go m2.run(&r.RunnerBase, rxcallback)
 }
 
 //==================================================================
@@ -111,24 +98,42 @@ func (m *ModelTwo) NewServer(i int) RunnerInterface {
 func (m *ModelTwo) NewDisk(i int) RunnerInterface { return nil }
 
 //
-// ModelTwo private methods: common Gateway/Server send/recv
+// ModelTwo private methods: common Gateway/Server send/recv and run()
 //
-func (m *ModelTwo) sendrecv(r *RunnerBase, rxcallback processEvent) {
+func (m *ModelTwo) run(rb *RunnerBase, rxcallback processEvent) {
+	for rb.state == RstateRunning {
+		m2.recv(rb, rxcallback)
+		if !m2.send(rb) {
+			k := 0
+			for rb.state == RstateRunning && k < 2 {
+				time.Sleep(time.Microsecond * 10)
+				m2.recv(rb, rxcallback)
+				k++
+			}
+		}
+	}
+
+	rb.closeTxChannels()
+}
+
+func (m *ModelTwo) recv(r *RunnerBase, rxcallback processEvent) {
 	r.receiveAndHandle(rxcallback)
 	time.Sleep(time.Microsecond)
 	r.processPendingEvents(rxcallback)
 	time.Sleep(time.Microsecond)
-
-	m.send(r)
 }
 
 func (m *ModelTwo) send(r *RunnerBase) bool {
-	trip := config.timeClusterTrip * 4
-	peer := r.selectRandomPeer(64)
-	if peer != nil {
-		txch, _ := r.getChannels(peer)
-		at := rand.Int63n(int64(trip)) + int64(trip)
-		txch <- newTimedUcastEvent(r, time.Duration(at), peer)
+	r1 := r.selectRandomPeer(64)
+	r2 := r.selectRandomPeer(64)
+	if r1 == nil || r2 == nil {
+		return false
 	}
-	return peer != nil
+	peer := r1
+	if r1.NumPendingEvents(true) > r2.NumPendingEvents(true) {
+		peer = r2
+	}
+	at := clusterTripPlusRandom()
+	ev := newTimedUcastEvent(r, at, peer)
+	return r.Send(ev, false)
 }

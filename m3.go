@@ -86,7 +86,6 @@ func (r *GatewayThree) Run() {
 	}
 
 	go func() {
-		trip := config.timeClusterTrip
 		for r.state == RstateRunning {
 			// send
 			for i := 0; i < 10; i++ {
@@ -94,18 +93,15 @@ func (r *GatewayThree) Run() {
 				if srv != nil {
 					tgtid := srv.GetId()
 					eventId := uqrandom64(r.GetId())
-
-					txch, _ := r.getChannels(srv)
-					at := rand.Int63n(int64(trip)) + int64(trip)
-					txch <- newTimedUniqueEvent(r, time.Duration(at), srv, eventId)
+					at := clusterTripPlusRandom()
+					ev := newTimedUniqueEvent(r, at, srv, eventId)
+					r.Send(ev, true)
 
 					r.waitingResponse[tgtid] = eventId
 				}
 			}
-			time.Sleep(time.Microsecond)
 			// recv
 			r.receiveAndHandle(rxcallback)
-
 			time.Sleep(time.Microsecond)
 			r.processPendingEvents(rxcallback)
 		}
@@ -153,18 +149,16 @@ func (r *ServerThree) Run() {
 		assert(ok)
 
 		// send the response
-		trip := config.timeClusterTrip
 		gwysrc := ev.GetSource()
-		txch, _ := r.getChannels(gwysrc)
-		at := rand.Int63n(int64(trip)) + int64(trip)
-		txch <- newTimedUniqueEvent(r, time.Duration(at), gwysrc, realevent.id)
+		at := clusterTripPlusRandom()
+		evresponse := newTimedUniqueEvent(r, at, gwysrc, realevent.id)
+		r.Send(evresponse, true)
 		return true
 	}
 
 	go func() {
 		for r.state == RstateRunning {
 			r.receiveAndHandle(rxcallback)
-
 			time.Sleep(time.Microsecond)
 			r.processPendingEvents(rxcallback)
 		}

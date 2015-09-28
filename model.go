@@ -140,8 +140,6 @@ func prepareToStopModel(model ModelInterface) {
 // MAIN LOOP
 //
 func RunAllModels() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
-
 	initLog()
 	defer terminateLog()
 	stdout := bufio.NewWriter(os.Stdout)
@@ -162,6 +160,12 @@ func RunAllModels() {
 			namedesc += " [ " + desc.(string) + " ]"
 		}
 		log(LOG_BOTH, "Model "+namedesc)
+
+		if maxprocs, ok := props["GOMAXPROCS"]; ok {
+			runtime.GOMAXPROCS(maxprocs.(int))
+		} else {
+			runtime.GOMAXPROCS(runtime.NumCPU())
+		}
 
 		buildModel(model, name)
 

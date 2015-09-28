@@ -24,19 +24,19 @@ type Config struct {
 }
 
 var config = Config{
-	numGateways: 3,
-	numServers:  10,
+	numGateways: 20,
+	numServers:  20,
 	numDisksPer: 1,
 
 	mprefix: "",
 
 	timeIncStep:     time.Nanosecond * 10,
-	timeClusterTrip: time.Microsecond,
+	timeClusterTrip: time.Microsecond * 20,
 	timeStatsIval:   time.Microsecond * 100,
 	timeTrackIval:   time.Millisecond,
-	timeToRun:       time.Millisecond, // total time to run
+	timeToRun:       time.Millisecond, // total time to run (ms)
 
-	channelBuffer: 32,
+	channelBuffer: 128,
 
 	LogLevel: "", // quiet
 	LogFile:  "/tmp/log.csv",

@@ -117,27 +117,26 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 			}
 			nodestats := r.GetStats(true)
 			_, ok := nodestats[n]
-			if ok {
-				val := nodestats[n]
-				if d.kind == StatsKindCount {
-					mstats.allNodeStats[ij][n] += val
-					if scope == StatsScopeGateway {
-						newgwy += val
-						mstats.totalgwy[n] += val
-					} else if scope == StatsScopeServer {
-						newsrv += val
-						mstats.totalsrv[n] += val
-					}
-				} else if d.kind == StatsKindPercentage {
-					// adjust the average
-					mstats.allNodeStats[ij][n] = (mstats.allNodeStats[ij][n]*(mstats.iter-1) + val + 1) / mstats.iter
-					// running average optional & later..
-					// mstats.allNodeStats[ij][n] = (mstats.allNodeStats[ij][n]*60 + val*40) / 100
-					if scope == StatsScopeGateway {
-						newgwy += val
-					} else if scope == StatsScopeServer {
-						newsrv += val
-					}
+			assert(ok)
+			val := nodestats[n]
+			if d.kind == StatsKindCount {
+				mstats.allNodeStats[ij][n] += val
+				if scope == StatsScopeGateway {
+					newgwy += val
+					mstats.totalgwy[n] += val
+				} else if scope == StatsScopeServer {
+					newsrv += val
+					mstats.totalsrv[n] += val
+				}
+			} else if d.kind == StatsKindPercentage {
+				// adjust the average
+				mstats.allNodeStats[ij][n] = (mstats.allNodeStats[ij][n]*(mstats.iter-1) + val + 1) / mstats.iter
+				// running average optional & later..
+				// mstats.allNodeStats[ij][n] = (mstats.allNodeStats[ij][n]*60 + val*40) / 100
+				if scope == StatsScopeGateway {
+					newgwy += val
+				} else if scope == StatsScopeServer {
+					newsrv += val
 				}
 			}
 		}
