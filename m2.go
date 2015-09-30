@@ -1,5 +1,5 @@
 //
-// ModelTwo (m2, "two") implements random send, random receive
+// ModelTwo (m2, "2") implements random send, random receive
 // Gateway and Server types are almost indistinguishable in this model
 // as they both execute indentical Run()
 //
@@ -31,13 +31,13 @@ type ServerTwo struct {
 var m2 ModelTwo = ModelTwo{}
 
 func init() {
-	d := NewStatsDescriptors("two")
+	d := NewStatsDescriptors("2")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("busy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "identical clustered nodes exchanging random events"
-	RegisterModel("two", &m2, props)
+	RegisterModel("2", &m2, props)
 }
 
 //==================================================================
@@ -117,10 +117,9 @@ func (m *ModelTwo) run(rb *RunnerBase, rxcallback processEvent) {
 }
 
 func (m *ModelTwo) recv(r *RunnerBase, rxcallback processEvent) {
-	r.receiveAndHandle(rxcallback)
+	r.receiveEnqueue()
 	time.Sleep(time.Microsecond)
 	r.processPendingEvents(rxcallback)
-	time.Sleep(time.Microsecond)
 }
 
 func (m *ModelTwo) send(r *RunnerBase) bool {

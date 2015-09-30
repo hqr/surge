@@ -1,5 +1,5 @@
 //
-// ModelOne's variation (m11, "one.1") is the same as m1.go with a single
+// ModelOne's variation (m11, "1.1") is the same as m1.go with a single
 // primary difference: the senders do a double-take of sorts
 // to select the least loaded server out of a pair of two randomly selected.
 //
@@ -29,13 +29,13 @@ type ServerOneDotOne struct {
 // init
 //
 func init() {
-	d := NewStatsDescriptors("one.1")
+	d := NewStatsDescriptors("1.1")
 	d.Register("event", StatsKindCount, StatsScopeServer)
 	d.Register("busy", StatsKindPercentage, StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "unidirectional storm of random events, with a partially random selection"
-	RegisterModel("one.1", &ModelOneDotOne{}, props)
+	RegisterModel("1.1", &ModelOneDotOne{}, props)
 }
 
 //==================================================================
@@ -89,8 +89,7 @@ func (r *ServerOneDotOne) Run() {
 
 	go func() {
 		for r.state == RstateRunning {
-			r.receiveAndHandle(rxcallback)
-
+			r.receiveEnqueue()
 			time.Sleep(time.Microsecond)
 			r.processPendingEvents(rxcallback)
 		}

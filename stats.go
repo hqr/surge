@@ -2,6 +2,7 @@ package surge
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -55,11 +56,11 @@ type ModelStats struct {
 var allDtors map[ModelName]*ModelStatsDescriptors
 var mdtors *ModelStatsDescriptors
 var mstats ModelStats
+var mdtsortednames []string
 
-//============================== init =============================================
-//
-//
-//============================== reset ============================================
+//=================================================================================
+// init
+//=================================================================================
 func NewStatsDescriptors(name ModelName) *ModelStatsDescriptors {
 	if allDtors == nil || len(allDtors) == 0 {
 		allDtors = make(map[ModelName]*ModelStatsDescriptors, MAX_MODELS)
@@ -94,6 +95,14 @@ func (mstats *ModelStats) init(mname ModelName) {
 		}
 	}
 	mstats.iter = 0
+
+	if cap(mdtsortednames) > 0 {
+		mdtsortednames = mdtsortednames[0:0]
+	}
+	for n, _ := range mdtors.x {
+		mdtsortednames = append(mdtsortednames, n)
+	}
+	sort.Strings(mdtsortednames)
 }
 
 //============================== stats =============================================
@@ -175,7 +184,7 @@ func inScope(d *StatsDescriptor, ij int) StatsScopeEnum {
 }
 
 func (mstats *ModelStats) log() {
-	for n := range mdtors.x {
+	for _, n := range mdtsortednames {
 		d := mdtors.x[n]
 
 		mstats.logTotal(d)

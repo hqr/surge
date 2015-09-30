@@ -228,8 +228,9 @@ func (r *RunnerBase) selectRandomPeer(maxload int) RunnerInterface {
 	}
 }
 
-func (r *RunnerBase) receiveAndHandle(rxcallback processEvent) {
+func (r *RunnerBase) receiveEnqueue() (bool, error) {
 	ev, err := r.recvNextEvent()
+	newev := false
 	if err != nil {
 		if r.state != RstateRxClosed {
 			log("ERROR", r.String(), err)
@@ -237,8 +238,9 @@ func (r *RunnerBase) receiveAndHandle(rxcallback processEvent) {
 	} else if ev != nil {
 		log(LOG_VVV, "recv-ed", ev.String())
 		r.insertEvent(ev)
-		r.processPendingEvents(rxcallback)
+		newev = true
 	}
+	return newev, err
 }
 
 func (r *RunnerBase) recvNextEvent() (EventInterface, error) {

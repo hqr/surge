@@ -6,12 +6,13 @@ import (
 	"math/rand"
 	"os"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
 
 // constants
-const MAX_MODELS int = 10
+const MAX_MODELS int = 16
 
 // each model self-registers at startup
 type ModelName string
@@ -22,6 +23,8 @@ func RegisterModel(name ModelName, model ModelInterface, props ...map[string]int
 		__init()
 	}
 	allModels[name] = model
+	allNamesSorted = append(allNamesSorted, string(name))
+
 	if len(props) > 0 {
 		allModelProps[name] = props[0]
 		// FIXME: either warn len > 1 or merge maps..
@@ -37,6 +40,7 @@ var inited bool = false
 
 var allModels map[ModelName]ModelInterface // all registered models
 var allModelProps map[ModelName]map[string]interface{}
+var allNamesSorted []string
 
 var Now = time.Time{}
 
@@ -146,14 +150,17 @@ func RunAllModels() {
 	defer stdout.Flush()
 	hasprefix := 0
 
-	for name, model := range allModels {
-		if !strings.HasPrefix(string(name), config.mprefix) {
+	sort.Strings(allNamesSorted)
+
+	for _, sname := range allNamesSorted {
+		if !strings.HasPrefix(sname, config.mprefix) {
 			continue
 		}
 		if hasprefix > 0 {
 			log(LOG_BOTH, "====")
 		}
 		hasprefix++
+		name := ModelName(sname)
 		props := allModelProps[name]
 		namedesc := "@" + string(name)
 		if desc, ok := props["description"]; ok {
@@ -166,7 +173,7 @@ func RunAllModels() {
 		} else {
 			runtime.GOMAXPROCS(runtime.NumCPU())
 		}
-
+		model, _ := allModels[name]
 		buildModel(model, name)
 
 		//

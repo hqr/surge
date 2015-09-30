@@ -50,7 +50,7 @@ func init() {
 
 	moPtr := flag.String("m", config.mprefix, "prefix that defines which models to run, use \"\" to run all")
 
-	trPtr := flag.Int("ttr", int(config.timeToRun/time.Millisecond), "milliseconds to run")
+	trPtr := flag.Duration("ttr", config.timeToRun, "time to run, e.g. 1500us, 350ms, 15s")
 
 	lfPtr := flag.String("log", config.LogFile, "log file, use -log=\"\" for stdout")
 
@@ -70,7 +70,7 @@ func init() {
 
 	config.mprefix = *moPtr
 
-	config.timeToRun = time.Duration(*trPtr) * time.Millisecond
+	config.timeToRun = time.Duration(*trPtr)
 	config.timeStatsIval = config.timeToRun / 100
 	config.timeTrackIval = config.timeToRun / 10
 

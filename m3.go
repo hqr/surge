@@ -1,5 +1,5 @@
 //
-// ModelThree (name = "three") is a simple ping-pong with a random server
+// ModelThree (name = "3") is a simple ping-pong with a random server
 // selection
 // Each event produced by the configured gateways is pseudo-randomly ID-ed
 // Server-recipient responds back to the source with a new event that carries
@@ -48,13 +48,13 @@ func newTimedUniqueEvent(src RunnerInterface, when time.Duration, tgt RunnerInte
 // init
 //
 func init() {
-	d := NewStatsDescriptors("three")
+	d := NewStatsDescriptors("3")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("busy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "ping-pong with a random target selection"
-	RegisterModel("three", &ModelThree{}, props)
+	RegisterModel("3", &ModelThree{}, props)
 }
 
 //==================================================================
@@ -101,7 +101,7 @@ func (r *GatewayThree) Run() {
 				}
 			}
 			// recv
-			r.receiveAndHandle(rxcallback)
+			r.receiveEnqueue()
 			time.Sleep(time.Microsecond)
 			r.processPendingEvents(rxcallback)
 		}
@@ -158,7 +158,7 @@ func (r *ServerThree) Run() {
 
 	go func() {
 		for r.state == RstateRunning {
-			r.receiveAndHandle(rxcallback)
+			r.receiveEnqueue()
 			time.Sleep(time.Microsecond)
 			r.processPendingEvents(rxcallback)
 		}

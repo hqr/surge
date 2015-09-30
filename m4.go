@@ -1,5 +1,5 @@
 //
-// ModelFour (m4, "four") is a step-up in terms of layering:
+// ModelFour (m4, "4") is a step-up in terms of layering:
 // this model uses a simple 4-stages IO pipeline via the farmework's
 // TIO service...
 //
@@ -42,14 +42,14 @@ func init() {
 
 	m4.pipeline = p
 
-	d := NewStatsDescriptors("four")
+	d := NewStatsDescriptors("4")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("busy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
 	d.Register("tio", StatsKindCount, StatsScopeGateway)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "TIO pipeline in action"
-	RegisterModel("four", &m4, props)
+	RegisterModel("4", &m4, props)
 }
 
 //==================================================================
@@ -94,10 +94,9 @@ func (r *GatewayFour) Run() {
 			}
 
 			// recv
-			r.receiveAndHandle(rxcallback)
+			r.receiveEnqueue()
 			time.Sleep(time.Microsecond)
 			r.processPendingEvents(rxcallback)
-			time.Sleep(time.Microsecond)
 		}
 
 		r.closeTxChannels()
@@ -149,8 +148,7 @@ func (r *ServerFour) Run() {
 	go func() {
 		for r.state == RstateRunning {
 			// recv
-			r.receiveAndHandle(rxcallback)
-
+			r.receiveEnqueue()
 			time.Sleep(time.Microsecond)
 			r.processPendingEvents(rxcallback)
 		}
