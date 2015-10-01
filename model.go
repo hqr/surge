@@ -77,6 +77,7 @@ type ModelInterface interface {
 	NewGateway(id int) RunnerInterface
 	NewServer(id int) RunnerInterface
 	NewDisk(id int) RunnerInterface
+	Configure() // model can optionally change global config and/or prepare to run
 }
 
 //============================================================================
@@ -152,6 +153,9 @@ func RunAllModels() {
 
 	sort.Strings(allNamesSorted)
 
+	// shallow copy global config, restore prior to each model-run
+	configCopy := config
+
 	for _, sname := range allNamesSorted {
 		if !strings.HasPrefix(sname, config.mprefix) {
 			continue
@@ -160,6 +164,9 @@ func RunAllModels() {
 			log(LOG_BOTH, "====")
 		}
 		hasprefix++
+
+		runtime.GC()
+
 		name := ModelName(sname)
 		props := allModelProps[name]
 		namedesc := "@" + string(name)
@@ -175,6 +182,10 @@ func RunAllModels() {
 		}
 		model, _ := allModels[name]
 		buildModel(model, name)
+
+		eventsPastDeadline = 0
+		config = configCopy
+		model.Configure()
 
 		//
 		// run it servers first (as they typically do not start generating load)

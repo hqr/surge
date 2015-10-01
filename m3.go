@@ -191,3 +191,7 @@ func (m *ModelThree) NewServer(i int) RunnerInterface {
 }
 
 func (m *ModelThree) NewDisk(i int) RunnerInterface { return nil }
+
+func (m *ModelThree) Configure() {
+	config.timeClusterTrip = time.Microsecond * 2
+}

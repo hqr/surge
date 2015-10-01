@@ -37,7 +37,7 @@ func init() {
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "unidirectional storm of random events"
-	props["GOMAXPROCS"] = 1
+	// props["GOMAXPROCS"] = 1
 	RegisterModel("1", &ModelOne{}, props)
 }
 
@@ -111,3 +111,7 @@ func (m *ModelOne) NewServer(i int) RunnerInterface {
 }
 
 func (m *ModelOne) NewDisk(i int) RunnerInterface { return nil }
+
+func (m *ModelOne) Configure() {
+	config.timeClusterTrip = time.Microsecond * 2
+}

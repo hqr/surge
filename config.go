@@ -30,11 +30,12 @@ var config = Config{
 
 	mprefix: "",
 
-	timeIncStep:     time.Nanosecond * 10,
-	timeClusterTrip: time.Microsecond * 20,
-	timeStatsIval:   time.Microsecond * 100,
-	timeTrackIval:   time.Millisecond,
-	timeToRun:       time.Millisecond, // total time to run (ms)
+	timeIncStep:     time.Nanosecond, // the Tick
+	timeClusterTrip: time.Microsecond,
+
+	timeStatsIval: time.Millisecond / 100,
+	timeTrackIval: time.Millisecond / 10,
+	timeToRun:     time.Millisecond, // ttr: total time to run
 
 	channelBuffer: 128,
 
@@ -72,6 +73,9 @@ func init() {
 
 	config.timeToRun = time.Duration(*trPtr)
 	config.timeStatsIval = config.timeToRun / 100
+	if config.timeToRun >= time.Second {
+		config.timeStatsIval = config.timeToRun / 1000
+	}
 	config.timeTrackIval = config.timeToRun / 10
 
 	config.LogFile = *lfPtr

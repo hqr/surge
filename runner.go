@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -54,10 +55,8 @@ type RunnerBase struct {
 	eps          []RunnerInterface
 	cases        []reflect.SelectCase
 	pending      []EventInterface
-	pendingMutex *sync.Mutex
+	pendingMutex *sync.RWMutex
 	// stats
-	statsMutex       *sync.Mutex
-	statsPtrArr      []*int64
 	eventstats       int64
 	busycnt          int64
 	idlecnt          int64
@@ -73,7 +72,6 @@ type RunnerBase struct {
 // const
 //
 const INITIAL_PENDING_CNT int = 64
-const INITIAL_STATS_COUNTERS int = 4
 
 type processEvent func(ev EventInterface) bool
 
@@ -123,27 +121,23 @@ func (r *RunnerBase) GetId() int                { return r.id }
 // generic "event" and "busy" d-tors/stats
 //
 func (r *RunnerBase) GetStats(reset bool) NodeStats {
-	r.statsMutex.Lock()
-	defer r.statsMutex.Unlock()
-
-	busypct := int64(0)
-	estatcopy := r.eventstats
-
-	if r.busycnt > 0 {
-		busypct = r.busycnt * 100 / (r.busycnt + r.idlecnt)
-	}
-	nodestats := map[string]int64{
-		"event": estatcopy,
-		"busy":  busypct,
-	}
+	b, i := int64(0), int64(0)
+	s := map[string]int64{}
 	if reset {
-		// if overriding, must save a copy..
-		for k := 0; k < len(r.statsPtrArr); k++ {
-			cntPtr := r.statsPtrArr[k]
-			*cntPtr = int64(0)
-		}
+		s["event"] = atomic.SwapInt64(&r.eventstats, int64(0))
+		b = atomic.SwapInt64(&r.busycnt, int64(0))
+		i = atomic.SwapInt64(&r.idlecnt, int64(0))
+	} else {
+		s["event"] = atomic.LoadInt64(&r.eventstats)
+		b = atomic.LoadInt64(&r.busycnt)
+		i = atomic.LoadInt64(&r.idlecnt)
 	}
-	return nodestats
+	s["busy"] = int64(0)
+	if b > 0 {
+		s["busy"] = b * 100 / (b + i)
+	}
+
+	return s
 }
 
 func (r *RunnerBase) String() string { return fmt.Sprintf("[%s#%v]", r.strtype, r.id) }
@@ -183,23 +177,11 @@ func (r *RunnerBase) init(numPeers int) {
 
 	initialQ := make([]EventInterface, INITIAL_PENDING_CNT)
 	r.pending = initialQ[0:0]
-	r.pendingMutex = &sync.Mutex{}
+	r.pendingMutex = &sync.RWMutex{}
 
 	r.eventstats, r.busycnt, r.idlecnt = int64(0), int64(0), int64(0)
 	r.busyidletick = time.Now() // != Now
 	r.realpendingdepth = int64(0)
-	r.statsMutex = &sync.Mutex{}
-
-	statsPtrArr := make([]*int64, INITIAL_STATS_COUNTERS)
-	r.statsPtrArr = statsPtrArr[0:0]
-
-	r.addStatsPtr(&r.eventstats)
-	r.addStatsPtr(&r.busycnt)
-	r.addStatsPtr(&r.idlecnt)
-}
-
-func (r *RunnerBase) addStatsPtr(ptr *int64) {
-	r.statsPtrArr = append(r.statsPtrArr, ptr)
 }
 
 func (r *RunnerBase) selectRandomPeer(maxload int) RunnerInterface {
@@ -271,10 +253,8 @@ func (r *RunnerBase) NumPendingEvents(exact bool) int64 {
 	if !exact {
 		return int64(len(r.pending))
 	}
-	// FIXME: read lock
-	r.pendingMutex.Lock()
-	defer r.pendingMutex.Unlock()
-	return r.realpendingdepth
+
+	return atomic.LoadInt64(&r.realpendingdepth)
 }
 
 func (r *RunnerBase) insertEvent(ev EventInterface) {
@@ -290,6 +270,9 @@ func (r *RunnerBase) insertEvent(ev EventInterface) {
 }
 
 func (r *RunnerBase) deleteEvent(k int) {
+	r.pendingMutex.Lock()
+	defer r.pendingMutex.Unlock()
+
 	copy(r.pending[k:], r.pending[k+1:])
 	l := len(r.pending)
 	r.pending[l-1] = nil
@@ -299,45 +282,48 @@ func (r *RunnerBase) deleteEvent(k int) {
 }
 
 //
-// handle only those that are AT or BEFORE the current time = Now
+// handle those that are AT or BEFORE the current time
 //
 func (r *RunnerBase) processPendingEvents(rxcallback processEvent) bool {
-	r.pendingMutex.Lock()
-	defer r.pendingMutex.Unlock()
-
 	ontime := true
 	for k := 0; k < len(r.pending); k++ {
 		ev := r.pending[k]
 		t := ev.GetTriggerTime()
 		if t.After(Now) {
-			continue
+			diff := t.Sub(Now)
+			if diff > config.timeIncStep {
+				continue
+			}
+			// otherwise consider (approx) on time
 		}
 		if rxcallback(ev) {
 			r.deleteEvent(k)
 		}
-		nowMinusStep := Now.Add(-config.timeIncStep)
-		if t.Before(nowMinusStep) {
-			ontime = false
-			eventsPastDeadline++
+		if t.Before(Now) {
 			diff := Now.Sub(t)
-			log(LOG_BOTH, "WARNING: past trigger time", diff, eventsPastDeadline)
+			if diff > config.timeIncStep && diff > time.Nanosecond*10 {
+				ontime = false
+				eventsPastDeadline++
+				log(LOG_BOTH, "WARNING: past trigger time", diff, eventsPastDeadline)
+			}
 		}
 	}
 	return ontime
 }
 
 func (r *RunnerBase) NowIsDone() bool {
-	r.pendingMutex.Lock()
-	defer r.pendingMutex.Unlock()
-
 	if r.GetState() > RstateRunning {
 		// empty the queue..
+		r.pendingMutex.Lock()
+		defer r.pendingMutex.Unlock()
 		for k := 0; k < cap(r.pending); k++ {
 			r.pending[k] = nil
 		}
 		r.pending = r.pending[0:0]
 		return true
 	}
+
+	r.pendingMutex.RLock()
 	done := true
 	realpendingdepth := int64(0)
 	for k := 0; k < len(r.pending); k++ {
@@ -348,24 +334,26 @@ func (r *RunnerBase) NowIsDone() bool {
 		if Now.Sub(ct) < config.timeClusterTrip {
 			continue
 		}
-
 		realpendingdepth++
-
 		t := ev.GetTriggerTime()
 		if t.Before(Now) || t.Equal(Now) {
 			done = false
+			// keep counting real depth..
 		}
 	}
+	r.pendingMutex.RUnlock()
+
 	if !r.busyidletick.Equal(Now) {
-		// nothing *really* pending => idle, otherwise busy
+		// nothing *really* pending means idle, otherwise busy
 		if realpendingdepth == 0 {
-			r.idlecnt++
+			atomic.AddInt64(&r.idlecnt, int64(1))
 		} else {
-			r.busycnt++
+			atomic.AddInt64(&r.busycnt, int64(1))
 		}
 		r.busyidletick = Now
-		r.realpendingdepth = realpendingdepth
 	}
+
+	atomic.StoreInt64(&r.realpendingdepth, realpendingdepth)
 
 	return done
 }

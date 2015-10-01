@@ -148,3 +148,7 @@ func (m *ModelTwoDotOne) send(r *RunnerBase) bool {
 	ev := newTimedUcastEvent(r, at, peer)
 	return r.Send(ev, false)
 }
+
+func (m *ModelTwoDotOne) Configure() {
+	config.timeClusterTrip = time.Microsecond * 4
+}

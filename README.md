@@ -25,11 +25,11 @@ startup all clustered nodes (of this model) get automatically connected and
 ready to Go: send, receive and handle events and IO requests from all other
 nodes.
 
-All models are named. There are currently 4 built-in models named "one", "two",
-"three" and "four" respectively, provided both for illustration purposes as well
-as self-testing reasons. The Usage section below has some examples and options
-to run and test any/all of these built-in models with all supported command-line
-options, including numbers of gateways and servers.
+All models are named. There's a growing number of built-in models named "1"
+(m1.go), "2" (m2.go), "3" (m3.go), etc.  provided both for illustration purposes
+as well as self-testing reasons. The Usage section below has some examples and
+options to run and test any/all of these built-in models with all supported
+command-line options, including numbers of gateways and servers.
 
 Overall, the idea and the motivation to do this framework and concrete models
 based on it comes out of:
@@ -126,12 +126,13 @@ from the local project's directory:
 
 ```
 $ cd surge
-$ go test -m three -servers 20 -gateways 10 -v
+$ go test -m 3 -servers 20 -gateways 10 -v
 ```
-The example runs a certain built-in model named 'three' with 20
-simulated servers, 10 gateways and (normal) log level verbosity '-v'.
-The same can be accomplished via:
+The example runs a certain built-in model named '3' with 20
+simulated servers, 10 gateways and log level verbosity '-v'.
+Next example below does the same except that the model "3" will run for
+150 simulated milliseconds:
 
 ```
-$ go run cmd/ck.go -m three -servers 20 -gateways 10 -v
+$ go run cmd/ck.go -m 3 -servers 20 -gateways 10 -ttr 150ms -v
 ```

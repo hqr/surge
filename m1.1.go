@@ -34,7 +34,7 @@ func init() {
 	d.Register("busy", StatsKindPercentage, StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
-	props["description"] = "unidirectional storm of random events, with a partially random selection"
+	props["description"] = "unidirectional storm of random events, with partially random selection"
 	RegisterModel("1.1", &ModelOneDotOne{}, props)
 }
 
@@ -69,7 +69,7 @@ func (r *GatewayOneDotOne) send() {
 		srv = srv2
 	}
 	at := clusterTripPlusRandom()
-	r.Send(newTimedUcastEvent(r, at, srv), true)
+	r.Send(newTimedUcastEvent(r, at, srv), false)
 }
 
 //==================================================================
@@ -114,3 +114,7 @@ func (m *ModelOneDotOne) NewServer(i int) RunnerInterface {
 }
 
 func (m *ModelOneDotOne) NewDisk(i int) RunnerInterface { return nil }
+
+func (m *ModelOneDotOne) Configure() {
+	config.timeClusterTrip = time.Microsecond * 4
+}

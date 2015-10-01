@@ -11,6 +11,7 @@
 package surge
 
 import (
+	"sync/atomic"
 	"time"
 )
 
@@ -68,7 +69,7 @@ func (r *GatewayFour) Run() {
 		tio.doStage(r)
 
 		if tio.done {
-			r.tiostats++
+			atomic.AddInt64(&r.tiostats, int64(1))
 			outstanding--
 		}
 
@@ -119,11 +120,12 @@ func (r *GatewayFour) Putxferack(ev EventInterface) error {
 }
 
 func (r *GatewayFour) GetStats(reset bool) NodeStats {
-	tiostatscopy := r.tiostats
-
-	// add and reset..
 	s := r.RunnerBase.GetStats(true)
-	s["tio"] = tiostatscopy
+	if reset {
+		s["tio"] = atomic.SwapInt64(&r.tiostats, int64(0))
+	} else {
+		s["tio"] = atomic.LoadInt64(&r.tiostats)
+	}
 	return s
 }
 
@@ -186,9 +188,6 @@ func (r *ServerFour) Putxfer(ev EventInterface) error {
 func (m *ModelFour) NewGateway(i int) RunnerInterface {
 	gwy := &GatewayFour{RunnerBase{id: i, strtype: "GWY"}, int64(0)}
 	gwy.init(config.numServers)
-
-	// common reset..
-	gwy.addStatsPtr(&gwy.tiostats)
 	return gwy
 }
 
@@ -199,3 +198,7 @@ func (m *ModelFour) NewServer(i int) RunnerInterface {
 }
 
 func (m *ModelFour) NewDisk(i int) RunnerInterface { return nil }
+
+func (m *ModelFour) Configure() {
+	config.timeClusterTrip = time.Microsecond * 2
+}
