@@ -48,6 +48,8 @@ var allGateways []RunnerInterface
 var allServers []RunnerInterface
 var allNodes []RunnerInterface // a union of the previous two, for common ops
 
+var eventsPastDeadline = 0
+
 func init() {
 	if !inited {
 		__init()

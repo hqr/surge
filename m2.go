@@ -137,6 +137,4 @@ func (m *ModelTwo) send(r *RunnerBase) bool {
 	return r.Send(ev, false)
 }
 
-func (m *ModelTwo) Configure() {
-	config.timeClusterTrip = time.Microsecond * 4
-}
+func (m *ModelTwo) Configure() {}

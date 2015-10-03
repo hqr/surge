@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 type RunnerStateEnum int
@@ -48,37 +45,18 @@ type RunnerInterface interface {
 //
 //==================================================================
 type RunnerBase struct {
-	id           int
-	state        RunnerStateEnum
-	txchans      []chan EventInterface
-	rxchans      []chan EventInterface
-	eps          []RunnerInterface
-	cases        []reflect.SelectCase
-	pending      []EventInterface
-	pendingMutex *sync.RWMutex
-	// stats
-	eventstats       int64
-	busycnt          int64
-	idlecnt          int64
-	busyidletick     time.Time
-	realpendingdepth int64
-	// log
-	strtype string
-	// num live Rx connections
-	rxcount int
+	id      int
+	state   RunnerStateEnum
+	txchans []chan EventInterface
+	rxchans []chan EventInterface
+	eps     []RunnerInterface
+	cases   []reflect.SelectCase
+	rxqueue *RxQueueSorted // FIXME: interface
+	strtype string         // log
+	rxcount int            // num live Rx connections
 }
 
-//
-// const
-//
-const INITIAL_PENDING_CNT int = 64
-
 type processEvent func(ev EventInterface) bool
-
-//
-// static
-//
-var eventsPastDeadline = 0
 
 //==================================================================
 // RunnerBase interface methods
@@ -96,6 +74,8 @@ func (r *RunnerBase) setChannels(peer RunnerInterface, txch chan EventInterface,
 	r.rxchans[peerid] = rxch
 
 	r.cases[peerid-1] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(rxch)}
+
+	r.rxqueue = NewRxQueueSorted(r, 0)
 }
 
 func (r *RunnerBase) getChannels(peer RunnerInterface) (chan EventInterface, chan EventInterface) {
@@ -117,27 +97,8 @@ func (r *RunnerBase) PrepareToStop() {
 func (r *RunnerBase) GetState() RunnerStateEnum { return r.state }
 func (r *RunnerBase) GetId() int                { return r.id }
 
-//
-// generic "event" and "busy" d-tors/stats
-//
 func (r *RunnerBase) GetStats(reset bool) NodeStats {
-	b, i := int64(0), int64(0)
-	s := map[string]int64{}
-	if reset {
-		s["event"] = atomic.SwapInt64(&r.eventstats, int64(0))
-		b = atomic.SwapInt64(&r.busycnt, int64(0))
-		i = atomic.SwapInt64(&r.idlecnt, int64(0))
-	} else {
-		s["event"] = atomic.LoadInt64(&r.eventstats)
-		b = atomic.LoadInt64(&r.busycnt)
-		i = atomic.LoadInt64(&r.idlecnt)
-	}
-	s["busy"] = int64(0)
-	if b > 0 {
-		s["busy"] = b * 100 / (b + i)
-	}
-
-	return s
+	return r.rxqueue.GetStats(reset)
 }
 
 func (r *RunnerBase) String() string { return fmt.Sprintf("[%s#%v]", r.strtype, r.id) }
@@ -174,14 +135,6 @@ func (r *RunnerBase) init(numPeers int) {
 	r.txchans[0] = nil // not used
 	r.rxchans[0] = nil
 	r.eps[0] = nil
-
-	initialQ := make([]EventInterface, INITIAL_PENDING_CNT)
-	r.pending = initialQ[0:0]
-	r.pendingMutex = &sync.RWMutex{}
-
-	r.eventstats, r.busycnt, r.idlecnt = int64(0), int64(0), int64(0)
-	r.busyidletick = time.Now() // != Now
-	r.realpendingdepth = int64(0)
 }
 
 func (r *RunnerBase) selectRandomPeer(maxload int) RunnerInterface {
@@ -211,18 +164,36 @@ func (r *RunnerBase) selectRandomPeer(maxload int) RunnerInterface {
 }
 
 func (r *RunnerBase) receiveEnqueue() (bool, error) {
-	ev, err := r.recvNextEvent()
-	newev := false
-	if err != nil {
-		if r.state != RstateRxClosed {
-			log("ERROR", r.String(), err)
+	var err error
+	var ev EventInterface
+	newcnt := 0
+	locked := false
+	defer func() {
+		if locked {
+			r.rxqueue.unlock()
 		}
-	} else if ev != nil {
-		log(LOG_VVV, "recv-ed", ev.String())
-		r.insertEvent(ev)
-		newev = true
+	}()
+	for {
+		ev, err = r.recvNextEvent()
+		if err != nil {
+			if r.state != RstateRxClosed {
+				log("ERROR", r.String(), err)
+			}
+		} else if ev != nil {
+			log(LOG_VVV, "recv-ed", ev.String())
+			if !locked {
+				r.rxqueue.lock()
+				locked = true
+			}
+			r.rxqueue.insertEvent(ev)
+			newcnt++
+			if newcnt < 2 { // experiment with more..
+				continue
+			}
+		}
+		break
 	}
-	return newev, err
+	return newcnt > 0, err
 }
 
 func (r *RunnerBase) recvNextEvent() (EventInterface, error) {
@@ -250,112 +221,20 @@ func (r *RunnerBase) recvNextEvent() (EventInterface, error) {
 }
 
 func (r *RunnerBase) NumPendingEvents(exact bool) int64 {
-	if !exact {
-		return int64(len(r.pending))
-	}
-
-	return atomic.LoadInt64(&r.realpendingdepth)
+	return r.rxqueue.NumPendingEvents(exact)
 }
 
-func (r *RunnerBase) insertEvent(ev EventInterface) {
-	r.pendingMutex.Lock()
-	defer r.pendingMutex.Unlock()
-
-	l := len(r.pending)
-	if l == cap(r.pending) {
-		log(LOG_V, "growing server queue", cap(r.pending))
-	}
-	r.pending = append(r.pending, nil)
-	r.pending[l] = ev
-}
-
-func (r *RunnerBase) deleteEvent(k int) {
-	r.pendingMutex.Lock()
-	defer r.pendingMutex.Unlock()
-
-	copy(r.pending[k:], r.pending[k+1:])
-	l := len(r.pending)
-	r.pending[l-1] = nil
-	r.pending = r.pending[:l-1]
-
-	r.eventstats++
-}
-
-//
-// handle those that are AT or BEFORE the current time
-//
-func (r *RunnerBase) processPendingEvents(rxcallback processEvent) bool {
-	ontime := true
-	for k := 0; k < len(r.pending); k++ {
-		ev := r.pending[k]
-		t := ev.GetTriggerTime()
-		if t.After(Now) {
-			diff := t.Sub(Now)
-			if diff > config.timeIncStep {
-				continue
-			}
-			// otherwise consider (approx) on time
-		}
-		if rxcallback(ev) {
-			r.deleteEvent(k)
-		}
-		if t.Before(Now) {
-			diff := Now.Sub(t)
-			if diff > config.timeIncStep && diff > time.Nanosecond*10 {
-				ontime = false
-				eventsPastDeadline++
-				log(LOG_BOTH, "WARNING: past trigger time", diff, eventsPastDeadline)
-			}
-		}
-	}
-	return ontime
+func (r *RunnerBase) processPendingEvents(rxcallback processEvent) {
+	r.rxqueue.processPendingEvents(rxcallback)
 }
 
 func (r *RunnerBase) NowIsDone() bool {
 	if r.GetState() > RstateRunning {
-		// empty the queue..
-		r.pendingMutex.Lock()
-		defer r.pendingMutex.Unlock()
-		for k := 0; k < cap(r.pending); k++ {
-			r.pending[k] = nil
-		}
-		r.pending = r.pending[0:0]
+		r.rxqueue.cleanup()
 		return true
 	}
 
-	r.pendingMutex.RLock()
-	done := true
-	realpendingdepth := int64(0)
-	for k := 0; k < len(r.pending); k++ {
-		ev := r.pending[k]
-
-		ct := ev.GetCreationTime()
-		// cluster trip time enforced: earlier must be in flight
-		if Now.Sub(ct) < config.timeClusterTrip {
-			continue
-		}
-		realpendingdepth++
-		t := ev.GetTriggerTime()
-		if t.Before(Now) || t.Equal(Now) {
-			done = false
-			// keep counting real depth..
-		}
-	}
-	r.pendingMutex.RUnlock()
-
-	if !r.busyidletick.Equal(Now) {
-		// nothing *really* pending means idle, otherwise busy
-		if realpendingdepth == 0 {
-			atomic.AddInt64(&r.idlecnt, int64(1))
-		} else {
-			atomic.AddInt64(&r.busycnt, int64(1))
-		}
-		r.busyidletick = Now
-	}
-
-	atomic.StoreInt64(&r.realpendingdepth, realpendingdepth)
-
-	return done
+	return r.rxqueue.NowIsDone()
 }
 
 func (r *RunnerBase) closeTxChannels() {
