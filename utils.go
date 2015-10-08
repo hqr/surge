@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,7 @@ const (
 var logfd *os.File = nil
 var logstream *bufio.Writer = nil
 var lastflush time.Time = time.Time{}
+var logMutex *sync.Mutex = &sync.Mutex{}
 
 func initLog() {
 	if len(config.LogFile) > 0 {
@@ -69,15 +71,15 @@ func log(level string, args ...interface{}) {
 		}
 	}
 	message += "\n"
+
+	logMutex.Lock()
+	defer logMutex.Unlock()
+
 	if logfd == nil || logboth {
 		fmt.Printf("%s", message)
 	}
 	if logfd != nil {
 		logstream.WriteString(message)
-		if time.Now().Sub(lastflush) > time.Millisecond*10 {
-			logstream.Flush()
-			lastflush = time.Now()
-		}
 	}
 }
 
@@ -95,6 +97,7 @@ func assert(cond bool, args ...interface{}) {
 			message += fmt.Sprintf("%#v ", args[i])
 		}
 	}
+	// log(message)
 	panic(message)
 }
 
@@ -116,10 +119,16 @@ func calcAvgStd(vec []int) (int, float64, float64) {
 }
 
 //
-// random globally-unique 64bit FIXME: rewrite using crypto
+// random globally-unique 64bit and its logging (short) counterpart
+// FIXME: rewrite using crypto
 //
-func uqrandom64(multiplier int) int64 {
-	return rand.Int63n(time.Now().UTC().UnixNano() / 10007 * int64(multiplier))
+func uqrandom64(multiplier int) (int64, int64) {
+	uqid := rand.Int63n(time.Now().UTC().UnixNano() / 10007 * int64(multiplier))
+	return uqid, uqrand(uqid)
+}
+
+func uqrand(uqid int64) int64 {
+	return uqid & 0xffff
 }
 
 func clusterTripPlusRandom() time.Duration {

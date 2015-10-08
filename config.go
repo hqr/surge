@@ -6,7 +6,7 @@ import (
 )
 
 //
-// config
+// config: common and miscellaneous
 //
 type Config struct {
 	numGateways, numServers, numDisksPer int
@@ -45,6 +45,40 @@ var config = Config{
 	srand:    1,
 }
 
+//
+// config: storage
+//
+type ConfigStorage struct {
+	numReplicas                  int
+	sizeDataChunk, sizeMetaChunk int
+	diskMBps                     int
+}
+
+var configStorage = ConfigStorage{
+	numReplicas:   3,
+	sizeDataChunk: 128, // KB
+	sizeMetaChunk: 1,   // KB
+	diskMBps:      400, // MB/sec
+}
+
+//
+// config: network
+//
+type ConfigNetwork struct {
+	sizeFrame   int
+	linkbps     int
+	ulpoverhead int
+}
+
+var configNetwork = ConfigNetwork{
+	sizeFrame:   9000,                    // L2 frame size, bytes
+	linkbps:     10 * 1000 * 1000 * 1000, // bits/sec
+	ulpoverhead: 5,                       // L3 + L4 + L5 overhead (%)
+}
+
+//
+// init
+//
 func init() {
 	gwPtr := flag.Int("gateways", config.numGateways, "number of gateways")
 	srPtr := flag.Int("servers", config.numServers, "number of servers")
@@ -64,6 +98,15 @@ func init() {
 	dbPtr := flag.Bool("d", config.DEBUG, "debug=true|false")
 	srandPtr := flag.Int("srand", config.srand, "random seed, use 0 (zero) for random seed selection")
 
+	replicasPtr := flag.Int("replicas", configStorage.numReplicas, "number of replicas")
+	chunksizePtr := flag.Int("chunksize", configStorage.sizeDataChunk, "chunk size (KB)")
+	diskthPtr := flag.Int("diskthroughput", configStorage.diskMBps, "disk throughput (MB/sec)")
+
+	l2framePtr := flag.Int("l2frame", configNetwork.sizeFrame, "L2 frame size (bytes)")
+	linkbpsPtr := flag.Int("linkbps", configNetwork.linkbps, "Network Link Bandwidth (bits/sec)")
+	//
+	// parse command line
+	//
 	flag.Parse()
 
 	config.numGateways = *gwPtr
@@ -93,4 +136,11 @@ func init() {
 
 	config.DEBUG = *dbPtr
 	config.srand = *srandPtr
+
+	configStorage.numReplicas = *replicasPtr
+	configStorage.sizeDataChunk = *chunksizePtr
+	configStorage.diskMBps = *diskthPtr
+
+	configNetwork.sizeFrame = *l2framePtr
+	configNetwork.linkbps = *linkbpsPtr
 }

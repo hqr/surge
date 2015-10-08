@@ -39,7 +39,7 @@ type TimedUniqueEvent struct {
 func newTimedUniqueEvent(src RunnerInterface, when time.Duration, tgt RunnerInterface, id int64) *TimedUniqueEvent {
 	ev := newTimedUcastEvent(src, when, tgt)
 	if id == 0 {
-		id = uqrandom64(src.GetId())
+		id, _ = uqrandom64(src.GetId())
 	}
 	return &TimedUniqueEvent{*ev, id}
 }
@@ -92,7 +92,7 @@ func (r *GatewayThree) Run() {
 				srv := r.selectTarget()
 				if srv != nil {
 					tgtid := srv.GetId()
-					eventId := uqrandom64(r.GetId())
+					eventId, _ := uqrandom64(r.GetId())
 					at := clusterTripPlusRandom()
 					ev := newTimedUniqueEvent(r, at, srv, eventId)
 					r.Send(ev, true)

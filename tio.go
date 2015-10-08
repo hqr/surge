@@ -27,19 +27,8 @@ type Tio struct {
 func NewTio(src RunnerInterface, p *Pipeline) *Tio {
 	assert(p.Count() > 0)
 
-	uqid := uqrandom64(src.GetId())
-	printid := uqid & 0xffff
+	uqid, printid := uqrandom64(src.GetId())
 	return &Tio{id: uqid, sid: printid, pipeline: p, index: -1, source: src}
-}
-
-type TimedTioEvent struct {
-	TimedUcastEvent
-	tio *Tio
-}
-
-func (tio *Tio) newTimedTioEvent(src RunnerInterface, when time.Duration, tgt RunnerInterface) {
-	ev := newTimedUcastEvent(src, when, tgt)
-	tio.event = &TimedTioEvent{*ev, tio}
 }
 
 func (tio *Tio) GetStage() (string, int) {
@@ -47,24 +36,34 @@ func (tio *Tio) GetStage() (string, int) {
 	return stage.name, tio.index
 }
 
-// advance the stage, generate and send tio event to the target
-func (tio *Tio) next(caller RunnerInterface, when time.Duration, tgt RunnerInterface) {
+// advance the stage, generate and send anonymous tio event to the next stage's target
+func (tio *Tio) nextAnon(when time.Duration, tgt RunnerInterface) {
+	var ev *TimedUcastEvent
+	if tio.index == -1 {
+		ev = newTimedUcastEvent(tio.source, when, tgt)
+	} else {
+		ev = newTimedUcastEvent(tio.event.GetTarget(), when, tgt)
+	}
+	tio.next(ev)
+}
+
+// advance the stage & send specific event to the next stage's target
+func (tio *Tio) next(newev EventInterface) {
 	var src RunnerInterface = nil
 	if tio.index == -1 {
 		src = tio.source
 		tio.strtime = Now
 	} else {
 		assert(tio.index < tio.pipeline.Count()-1)
-		src = tio.event.GetTarget()
+		src = newev.GetSource()
 	}
-	assert(caller == src)
-
-	tio.newTimedTioEvent(src, when, tgt)
+	newev.SetExtension(tio)
+	tio.event = newev
 	tio.index++
 
-	log(LOG_V, "stage-next-started", tio.String(), tio.event.String())
+	log(LOG_V, "stage-next", tio.String())
 
-	src.Send(tio.event, true) // blocking send
+	src.Send(tio.event, true) // blocking
 }
 
 func (tio *Tio) doStage(r RunnerInterface) error {

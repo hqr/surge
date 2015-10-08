@@ -36,10 +36,10 @@ var m4 ModelFour
 
 func init() {
 	p := NewPipeline()
-	p.AddStage(&PipelineStage{name: "PUT-REQ", handler: "Putrequest"})
-	p.AddStage(&PipelineStage{name: "PUT-REQ-ACK", handler: "Putreqack"})
-	p.AddStage(&PipelineStage{name: "PUT-XFER", handler: "Putxfer"})
-	p.AddStage(&PipelineStage{name: "PUT-XFER-ACK", handler: "Putxferack"})
+	p.AddStage(&PipelineStage{name: "PUT-REQ", handler: "M4putrequest"})
+	p.AddStage(&PipelineStage{name: "PUT-REQ-ACK", handler: "M4putreqack"})
+	p.AddStage(&PipelineStage{name: "PUT-XFER", handler: "M4putxfer"})
+	p.AddStage(&PipelineStage{name: "PUT-XFER-ACK", handler: "M4putxferack"})
 
 	m4.pipeline = p
 
@@ -63,8 +63,8 @@ func (r *GatewayFour) Run() {
 	outstanding := 0
 
 	rxcallback := func(ev EventInterface) bool {
-		tioevent := ev.(*TimedTioEvent)
-		tio := tioevent.tio
+		tioevent := ev.(*TimedUcastEvent)
+		tio := tioevent.extension.(*Tio)
 		log(LOG_VV, "GWY rxcallback", tio.String())
 		tio.doStage(r)
 
@@ -90,7 +90,7 @@ func (r *GatewayFour) Run() {
 				tio := m4.pipeline.NewTio(r)
 				outstanding++
 				at := clusterTripPlusRandom()
-				tio.next(r, at, tgt)
+				tio.nextAnon(at, tgt)
 				time.Sleep(time.Microsecond)
 			}
 
@@ -104,17 +104,22 @@ func (r *GatewayFour) Run() {
 	}()
 }
 
-func (r *GatewayFour) Putreqack(ev EventInterface) error {
-	log(LOG_VV, r.String(), "::Putreqack()", ev.String())
+func (r *GatewayFour) M4putreqack(ev EventInterface) error {
+	log(LOG_VV, r.String(), "::M4putreqack()", ev.String())
 
+	// create event here and ask tio to follow up
 	at := clusterTripPlusRandom()
-	tioevent := ev.(*TimedTioEvent)
-	tioevent.tio.next(r, at, ev.GetSource())
+	nextev := newTimedUcastEvent(r, at, ev.GetSource())
+
+	tioevent := ev.(*TimedUcastEvent)
+	tio := tioevent.extension.(*Tio)
+
+	tio.next(nextev)
 	return nil
 }
 
-func (r *GatewayFour) Putxferack(ev EventInterface) error {
-	log(LOG_VV, r.String(), "::Putxferack()", ev.String())
+func (r *GatewayFour) M4putxferack(ev EventInterface) error {
+	log(LOG_VV, r.String(), "::M4putxferack()", ev.String())
 
 	return nil
 }
@@ -138,10 +143,10 @@ func (r *ServerFour) Run() {
 	r.state = RstateRunning
 
 	rxcallback := func(ev EventInterface) bool {
-		tioevent := ev.(*TimedTioEvent)
-		log(LOG_VV, "SRV rxcallback", tioevent.tio.String())
+		tioevent := ev.(*TimedUcastEvent)
+		tio := tioevent.extension.(*Tio)
+		log(LOG_VV, "SRV rxcallback", tio.String())
 
-		tio := tioevent.tio
 		tio.doStage(r)
 
 		return true
@@ -159,21 +164,25 @@ func (r *ServerFour) Run() {
 	}()
 }
 
-func (r *ServerFour) Putrequest(ev EventInterface) error {
-	log(LOG_VV, r.String(), "::Putrequest()", ev.String())
+func (r *ServerFour) M4putrequest(ev EventInterface) error {
+	log(LOG_VV, r.String(), "::M4putrequest()", ev.String())
+
+	tioevent := ev.(*TimedUcastEvent)
+	tio := tioevent.extension.(*Tio)
 
 	at := clusterTripPlusRandom()
-	tioevent := ev.(*TimedTioEvent)
-	tioevent.tio.next(r, at, ev.GetSource())
+	tio.nextAnon(at, ev.GetSource())
 	return nil
 }
 
-func (r *ServerFour) Putxfer(ev EventInterface) error {
-	log(LOG_VV, r.String(), "::Putxfer()", ev.String())
+func (r *ServerFour) M4putxfer(ev EventInterface) error {
+	log(LOG_VV, r.String(), "::M4putxfer()", ev.String())
 
 	at := clusterTripPlusRandom()
-	tioevent := ev.(*TimedTioEvent)
-	tioevent.tio.next(r, at, ev.GetSource())
+
+	tioevent := ev.(*TimedUcastEvent)
+	tio := tioevent.extension.(*Tio)
+	tio.nextAnon(at, ev.GetSource())
 	return nil
 }
 

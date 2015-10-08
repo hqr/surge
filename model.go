@@ -22,6 +22,7 @@ func RegisterModel(name ModelName, model ModelInterface, props ...map[string]int
 	if !inited {
 		__init()
 	}
+	assert(allModels[name] == nil, "already registered")
 	allModels[name] = model
 	allNamesSorted = append(allNamesSorted, string(name))
 
