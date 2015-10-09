@@ -65,15 +65,21 @@ var configStorage = ConfigStorage{
 // config: network
 //
 type ConfigNetwork struct {
-	sizeFrame   int
-	linkbps     int
-	ulpoverhead int
+	linkbps        int64
+	unsolicitedbps int64
+	sizeFrame      int
+	sizeControlPDU int
+	overheadpct    int
+	leakymax       int
 }
 
 var configNetwork = ConfigNetwork{
-	sizeFrame:   9000,                    // L2 frame size, bytes
-	linkbps:     10 * 1000 * 1000 * 1000, // bits/sec
-	ulpoverhead: 5,                       // L3 + L4 + L5 overhead (%)
+	linkbps:        10 * 1000 * 1000 * 1000, // bits/sec
+	unsolicitedbps: 2 * 1000 * 1000 * 1000,  // FIXME bits/sec
+	sizeFrame:      9000,                    // L2 frame size (bytes)
+	sizeControlPDU: 1000,                    // solicited/control PDU size (bytes)
+	overheadpct:    1,                       // L3 + L4 + L5 + arp, etc. overhead (%)
+	leakymax:       2,                       // max size of the leaky bucket (num frames)
 }
 
 //
@@ -103,7 +109,7 @@ func init() {
 	diskthPtr := flag.Int("diskthroughput", configStorage.diskMBps, "disk throughput (MB/sec)")
 
 	l2framePtr := flag.Int("l2frame", configNetwork.sizeFrame, "L2 frame size (bytes)")
-	linkbpsPtr := flag.Int("linkbps", configNetwork.linkbps, "Network Link Bandwidth (bits/sec)")
+	linkbpsPtr := flag.Int64("linkbps", configNetwork.linkbps, "Network Link Bandwidth (bits/sec)")
 	//
 	// parse command line
 	//

@@ -136,3 +136,40 @@ func clusterTripPlusRandom() time.Duration {
 	at := rand.Int63n(int64(trip)) + int64(trip) + 1
 	return time.Duration(at)
 }
+
+func sizeToDuration(size int, sizeunits string, bw int64, bwunits string) time.Duration {
+	var sizebits, bwbitss int64
+	switch {
+	case strings.HasPrefix(sizeunits, "B"):
+		sizebits = int64(size) * int64(8)
+	case strings.HasPrefix(sizeunits, "k") || strings.HasPrefix(sizeunits, "K"):
+		sizebits = int64(size) * int64(1024*8)
+	case strings.HasPrefix(sizeunits, "m") || strings.HasPrefix(sizeunits, "M"):
+		sizebits = int64(size) * int64(1024*1024*8)
+	case strings.HasPrefix(sizeunits, "g") || strings.HasPrefix(sizeunits, "G"):
+		sizebits = int64(size) * int64(1024*1024*1024*8)
+	default:
+		assert(false, "invalid sizeunits: "+sizeunits)
+	}
+	switch {
+	case strings.HasPrefix(bwunits, "b"):
+		bwbitss = bw
+	case strings.HasPrefix(bwunits, "B"):
+		bwbitss = bw * int64(8)
+	case strings.HasPrefix(bwunits, "KB"):
+		bwbitss = bw * int64(1024*8)
+	case strings.HasPrefix(bwunits, "Kb"):
+		bwbitss = bw * int64(1024)
+	case strings.HasPrefix(bwunits, "MB"):
+		bwbitss = bw * int64(1024*1024*8)
+	case strings.HasPrefix(bwunits, "Mb"):
+		bwbitss = bw * int64(1024*1024)
+	case strings.HasPrefix(bwunits, "GB"):
+		bwbitss = bw * int64(1024*1024*1024*8)
+	case strings.HasPrefix(bwunits, "Gb"):
+		bwbitss = bw * int64(1024*1024*1024)
+	default:
+		assert(false, "invalid bwunits: "+bwunits)
+	}
+	return time.Duration(sizebits) * time.Second / time.Duration(bwbitss)
+}

@@ -11,6 +11,7 @@ package surge
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -61,7 +62,9 @@ type Flow struct {
 	cid         int64
 	sid         int64
 	tio         *Tio
-	tobandwidth int       // bits/sec
+	tobandwidth int64     // bits/sec
+	refillbits  int64     // refill at the tobandwidth rate
+	sendnexts   time.Time // time network becomes available after the prev send
 	ratects     time.Time // rateset creation time
 	raterts     time.Time // rateset effective time
 	rateini     bool      // rateset inited
@@ -72,13 +75,24 @@ type Flow struct {
 
 func NewFlow(f RunnerInterface, t RunnerInterface, chunkid int64, repnum int, io *Tio) *Flow {
 	printid := uqrand(chunkid)
-	return &Flow{from: f, to: t, cid: chunkid, sid: printid, tio: io, rateini: false, num: repnum}
+	return &Flow{
+		from:    f,
+		to:      t,
+		cid:     chunkid,
+		sid:     printid,
+		tio:     io,
+		rateini: false,
+		num:     repnum}
 }
 
 func (flow *Flow) String() string {
 	f := flow.from.String()
 	t := flow.to.String()
-	return fmt.Sprintf("[flow %s=>%s[chunk#%d(%d)],offset=%d,bw=%dGbps]", f, t, flow.sid, flow.num, flow.offset, flow.tobandwidth/1000/1000/1000)
+	bwstr := fmt.Sprintf("%.1f", float64(flow.tobandwidth)/1000.0/1000.0/1000.0)
+	if strings.Contains(bwstr, ".0") {
+		bwstr = fmt.Sprintf("%d", flow.tobandwidth/1000/1000/1000)
+	}
+	return fmt.Sprintf("[flow %s=>%s[chunk#%d(%d)],offset=%d,bw=%sGbps]", f, t, flow.sid, flow.num, flow.offset, bwstr)
 }
 
 //========================================================================
@@ -99,9 +113,9 @@ type M5ReplicaPutRequestEvent struct {
 	sizeb int // size in bytes
 }
 
-// FIXME: temp here and elsewhere
 func newM5ReplicaPutRequestEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica) *M5ReplicaPutRequestEvent {
-	at := clusterTripPlusRandom()
+	// FIXME: unsolicitedbps
+	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.unsolicitedbps, "b") + config.timeClusterTrip
 	timedev := newTimedUcastEvent(gwy, at, srv)
 	assert(timedev.GetSource().(*GatewayFive) != nil)
 	return &M5ReplicaPutRequestEvent{M5ControlEvent{M5Event{*timedev}, rep.chunk.cid}, rep.num, rep.chunk.sizeb}
@@ -118,7 +132,7 @@ func (e *M5ReplicaPutAckEvent) String() string {
 }
 
 func newM5ReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, chunkid int64, repnum int) *M5ReplicaPutAckEvent {
-	at := clusterTripPlusRandom()
+	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.unsolicitedbps, "b") + config.timeClusterTrip
 	timedev := newTimedUcastEvent(srv, at, gwy)
 	assert(timedev.GetSource().(*ServerFive) != nil)
 	return &M5ReplicaPutAckEvent{M5ControlEvent{M5Event{*timedev}, chunkid}, repnum}
@@ -126,8 +140,8 @@ func newM5ReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, chunkid i
 
 type M5RateSetEvent struct {
 	M5ControlEvent
-	tobandwidth int // bits/sec
-	num         int // replica num
+	tobandwidth int64 // bits/sec
+	num         int   // replica num
 }
 
 type M5RateInitEvent struct {
@@ -139,10 +153,12 @@ func (e *M5RateInitEvent) String() string {
 	return fmt.Sprintf("[RateInitEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
 }
 
-func newM5RateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int, chunkid int64, repnum int) *M5RateSetEvent {
-	at := clusterTripPlusRandom()
+func newM5RateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, chunkid int64, repnum int) *M5RateSetEvent {
+	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.unsolicitedbps, "b") + config.timeClusterTrip
 	timedev := newTimedUcastEvent(srv, at, gwy)
 	assert(timedev.GetSource().(*ServerFive) != nil)
+	// factor in the L2+L3+L4 headers overhead + ARP, etc.
+	rate -= rate * int64(configNetwork.overheadpct) / int64(100)
 	return &M5RateSetEvent{M5ControlEvent{M5Event{*timedev}, chunkid}, rate, repnum}
 }
 
@@ -151,7 +167,7 @@ func (e *M5RateSetEvent) String() string {
 	return fmt.Sprintf("[RateSetEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
 }
 
-func newM5RateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int, chunkid int64, repnum int) *M5RateInitEvent {
+func newM5RateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, chunkid int64, repnum int) *M5RateInitEvent {
 	ev := newM5RateSetEvent(srv, gwy, rate, chunkid, repnum)
 	return &M5RateInitEvent{*ev}
 }
@@ -167,11 +183,11 @@ type M5ReplicaDataEvent struct {
 	M5DataEvent
 }
 
-func newM5ReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, offset int) *M5ReplicaDataEvent {
-	at := clusterTripPlusRandom()
+func newM5ReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, flow *Flow, frsize int) *M5ReplicaDataEvent {
+	at := sizeToDuration(frsize, "B", flow.tobandwidth, "b") + config.timeClusterTrip
 	timedev := newTimedUcastEvent(gwy, at, srv)
 	assert(timedev.GetSource().(*GatewayFive) != nil)
-	return &M5ReplicaDataEvent{M5DataEvent{M5Event{*timedev}, rep.chunk.cid, rep.num, offset}}
+	return &M5ReplicaDataEvent{M5DataEvent{M5Event{*timedev}, rep.chunk.cid, rep.num, flow.offset}}
 }
 
 func (e *M5ReplicaDataEvent) String() string {
@@ -240,7 +256,7 @@ func (r *GatewayFive) Run() {
 			log(LOG_V, "GWY::rxcallback", tio.String())
 			tio.doStage(r)
 			if tio.done {
-				log("tio-done", tio.String())
+				log(LOG_V, "tio-done", tio.String())
 				atomic.AddInt64(&r.tiostats, int64(1))
 				r.finishStartReplica(srv)
 			}
@@ -250,10 +266,10 @@ func (r *GatewayFive) Run() {
 	}
 
 	go func() {
-		tsend := Now
+		lastRefill := Now
 		for r.state == RstateRunning {
 			if r.chunk == nil {
-				r.startNewChunkReplica()
+				r.startNewChunkReplica(time.Time{}) // minor
 			}
 			// recv
 			r.receiveEnqueue()
@@ -261,31 +277,60 @@ func (r *GatewayFive) Run() {
 			r.processPendingEvents(rxcallback)
 			time.Sleep(time.Microsecond)
 
-			if Now.Sub(tsend) > config.timeClusterTrip {
+			if Now.After(lastRefill) {
+				r.refill(Now.Sub(lastRefill))
 				r.sendata()
-				tsend = Now
+				lastRefill = Now
 			}
 		}
-
 		r.closeTxChannels()
 	}()
+}
+
+func (r *GatewayFive) refill(d time.Duration) {
+	maxleakybucket := configNetwork.sizeFrame * configNetwork.leakymax * 8
+	for _, flow := range r.flowsto {
+		if flow.tobandwidth == 0 || flow.offset >= r.chunk.sizeb {
+			continue
+		}
+		flow.refillbits += flow.tobandwidth * int64(d) / int64(time.Second)
+
+		// reached max burst
+		if flow.refillbits > int64(maxleakybucket) {
+			flow.refillbits = int64(maxleakybucket)
+		}
+	}
 }
 
 // send some data frames
 func (r *GatewayFive) sendata() {
 	for srv, flow := range r.flowsto {
-		if flow.tobandwidth > 0 && flow.offset < r.chunk.sizeb {
-			log(LOG_V, "send-data", flow.String())
-			flow.offset += configNetwork.sizeFrame
-			ev := newM5ReplicaDataEvent(r, srv, r.replica, flow.offset)
-			ev.SetExtension(flow.tio)
-			r.Send(ev, true)
+		if flow.tobandwidth == 0 || flow.offset >= r.chunk.sizeb {
+			continue
 		}
-	}
+		frsize := configNetwork.sizeFrame
+		if flow.offset+frsize > r.chunk.sizeb {
+			frsize = r.chunk.sizeb - flow.offset
+		}
+		newbits := int64(frsize * 8)
+		if flow.refillbits < newbits {
+			continue
+		}
+		if flow.sendnexts.After(Now) {
+			continue
+		}
 
+		flow.offset += frsize
+		flow.refillbits -= newbits
+		ev := newM5ReplicaDataEvent(r, srv, r.replica, flow, frsize)
+		ev.SetExtension(flow.tio)
+		r.Send(ev, true)
+
+		flow.sendnexts = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
+	}
 }
 
-func (r *GatewayFive) startNewChunkReplica() {
+func (r *GatewayFive) startNewChunkReplica(sendnexts time.Time) {
 	var num int
 	if r.chunk == nil {
 		r.chunk = NewChunk(r, configStorage.sizeDataChunk*1024)
@@ -301,8 +346,9 @@ func (r *GatewayFive) startNewChunkReplica() {
 
 	tio := m5.putpipeline.NewTio(r)
 	flow := NewFlow(r, tgt, r.chunk.cid, num, tio)
-	flow.tobandwidth = 0
+	flow.tobandwidth = int64(0)
 	flow.totalbytes = r.chunk.sizeb
+	flow.sendnexts = sendnexts
 	r.flowsto[tgt] = flow
 	log("gwy-new-flow", flow.String())
 	assert(!flow.rateini)
@@ -317,6 +363,7 @@ func (r *GatewayFive) finishStartReplica(srv RunnerInterface) {
 	flow, ok := r.flowsto[srv]
 	assert(ok)
 	log("gwy-flow-and-replica-done-and-gone", flow.String(), r.replica.String())
+	x := flow.sendnexts
 	delete(r.flowsto, srv)
 	if r.replica.num == configStorage.numReplicas {
 		log("chunk-done", r.chunk.String())
@@ -324,7 +371,7 @@ func (r *GatewayFive) finishStartReplica(srv RunnerInterface) {
 		r.chunk = nil
 		return
 	}
-	r.startNewChunkReplica()
+	r.startNewChunkReplica(x)
 }
 
 func (r *GatewayFive) rateset(ev *M5RateSetEvent) {
@@ -391,6 +438,8 @@ func (r *GatewayFive) M5rateinit(ev EventInterface) error {
 		flow.ratects = tioevent.GetCreationTime()
 		flow.raterts = Now
 		flow.rateini = true
+		x := configNetwork.sizeFrame * configNetwork.leakymax * 8
+		flow.refillbits = int64(x)
 		flow.tobandwidth = tioevent.tobandwidth
 		log(LOG_V, "gwy-rateinit", flow.String(), r.replica.String())
 	} else {
@@ -418,7 +467,6 @@ func (r *GatewayFive) M5replicack(ev EventInterface) error {
 //=========================
 func (r *GatewayFive) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
-	// log("GetStats::entry", r.String(), r.chunkstats) // FIXME: debug
 	if reset {
 		s["tio"] = atomic.SwapInt64(&r.tiostats, int64(0))
 		s["chunk"] = atomic.SwapInt64(&r.chunkstats, int64(0))
@@ -426,7 +474,6 @@ func (r *GatewayFive) GetStats(reset bool) NodeStats {
 		s["tio"] = atomic.LoadInt64(&r.tiostats)
 		s["chunk"] = atomic.LoadInt64(&r.chunkstats)
 	}
-	// log("GetStats::exit", r.String(), s["chunk"]) // FIXME: debug
 	return s
 }
 
@@ -473,13 +520,15 @@ func (r *ServerFive) Run() {
 }
 
 func (r *ServerFive) rerate() {
-	if len(r.flowsfrom) == 0 {
+	nflows := len(r.flowsfrom)
+	if nflows == 0 {
 		return
 	}
 	for gwy, flow := range r.flowsfrom {
 		assert(flow.to == r)
 		assert(flow.rateini)
-		ratesetev := newM5RateSetEvent(r, gwy, configNetwork.linkbps, flow.cid, flow.num)
+		ratesetev := newM5RateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
+		flow.tobandwidth = ratesetev.tobandwidth
 		ratesetev.SetExtension(flow.tio)
 		flow.ratects = Now
 		flow.raterts = Now.Add(config.timeClusterTrip * 2)
@@ -499,7 +548,6 @@ func (r *ServerFive) M5putrequest(ev EventInterface) error {
 
 	tio := tioevent.extension.(*Tio)
 	flow := NewFlow(gwy, r, tioevent.cid, tioevent.num, tio)
-	flow.tobandwidth = configNetwork.linkbps
 	flow.totalbytes = tioevent.sizeb
 	flow.rateini = true
 	flow.ratects = Now
@@ -507,7 +555,9 @@ func (r *ServerFive) M5putrequest(ev EventInterface) error {
 	r.flowsfrom[gwy] = flow
 	assert(flow.offset == 0)
 
-	rateinitev := newM5RateInitEvent(r, gwy, configNetwork.linkbps, flow.cid, flow.num)
+	nflows := len(r.flowsfrom)
+	rateinitev := newM5RateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
+	flow.tobandwidth = rateinitev.tobandwidth
 	log("srv-new-flow", flow.String(), rateinitev.String())
 
 	tio.next(rateinitev)
