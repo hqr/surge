@@ -21,7 +21,6 @@ const (
 
 var logfd *os.File = nil
 var logstream *bufio.Writer = nil
-var lastflush time.Time = time.Time{}
 var logMutex *sync.Mutex = &sync.Mutex{}
 
 func initLog() {
@@ -40,6 +39,14 @@ func terminateLog() {
 		if err != nil {
 			fmt.Println("error closing logfile", err, config.LogFile)
 		}
+	}
+}
+
+func flushLog() {
+	if logfd != nil {
+		logMutex.Lock()
+		defer logMutex.Unlock()
+		logstream.Flush()
 	}
 }
 
@@ -172,4 +179,32 @@ func sizeToDuration(size int, sizeunits string, bw int64, bwunits string) time.D
 		assert(false, "invalid bwunits: "+bwunits)
 	}
 	return time.Duration(sizebits) * time.Second / time.Duration(bwbitss)
+}
+
+func bytesToKMG(bytes int64) string {
+	x := float64(bytes)
+	switch {
+	case bytes < 1024:
+		return fmt.Sprintf("%dB", bytes)
+	case bytes < 1024*1024:
+		return fmt.Sprintf("%.2fKB", x/1024.0)
+	case bytes < 1024*1024*1024:
+		return fmt.Sprintf("%.2fMB", x/1024.0/1024.0)
+	default:
+		return fmt.Sprintf("%.2fGB", x/1024.0/1024.0/1024.0)
+	}
+}
+
+func bytesMillisToKMGseconds(bytesms float64) string {
+	x := bytesms * 1000.0
+	switch {
+	case x < 1024:
+		return fmt.Sprintf("%.0fB", x)
+	case x < 1024*1024:
+		return fmt.Sprintf("%.2fKB", x/1024.0)
+	case x < 1024*1024*1024:
+		return fmt.Sprintf("%.2fMB", x/1024.0/1024.0)
+	default:
+		return fmt.Sprintf("%.2fGB", x/1024.0/1024.0/1024.0)
+	}
 }

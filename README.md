@@ -81,7 +81,7 @@ type StatsDescriptor struct {
 Once registered, the framework will keep track of summing it up and/or
 averaging, depending on the kind and scope of the counter. For this to happen,
 the modeled gateways and servers provide GetStats() method as per examples
-in the code (- grep for "\"event"\" and "\"tio"\")
+in the code.
 
 * Multi-tasking and concurrency
 
@@ -132,6 +132,14 @@ The example runs a certain built-in model named '3' with 20
 simulated servers, 10 gateways and log level verbosity '-v'.
 Next example below does the same except that the model "3" will run for
 150 simulated milliseconds:
+
+When using 'go test' to run surge's models, do not forget the default
+10 minutes timeout of the former. The following will run the model "5" for
+up to 2 i(real) hours for the 100 simulated milliseconds:
+
+```
+$ go test -timeout 120m -m 5 -ttr 100ms
+```
 
 ```
 $ go run cmd/ck.go -m 3 -servers 20 -gateways 10 -ttr 150ms -v

@@ -51,9 +51,10 @@ type RunnerBase struct {
 	rxchans []chan EventInterface
 	eps     []RunnerInterface
 	cases   []reflect.SelectCase
-	rxqueue *RxQueueSorted // FIXME: interface
-	strtype string         // log
-	rxcount int            // num live Rx connections
+	rxqueue *RxQueueSorted
+	txqueue *TxQueue
+	strtype string // log
+	rxcount int    // num live Rx connections
 }
 
 type processEvent func(ev EventInterface) bool
@@ -76,6 +77,7 @@ func (r *RunnerBase) setChannels(peer RunnerInterface, txch chan EventInterface,
 	r.cases[peerid-1] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(rxch)}
 
 	r.rxqueue = NewRxQueueSorted(r, 0)
+	r.txqueue = NewTxQueue(r, 0)
 }
 
 func (r *RunnerBase) getChannels(peer RunnerInterface) (chan EventInterface, chan EventInterface) {
@@ -187,7 +189,7 @@ func (r *RunnerBase) receiveEnqueue() (bool, error) {
 			}
 			r.rxqueue.insertEvent(ev)
 			newcnt++
-			if newcnt < 2 { // experiment with more..
+			if newcnt < 2 { // TODO: experiment with more
 				continue
 			}
 		}
@@ -234,7 +236,10 @@ func (r *RunnerBase) NowIsDone() bool {
 		return true
 	}
 
-	return r.rxqueue.NowIsDone()
+	if r.txqueue.NowIsDone() {
+		return r.rxqueue.NowIsDone()
+	}
+	return false
 }
 
 func (r *RunnerBase) closeTxChannels() {

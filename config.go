@@ -18,14 +18,15 @@ type Config struct {
 	timeToRun                            time.Duration
 	channelBuffer                        int
 	LogLevel                             string
+	realtimeLogStats                     time.Duration
 	LogFile                              string
 	DEBUG                                bool
 	srand                                int
 }
 
 var config = Config{
-	numGateways: 20,
-	numServers:  20,
+	numGateways: 100,
+	numServers:  100,
 	numDisksPer: 1,
 
 	mprefix: "",
@@ -37,12 +38,13 @@ var config = Config{
 	timeTrackIval: time.Millisecond / 10,
 	timeToRun:     time.Millisecond, // ttr: total time to run
 
-	channelBuffer: 128,
+	channelBuffer: 16,
 
-	LogLevel: "", // quiet
-	LogFile:  "/tmp/log.csv",
-	DEBUG:    true,
-	srand:    1,
+	LogLevel:         "", // quiet
+	LogFile:          "/tmp/log.csv",
+	realtimeLogStats: time.Second * 60,
+	DEBUG:            true,
+	srand:            1,
 }
 
 //
@@ -75,10 +77,10 @@ type ConfigNetwork struct {
 
 var configNetwork = ConfigNetwork{
 	linkbps:        10 * 1000 * 1000 * 1000, // bits/sec
-	unsolicitedbps: 2 * 1000 * 1000 * 1000,  // FIXME bits/sec
+	unsolicitedbps: 2 * 1000 * 1000 * 1000,  // FIXME
 	sizeFrame:      9000,                    // L2 frame size (bytes)
 	sizeControlPDU: 1000,                    // solicited/control PDU size (bytes)
-	overheadpct:    1,                       // L3 + L4 + L5 + arp, etc. overhead (%)
+	overheadpct:    1,                       // L2 + L3 + L4 + L5 + arp, etc. overhead (%)
 	leakymax:       2,                       // max size of the leaky bucket (num frames)
 }
 

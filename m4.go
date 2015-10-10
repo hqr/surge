@@ -45,7 +45,7 @@ func init() {
 
 	d := NewStatsDescriptors("4")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
-	d.Register("busy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
+	d.Register("rxbusy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
 	d.Register("tio", StatsKindCount, StatsScopeGateway)
 
 	props := make(map[string]interface{}, 1)

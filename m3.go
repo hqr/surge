@@ -50,7 +50,7 @@ func newTimedUniqueEvent(src RunnerInterface, when time.Duration, tgt RunnerInte
 func init() {
 	d := NewStatsDescriptors("3")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
-	d.Register("busy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
+	d.Register("rxbusy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "ping-pong with a random target selection"

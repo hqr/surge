@@ -181,14 +181,14 @@ func RunAllModels() {
 		if maxprocs, ok := props["GOMAXPROCS"]; ok {
 			runtime.GOMAXPROCS(maxprocs.(int))
 		} else {
-			runtime.GOMAXPROCS(runtime.NumCPU())
+			runtime.GOMAXPROCS(runtime.NumCPU()) // the default
 		}
 		model, _ := allModels[name]
 		buildModel(model, name)
 
 		eventsPastDeadline = 0
 		config = configCopy
-		model.Configure()
+		model.Configure() // the model's custom config
 
 		//
 		// run it servers first (as they typically do not start generating load)
@@ -216,7 +216,7 @@ func RunAllModels() {
 
 		fmt.Printf("\r")
 		// benchmark results
-		mstats.log()
+		mstats.log(true)
 	}
 	if hasprefix == 0 {
 		fmt.Printf("No registered models matched prefix '%s': nothing to do\n", config.mprefix)
@@ -227,8 +227,10 @@ func oneModelTimeLoop(model ModelInterface, stdout *bufio.Writer) {
 	nextStatsTime := Now.Add(config.timeStatsIval)
 	nextTrackTime := Now.Add(config.timeTrackIval)
 	endtime := Now.Add(config.timeToRun)
+	realtime := time.Now()
 	pct := 0
 
+	log(realtime.Format(time.RFC822))
 	// advance the model's TIME and report stats periodically
 	for {
 		if Now.Equal(nextTrackTime) || Now.After(nextTrackTime) {
@@ -242,6 +244,14 @@ func oneModelTimeLoop(model ModelInterface, stdout *bufio.Writer) {
 				// new stats iteration
 				mstats.update(config.timeStatsIval)
 				nextStatsTime = Now.Add(config.timeStatsIval)
+
+				rt := time.Now()
+				if rt.Sub(realtime) > config.realtimeLogStats {
+					mstats.log(false)
+					realtime = rt
+					log(realtime.Format(time.RFC822) + " ====")
+					flushLog()
+				}
 			}
 			Now = Now.Add(config.timeIncStep)
 		} else {

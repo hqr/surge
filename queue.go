@@ -13,7 +13,49 @@ const INITIAL_QUEUE_SIZE int = 64
 
 //==================================================================
 //
-// types: queues
+// types: Tx queue
+//
+//==================================================================
+type TxQueue struct {
+	// FIXME: map[]fifo, with fifo per target
+	fifo []EventInterface
+	r    RunnerInterface
+}
+
+func NewTxQueue(ri RunnerInterface, size int) *TxQueue {
+	if size == 0 {
+		size = INITIAL_QUEUE_SIZE
+	}
+	initialQ := make([]EventInterface, size)
+	return &TxQueue{
+		fifo: initialQ[0:0],
+		r:    ri,
+	}
+}
+
+func (q *TxQueue) NowIsDone() bool {
+	return len(q.fifo) == 0
+}
+
+func (q *TxQueue) insertEvent(ev EventInterface) {
+	l := len(q.fifo)
+	if l == cap(q.fifo) {
+		log(LOG_VV, "growing tx queue", q.r.String(), cap(q.fifo))
+	}
+	q.fifo = append(q.fifo, nil)
+	q.fifo[l] = ev
+}
+
+func (q *TxQueue) deleteEvent(k int) {
+	copy(q.fifo[k:], q.fifo[k+1:])
+	l := len(q.fifo)
+	q.fifo[l-1] = nil
+	q.fifo = q.fifo[:l-1]
+}
+
+//==================================================================
+//
+// types: Rx queues
 //
 //==================================================================
 type RxQueue struct {
@@ -88,7 +130,7 @@ func (q *RxQueue) NumPendingEvents(exact bool) int64 {
 func (q *RxQueue) insertEvent(ev EventInterface) {
 	l := len(q.pending)
 	if l == cap(q.pending) {
-		log(LOG_V, "growing queue", q.r.String(), cap(q.pending))
+		log(LOG_VV, "growing rx queue", q.r.String(), cap(q.pending))
 	}
 	q.pending = append(q.pending, nil)
 	q.pending[l] = ev
@@ -187,7 +229,7 @@ func (q *RxQueue) NowIsDone() bool {
 }
 
 //
-// generic "event" and "busy" d-tors/stats
+// generic "event" and "rxbusy" d-tors/stats
 //
 func (q *RxQueue) GetStats(reset bool) NodeStats {
 	var b, i int64
@@ -201,9 +243,9 @@ func (q *RxQueue) GetStats(reset bool) NodeStats {
 		b = atomic.LoadInt64(&q.busycnt)
 		i = atomic.LoadInt64(&q.idlecnt)
 	}
-	s["busy"] = int64(0)
+	s["rxbusy"] = int64(0)
 	if b > 0 {
-		s["busy"] = b * 100 / (b + i)
+		s["rxbusy"] = b * 100 / (b + i)
 	}
 
 	return s

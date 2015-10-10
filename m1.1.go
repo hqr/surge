@@ -31,7 +31,7 @@ type ServerOneDotOne struct {
 func init() {
 	d := NewStatsDescriptors("1.1")
 	d.Register("event", StatsKindCount, StatsScopeServer)
-	d.Register("busy", StatsKindPercentage, StatsScopeServer)
+	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "unidirectional storm of random events, with partially random selection"
