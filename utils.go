@@ -199,12 +199,12 @@ func bytesMillisToKMGseconds(bytesms float64) string {
 	x := bytesms * 1000.0
 	switch {
 	case x < 1024:
-		return fmt.Sprintf("%.0fB", x)
+		return fmt.Sprintf("%.0fB/s", x)
 	case x < 1024*1024:
-		return fmt.Sprintf("%.2fKB", x/1024.0)
+		return fmt.Sprintf("%.2fKB/s", x/1024.0)
 	case x < 1024*1024*1024:
-		return fmt.Sprintf("%.2fMB", x/1024.0/1024.0)
+		return fmt.Sprintf("%.2fMB/s", x/1024.0/1024.0)
 	default:
-		return fmt.Sprintf("%.2fGB", x/1024.0/1024.0/1024.0)
+		return fmt.Sprintf("%.2fGB/s", x/1024.0/1024.0/1024.0)
 	}
 }
