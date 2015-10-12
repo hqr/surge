@@ -55,42 +55,6 @@ func NewPutReplica(c *Chunk, n int) *PutReplica {
 	return &PutReplica{chunk: c, crtime: Now, num: n}
 }
 
-type Flow struct {
-	from        RunnerInterface
-	to          RunnerInterface
-	cid         int64
-	sid         int64
-	tio         *Tio
-	tobandwidth int64     // bits/sec
-	refillbits  int64     // refill at the tobandwidth rate
-	sendnexts   time.Time // time network becomes available after the prev send
-	ratects     time.Time // rateset creation time
-	raterts     time.Time // rateset effective time
-	rateini     bool      // rateset inited
-	num         int       // replica num
-	offset      int
-	totalbytes  int
-}
-
-func NewFlow(f RunnerInterface, t RunnerInterface, chunkid int64, repnum int, io *Tio) *Flow {
-	printid := uqrand(chunkid)
-	return &Flow{
-		from:    f,
-		to:      t,
-		cid:     chunkid,
-		sid:     printid,
-		tio:     io,
-		rateini: false,
-		num:     repnum}
-}
-
-func (flow *Flow) String() string {
-	f := flow.from.String()
-	t := flow.to.String()
-	bwstr := fmt.Sprintf("%.2f", float64(flow.tobandwidth)/1000.0/1000.0/1000.0)
-	return fmt.Sprintf("[flow %s=>%s[chunk#%d(%d)],offset=%d,bw=%sGbps]", f, t, flow.sid, flow.num, flow.offset, bwstr)
-}
-
 //========================================================================
 // types: events
 //========================================================================
@@ -127,8 +91,9 @@ func (e *M5ReplicaPutAckEvent) String() string {
 	return fmt.Sprintf("[PutAckEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
 }
 
-func newM5ReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, chunkid int64, repnum int) *M5ReplicaPutAckEvent {
-	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.unsolicitedbps, "b") + config.timeClusterTrip
+func newM5ReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, chunkid int64, repnum int, atdisk time.Duration) *M5ReplicaPutAckEvent {
+	atnet := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.unsolicitedbps, "b") + config.timeClusterTrip
+	at := atnet + atdisk
 	timedev := newTimedUcastEvent(srv, at, gwy)
 	assert(timedev.GetSource().(*ServerFive) != nil)
 	return &M5ReplicaPutAckEvent{M5ControlEvent{M5Event{*timedev}, chunkid}, repnum}
@@ -203,14 +168,15 @@ type GatewayFive struct {
 	rxbytestats  int64
 	chunk        *Chunk // FIXME: one chunk at a time for now
 	replica      *PutReplica
-	flowsto      map[RunnerInterface]*Flow
+	flowsto      *FlowDir
 }
 
 type ServerFive struct {
 	RunnerBase
 	txbytestats int64
 	rxbytestats int64
-	flowsfrom   map[RunnerInterface]*Flow
+	flowsfrom   *FlowDir
+	disk        *Disk
 }
 
 //
@@ -293,9 +259,9 @@ func (r *GatewayFive) Run() {
 
 func (r *GatewayFive) refill(d time.Duration) {
 	maxleakybucket := configNetwork.sizeFrame * configNetwork.leakymax * 8
-	for _, flow := range r.flowsto {
+	applyCallback := func(srv RunnerInterface, flow *Flow) {
 		if flow.tobandwidth == 0 || flow.offset >= r.chunk.sizeb {
-			continue
+			return
 		}
 		flow.refillbits += flow.tobandwidth * int64(d) / int64(time.Second)
 
@@ -304,6 +270,7 @@ func (r *GatewayFive) refill(d time.Duration) {
 			flow.refillbits = int64(maxleakybucket)
 		}
 	}
+	r.flowsto.apply(applyCallback)
 }
 
 // send data frames
@@ -317,9 +284,9 @@ func (r *GatewayFive) sendata() {
 			atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeFrame))
 		}
 	}
-	for srv, flow := range r.flowsto {
+	applyCallback := func(srv RunnerInterface, flow *Flow) {
 		if flow.tobandwidth == 0 || flow.offset >= r.chunk.sizeb {
-			continue
+			return
 		}
 		frsize := configNetwork.sizeFrame
 		if flow.offset+frsize > r.chunk.sizeb {
@@ -327,10 +294,10 @@ func (r *GatewayFive) sendata() {
 		}
 		newbits := int64(frsize * 8)
 		if flow.refillbits < newbits {
-			continue
+			return
 		}
 		if flow.sendnexts.After(Now) {
-			continue
+			return
 		}
 
 		flow.offset += frsize
@@ -344,6 +311,7 @@ func (r *GatewayFive) sendata() {
 			q.insertEvent(ev)
 		}
 	}
+	r.flowsto.apply(applyCallback)
 }
 
 func (r *GatewayFive) startNewChunkReplica(sendnexts time.Time) {
@@ -365,9 +333,8 @@ func (r *GatewayFive) startNewChunkReplica(sendnexts time.Time) {
 	flow.tobandwidth = int64(0)
 	flow.totalbytes = r.chunk.sizeb
 	flow.sendnexts = sendnexts
-	r.flowsto[tgt] = flow
+	r.flowsto.insertFlow(tgt, flow)
 	log("gwy-new-flow", flow.String())
-	assert(!flow.rateini)
 
 	ev := newM5ReplicaPutRequestEvent(r, tgt, r.replica)
 	ev.SetExtension(tio)
@@ -377,11 +344,10 @@ func (r *GatewayFive) startNewChunkReplica(sendnexts time.Time) {
 }
 
 func (r *GatewayFive) finishStartReplica(srv RunnerInterface) {
-	flow, ok := r.flowsto[srv]
-	assert(ok)
+	flow := r.flowsto.get(srv, true)
 	log("gwy-flow-and-replica-done-and-gone", flow.String(), r.replica.String())
 	x := flow.sendnexts
-	delete(r.flowsto, srv)
+	r.flowsto.deleteFlow(srv)
 	if r.replica.num == configStorage.numReplicas {
 		log("chunk-done", r.chunk.String())
 		atomic.AddInt64(&r.chunkstats, int64(1))
@@ -398,8 +364,8 @@ func (r *GatewayFive) rateset(ev *M5RateSetEvent) {
 	if tio.done {
 		return
 	}
-	flow, ok := r.flowsto[ev.GetSource()]
-	if !ok {
+	flow := r.flowsto.get(ev.GetSource(), false)
+	if flow == nil {
 		log("WARNING: gwy-rateset on non-existing flow", tio.String(), ev.String())
 		assert(false, "WARNING: gwy-rateset on non-existing flow:"+tio.String()+":"+ev.String())
 		return
@@ -424,8 +390,8 @@ func (r *GatewayFive) selectTarget() RunnerInterface {
 	cnt := 0
 	for {
 		peer := r.eps[id]
-		_, ok := r.flowsto[peer]
-		if !ok {
+		flow := r.flowsto.get(peer, false)
+		if flow == nil {
 			return peer
 		}
 		id++
@@ -446,8 +412,7 @@ func (r *GatewayFive) M5rateinit(ev EventInterface) error {
 	tioevent := ev.(*M5RateInitEvent)
 	log(LOG_V, r.String(), "::M5rateinit()", tioevent.String())
 	srv := tioevent.GetSource()
-	flow, ok := r.flowsto[srv]
-	assert(ok)
+	flow := r.flowsto.get(srv, true)
 	assert(flow.cid == tioevent.cid)
 	assert(flow.num == tioevent.num)
 	if !flow.rateini {
@@ -470,8 +435,7 @@ func (r *GatewayFive) M5rateinit(ev EventInterface) error {
 func (r *GatewayFive) M5replicack(ev EventInterface) error {
 	tioevent := ev.(*M5ReplicaPutAckEvent)
 	srv := tioevent.GetSource()
-	flow, ok := r.flowsto[srv]
-	assert(ok)
+	flow := r.flowsto.get(srv, true)
 	assert(flow.cid == tioevent.cid)
 	assert(flow.num == tioevent.num)
 	log(LOG_V, "::M5replicack()", flow.String(), tioevent.String())
@@ -525,16 +489,16 @@ func (r *ServerFive) Run() {
 	}
 
 	go func() {
-		numflows := len(r.flowsfrom)
+		numflows := r.flowsfrom.count()
 		for r.state == RstateRunning {
 			// recv
 			r.receiveEnqueue()
 			time.Sleep(time.Microsecond)
 			r.processPendingEvents(rxcallback)
 			// TODO: better rerate pacing
-			if numflows != len(r.flowsfrom) {
+			if numflows != r.flowsfrom.count() {
 				r.rerate()
-				numflows = len(r.flowsfrom)
+				numflows = r.flowsfrom.count()
 			}
 			// time.Sleep(time.Microsecond) - FIXME: sleep when idle
 		}
@@ -544,16 +508,16 @@ func (r *ServerFive) Run() {
 }
 
 func (r *ServerFive) rerate() {
-	nflows := len(r.flowsfrom)
+	nflows := r.flowsfrom.count()
 	if nflows == 0 {
 		return
 	}
-	for gwy, flow := range r.flowsfrom {
+	applyCallback := func(gwy RunnerInterface, flow *Flow) {
 		assert(flow.to == r)
 		assert(flow.rateini)
 		// skip recently born - TODO: better rerate pacing
 		if Now.Sub(flow.ratects) <= config.timeClusterTrip {
-			continue
+			return
 		}
 		ratesetev := newM5RateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
 		flow.tobandwidth = ratesetev.tobandwidth
@@ -565,6 +529,7 @@ func (r *ServerFive) rerate() {
 		r.Send(ratesetev, true)
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	}
+	r.flowsfrom.apply(applyCallback)
 }
 
 func (r *ServerFive) M5putrequest(ev EventInterface) error {
@@ -572,8 +537,8 @@ func (r *ServerFive) M5putrequest(ev EventInterface) error {
 
 	tioevent := ev.(*M5ReplicaPutRequestEvent)
 	gwy := tioevent.GetSource()
-	_, ok := r.flowsfrom[gwy]
-	assert(!ok)
+	f := r.flowsfrom.get(gwy, false)
+	assert(f == nil)
 
 	tio := tioevent.extension.(*Tio)
 	flow := NewFlow(gwy, r, tioevent.cid, tioevent.num, tio)
@@ -581,10 +546,9 @@ func (r *ServerFive) M5putrequest(ev EventInterface) error {
 	flow.rateini = true
 	flow.ratects = Now
 	flow.raterts = Now.Add(config.timeClusterTrip * 2)
-	r.flowsfrom[gwy] = flow
-	assert(flow.offset == 0)
+	r.flowsfrom.insertFlow(gwy, flow)
 
-	nflows := len(r.flowsfrom)
+	nflows := r.flowsfrom.count()
 	rateinitev := newM5RateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
 	flow.tobandwidth = rateinitev.tobandwidth
 	log("srv-new-flow", flow.String(), rateinitev.String())
@@ -596,8 +560,7 @@ func (r *ServerFive) M5putrequest(ev EventInterface) error {
 
 func (r *ServerFive) receiveReplicaData(ev *M5ReplicaDataEvent) {
 	gwy := ev.GetSource()
-	flow, ok := r.flowsfrom[gwy]
-	assert(ok)
+	flow := r.flowsfrom.get(gwy, true)
 	log(LOG_V, "srv-recv-data", flow.String(), ev.String())
 	assert(flow.cid == ev.cid)
 	assert(flow.num == ev.num)
@@ -609,12 +572,14 @@ func (r *ServerFive) receiveReplicaData(ev *M5ReplicaDataEvent) {
 	tio := ev.extension.(*Tio)
 
 	if flow.offset >= flow.totalbytes {
-		putackev := newM5ReplicaPutAckEvent(r, gwy, flow.cid, flow.num)
+		// postpone the ack until after the replica (chunk.sizeb) is written to disk
+		diskdoneintime := r.disk.scheduleWrite(flow.totalbytes)
+		putackev := newM5ReplicaPutAckEvent(r, gwy, flow.cid, flow.num, diskdoneintime)
 		tio.next(putackev)
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 
 		log("srv-replica-done-and-gone", flow.String())
-		delete(r.flowsfrom, gwy)
+		r.flowsfrom.deleteFlow(gwy)
 		return
 	}
 	log(LOG_V, "srv-recv-data", flow.String())
@@ -644,7 +609,7 @@ func (m *ModelFive) NewGateway(i int) RunnerInterface {
 	gwy := &GatewayFive{RunnerBase{id: i, strtype: "GWY"}, int64(0), int64(0), int64(0), int64(0), int64(0), nil, nil, nil}
 	gwy.init(config.numServers)
 
-	gwy.flowsto = make(map[RunnerInterface]*Flow, config.numServers)
+	gwy.flowsto = NewFlowDir(gwy, config.numServers)
 	return gwy
 }
 
@@ -652,7 +617,8 @@ func (m *ModelFive) NewServer(i int) RunnerInterface {
 	srv := &ServerFive{RunnerBase: RunnerBase{id: i, strtype: "SRV"}, txbytestats: int64(0), rxbytestats: int64(0), flowsfrom: nil}
 	srv.init(config.numGateways)
 
-	srv.flowsfrom = make(map[RunnerInterface]*Flow, config.numGateways)
+	srv.flowsfrom = NewFlowDir(srv, config.numGateways)
+	srv.disk = NewDisk(srv, configStorage.diskMBps)
 	return srv
 }
 
