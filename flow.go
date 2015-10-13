@@ -18,7 +18,7 @@ type Flow struct {
 	tio         *Tio
 	tobandwidth int64     // bits/sec
 	refillbits  int64     // refill at the tobandwidth rate
-	sendnexts   time.Time // time network becomes available after the prev send
+	sendnexts   time.Time // earliest can send the next frame
 	ratects     time.Time // rateset creation time
 	raterts     time.Time // rateset effective time
 	rateini     bool      // rateset inited

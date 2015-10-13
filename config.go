@@ -68,7 +68,6 @@ var configStorage = ConfigStorage{
 //
 type ConfigNetwork struct {
 	linkbps        int64
-	unsolicitedbps int64
 	sizeFrame      int
 	sizeControlPDU int
 	overheadpct    int
@@ -76,12 +75,11 @@ type ConfigNetwork struct {
 }
 
 var configNetwork = ConfigNetwork{
-	linkbps:        10 * 1000 * 1000 * 1000, // bits/sec
-	unsolicitedbps: 2 * 1000 * 1000 * 1000,  // FIXME
-	sizeFrame:      9000,                    // L2 frame size (bytes)
-	sizeControlPDU: 1000,                    // solicited/control PDU size (bytes)
-	overheadpct:    1,                       // L2 + L3 + L4 + L5 + arp, etc. overhead (%)
-	leakymax:       2,                       // max size of the leaky bucket (num frames)
+	linkbps: 10 * 1000 * 1000 * 1000, // bits/sec
+
+	sizeFrame:      9000, // L2 frame size (bytes)
+	sizeControlPDU: 1000, // solicited/control PDU size (bytes)
+	overheadpct:    1,    // L2 + L3 + L4 + L5 + arp, etc. overhead (%)
 }
 
 //
