@@ -13,6 +13,85 @@ const INITIAL_QUEUE_SIZE int = 64
 
 //==================================================================
 //
+// types: Disk queue
+//
+//==================================================================
+type DiskQueue struct {
+	pending      []time.Time
+	pendingMutex *sync.Mutex
+	disk         *Disk
+}
+
+func NewDiskQueue(d *Disk, size int) *DiskQueue {
+	if size == 0 {
+		size = INITIAL_QUEUE_SIZE
+	}
+	initialQ := make([]time.Time, size)
+	return &DiskQueue{
+		pending:      initialQ[0:0],
+		pendingMutex: &sync.Mutex{},
+		disk:         d,
+	}
+}
+
+func (q *DiskQueue) insertTime(at time.Duration) {
+	t := Now.Add(at)
+	q.pendingMutex.Lock()
+	defer q.pendingMutex.Unlock()
+
+	q.clearOld()
+
+	l := len(q.pending)
+	if l == cap(q.pending) {
+		log(LOG_V, "growing disk queue", q.disk.String(), cap(q.pending))
+	}
+
+	q.pending = append(q.pending, time.Time{})
+	k := 0
+	for ; k < l; k++ {
+		tt := q.pending[k]
+		if !t.After(tt) {
+			break
+		}
+	}
+	if k == l {
+		q.pending[l] = t
+		return
+	}
+	copy(q.pending[k+1:], q.pending[k:])
+	q.pending[k] = t
+}
+
+func (q *DiskQueue) NumPending() int64 {
+	q.pendingMutex.Lock()
+	defer q.pendingMutex.Unlock()
+	q.clearOld()
+	l := len(q.pending)
+	return int64(l)
+}
+
+func (q *DiskQueue) clearOld() {
+	l := len(q.pending)
+	k := 0
+	for ; k < l; k++ {
+		t := q.pending[k]
+		if t.After(Now) {
+			break
+		}
+	}
+	if k == 0 {
+		return
+	}
+	if k == l {
+		q.pending = q.pending[0:0]
+		return
+	}
+	copy(q.pending[0:], q.pending[k:])
+	q.pending = q.pending[:l-k]
+}
+
+//==================================================================
+//
 // types: Tx queue
 //
 //==================================================================
@@ -82,9 +161,10 @@ func NewRxQueue(ri RunnerInterface, size int) *RxQueue {
 	if size == 0 {
 		size = INITIAL_QUEUE_SIZE
 	}
-	initialQ := make([]EventInterface, size)
+	evsq := make([]EventInterface, size)
+
 	return &RxQueue{
-		pending:          initialQ[0:0],
+		pending:          evsq[0:0],
 		pendingMutex:     &sync.RWMutex{},
 		eventstats:       int64(0),
 		busycnt:          int64(0),
@@ -204,11 +284,16 @@ func (q *RxQueue) NowIsDone() bool {
 		if Now.Sub(ct) < config.timeClusterTrip {
 			continue
 		}
-		realpendingdepth++
 		t := ev.GetTriggerTime()
 		if t.Before(Now) || t.Equal(Now) {
 			done = false
-			// keep counting real depth..
+			realpendingdepth++
+			break
+		} else {
+			diff := Now.Sub(t)
+			if diff < config.timeClusterTrip>>1 {
+				realpendingdepth++
+			}
 		}
 	}
 	q.runlock()
@@ -222,8 +307,6 @@ func (q *RxQueue) NowIsDone() bool {
 		}
 		q.busyidletick = Now
 	}
-
-	atomic.StoreInt64(&q.realpendingdepth, realpendingdepth)
 
 	return done
 }

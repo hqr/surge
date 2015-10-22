@@ -191,6 +191,11 @@ func RunAllModels() {
 		model.Configure() // the model's custom config
 
 		//
+		// log configuration
+		//
+		configLog()
+
+		//
 		// run it servers first (as they typically do not start generating load)
 		//
 		Now = time.Time{}
@@ -207,8 +212,6 @@ func RunAllModels() {
 			gwy.Run()
 		}
 
-		log(LOG_V, "Model @"+string(name)+" running now...")
-
 		//
 		// ONE MODEL MAIN LOOP
 		//
@@ -216,7 +219,9 @@ func RunAllModels() {
 
 		fmt.Printf("\r")
 		// benchmark results
+		timestampLog(false)
 		mstats.log(true)
+		timestampLog(true)
 	}
 	if hasprefix == 0 {
 		fmt.Printf("No registered models matched prefix '%s': nothing to do\n", config.mprefix)
@@ -230,7 +235,9 @@ func oneModelTimeLoop(model ModelInterface, stdout *bufio.Writer) {
 	realtime := time.Now()
 	pct := 0
 
+	timestampLog(false)
 	log(realtime.Format(time.RFC822))
+	timestampLog(true)
 	// advance the model's TIME and report stats periodically
 	for {
 		if Now.Equal(nextTrackTime) || Now.After(nextTrackTime) {
@@ -271,6 +278,8 @@ func oneModelTimeLoop(model ModelInterface, stdout *bufio.Writer) {
 	if Now.Before(endtime) && endtime.Sub(Now) < config.timeClusterTrip {
 		Now = endtime
 	}
+	fmt.Printf("\r                ")
+	stdout.Flush()
 }
 
 func finishedRunning() bool {

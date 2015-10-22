@@ -22,6 +22,7 @@ const (
 var logfd *os.File = nil
 var logstream *bufio.Writer = nil
 var logMutex *sync.Mutex = &sync.Mutex{}
+var logTimestamp bool = true
 
 func initLog() {
 	if len(config.LogFile) > 0 {
@@ -42,6 +43,10 @@ func terminateLog() {
 	}
 }
 
+func timestampLog(ts bool) {
+	logTimestamp = ts
+}
+
 func flushLog() {
 	if logfd != nil {
 		logMutex.Lock()
@@ -50,12 +55,29 @@ func flushLog() {
 	}
 }
 
+func configLog() {
+	timestampLog(false)
+
+	log(fmt.Sprintf("{numGateways:%d numServers:%d}", config.numGateways, config.numServers))
+	log(fmt.Sprintf("{timeIncStep:%v timeClusterTrip:%v timeStatsIval:%v timeTrackIval:%v timeToRun:%v}",
+		config.timeIncStep, config.timeClusterTrip, config.timeStatsIval, config.timeTrackIval, config.timeToRun))
+	log(fmt.Sprintf("%+v", configStorage))
+	log(fmt.Sprintf("%+v", configNetwork))
+	timestampLog(true)
+}
+
+//
+// the logger
+//
 func log(level string, args ...interface{}) {
 	l1 := len(args) - 1
 	sincestartup := Now.Sub(time.Time{})
 	logboth := false // terminal and log, both
 
 	var message = fmt.Sprintf("%-12.10v:", sincestartup)
+	if !logTimestamp {
+		message = ""
+	}
 	if level == "" || level == LOG_V || strings.HasPrefix(level, LOG_VV) {
 		if len(level) > len(config.LogLevel) {
 			return

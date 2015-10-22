@@ -122,9 +122,19 @@ func init() {
 
 	config.timeToRun = time.Duration(*trPtr)
 	config.timeStatsIval = config.timeToRun / 100
-	if config.timeToRun >= time.Second {
+	switch {
+	case config.timeToRun >= time.Second:
 		config.timeStatsIval = config.timeToRun / 1000
+	case config.timeToRun >= time.Millisecond*100:
+		config.timeStatsIval = config.timeToRun / 500
+	case config.timeToRun >= time.Millisecond*10:
+		config.timeStatsIval = config.timeToRun / 200
+	case config.timeToRun >= time.Millisecond:
+		config.timeStatsIval = config.timeToRun / 100
+	default:
+		config.timeStatsIval = config.timeToRun / 100
 	}
+
 	config.timeTrackIval = config.timeToRun / 10
 
 	config.LogFile = *lfPtr

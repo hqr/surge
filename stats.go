@@ -16,6 +16,7 @@ const (
 	StatsKindUndef StatsKindEnum = iota
 	StatsKindCount
 	StatsKindByteCount
+	StatsKindSampleCount
 	StatsKindPercentage
 )
 
@@ -49,6 +50,7 @@ type ModelStats struct {
 	totalsrv     map[string]int64
 	allNodeStats []NodeStats
 	iter         int64
+	lastUpdateTs time.Time
 }
 
 //
@@ -98,6 +100,7 @@ func (mstats *ModelStats) init(mname ModelName) {
 		}
 	}
 	mstats.iter = 0
+	mstats.lastUpdateTs = time.Time{}
 
 	if cap(mdtsortednames) > 0 {
 		mdtsortednames = mdtsortednames[0:0]
@@ -118,6 +121,7 @@ func (mstats *ModelStats) init(mname ModelName) {
 //
 func (mstats *ModelStats) update(elapsed time.Duration) {
 	mstats.iter++
+	mstats.lastUpdateTs = Now
 	for ij := 0; ij < config.numGateways+config.numServers; ij++ {
 		r := allNodes[ij]
 		oneIterNodeStats[ij] = r.GetStats(true)
@@ -135,7 +139,7 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 			_, ok := nodestats[n]
 			assert(ok, "missing stats counter: "+n)
 			val := nodestats[n]
-			if d.kind == StatsKindCount || d.kind == StatsKindByteCount {
+			if d.kind == StatsKindCount || d.kind == StatsKindByteCount || d.kind == StatsKindSampleCount {
 				mstats.allNodeStats[ij][n] += val
 				if scope == StatsScopeGateway {
 					newgwy += val
@@ -176,6 +180,15 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 					log(fmt.Sprintf("new-srv-%ss,%d,total-srv-%ss,%d,%ss/ms, %.0f", n, newsrv, n, mstats.totalsrv[n], n, spsrv))
 				}
 			}
+		} else if d.kind == StatsKindSampleCount {
+			if (d.scope & StatsScopeGateway) > 0 {
+				avesample := float64(newgwy) / float64(config.numGateways)
+				log(fmt.Sprintf("new-gwy-average-%s,%.1f", n, avesample))
+			}
+			if (d.scope & StatsScopeServer) > 0 {
+				avesample := float64(newsrv) / float64(config.numServers)
+				log(fmt.Sprintf("new-srv-average-%s,%.1f", n, avesample))
+			}
 		} else if d.kind == StatsKindPercentage {
 			busygwy := float64(newgwy) / float64(config.numGateways)
 			busysrv := float64(newsrv) / float64(config.numServers)
@@ -205,13 +218,16 @@ func (mstats *ModelStats) log(final bool) {
 	if final {
 		loglevel = LOG_BOTH
 		elapsed = config.timeToRun
+		if Now.Sub(mstats.lastUpdateTs) > config.timeStatsIval*9/10 {
+			mstats.iter++
+		}
 	}
 	for _, n := range mdtsortednames {
 		d := mdtors.x[n]
 
 		mstats.logTotal(loglevel, d, elapsed)
 
-		if d.kind == StatsKindCount || d.kind == StatsKindByteCount {
+		if d.kind == StatsKindCount || d.kind == StatsKindByteCount || d.kind == StatsKindSampleCount {
 			mstats.logNodeCounters(loglevel, d, elapsed)
 		} else if d.kind == StatsKindPercentage {
 			mstats.logNodePercentages(loglevel, d)
@@ -221,24 +237,33 @@ func (mstats *ModelStats) log(final bool) {
 
 func (mstats *ModelStats) logNodeCounters(loglevel string, d *StatsDescriptor, elapsed time.Duration) {
 	n := d.name
-	spsrv, spgwy := "    Server,", "    Gateway,"
+	spsrv, spgwy := "    server,", "    gateway,"
 	for ij := 0; ij < config.numGateways+config.numServers; ij++ {
 		scope := inScope(d, ij)
 		if scope == StatsScopeUndef {
 			continue
 		}
-		sp := float64(mstats.allNodeStats[ij][n]) * (float64(time.Millisecond) / float64(elapsed))
-		if scope == StatsScopeServer {
-			if d.kind == StatsKindByteCount {
-				spsrv += fmt.Sprintf("%s,", bytesMillisToKMGseconds(sp))
-			} else {
-				spsrv += fmt.Sprintf("%.0f,", sp)
+		if d.kind == StatsKindSampleCount {
+			sp := float64(mstats.allNodeStats[ij][n]) / float64(mstats.iter)
+			if scope == StatsScopeServer {
+				spsrv += fmt.Sprintf("%.1f,", sp)
+			} else if scope == StatsScopeGateway {
+				spgwy += fmt.Sprintf("%.1f,", sp)
 			}
-		} else if scope == StatsScopeGateway {
-			if d.kind == StatsKindByteCount {
-				spgwy += fmt.Sprintf("%s,", bytesMillisToKMGseconds(sp))
-			} else {
-				spgwy += fmt.Sprintf("%.0f,", sp)
+		} else {
+			sp := float64(mstats.allNodeStats[ij][n]) * (float64(time.Millisecond) / float64(elapsed))
+			if scope == StatsScopeServer {
+				if d.kind == StatsKindByteCount {
+					spsrv += fmt.Sprintf("%s,", bytesMillisToKMGseconds(sp))
+				} else {
+					spsrv += fmt.Sprintf("%.1f,", sp)
+				}
+			} else if scope == StatsScopeGateway {
+				if d.kind == StatsKindByteCount {
+					spgwy += fmt.Sprintf("%s,", bytesMillisToKMGseconds(sp))
+				} else {
+					spgwy += fmt.Sprintf("%.1f,", sp)
+				}
 			}
 		}
 	}
@@ -253,7 +278,7 @@ func (mstats *ModelStats) logNodeCounters(loglevel string, d *StatsDescriptor, e
 
 func (mstats *ModelStats) logNodePercentages(loglevel string, d *StatsDescriptor) {
 	n := d.name
-	spsrv, spgwy := "    Server,", "    Gateway,"
+	spsrv, spgwy := "    server,", "    gateway,"
 	for ij := 0; ij < config.numGateways+config.numServers; ij++ {
 		scope := inScope(d, ij)
 		if scope == StatsScopeUndef {
@@ -286,12 +311,12 @@ func (mstats *ModelStats) logTotal(loglevel string, d *StatsDescriptor, elapsed 
 			serverspeed := float64(mstats.totalsrv[n]) * (float64(time.Millisecond) / float64(elapsed))
 			gatewayspeed := float64(mstats.totalgwy[n]) * (float64(time.Millisecond) / float64(elapsed))
 			if d.kind == StatsKindByteCount {
-				log(loglevel, fmt.Sprintf("    total Gateway: %s, throughput: %s", bytesToKMG(mstats.totalgwy[n]), bytesMillisToKMGseconds(gatewayspeed)))
-				log(loglevel, fmt.Sprintf("    total Server: %s, throughput: %s", bytesToKMG(mstats.totalsrv[n]), bytesMillisToKMGseconds(serverspeed)))
+				log(loglevel, fmt.Sprintf("    total gateway: %s, throughput: %s", bytesToKMG(mstats.totalgwy[n]), bytesMillisToKMGseconds(gatewayspeed)))
+				log(loglevel, fmt.Sprintf("    total server: %s, throughput: %s", bytesToKMG(mstats.totalsrv[n]), bytesMillisToKMGseconds(serverspeed)))
 			} else {
-				log(loglevel, fmt.Sprintf("    total (Gateway, Server): (%d, %d)", mstats.totalgwy[n], mstats.totalsrv[n]))
-				log(loglevel, fmt.Sprintf("    Gateway %ss/ms: %.0f", n, gatewayspeed))
-				log(loglevel, fmt.Sprintf("    Server %ss/ms: %.0f", n, serverspeed))
+				log(loglevel, fmt.Sprintf("    total (gateway, server): (%d, %d)", mstats.totalgwy[n], mstats.totalsrv[n]))
+				log(loglevel, fmt.Sprintf("    gateway %ss/ms: %.0f", n, gatewayspeed))
+				log(loglevel, fmt.Sprintf("    server %ss/ms: %.0f", n, serverspeed))
 			}
 		} else if (d.scope & StatsScopeGateway) > 0 {
 			gatewayspeed := float64(mstats.totalgwy[n]) * (float64(time.Millisecond) / float64(elapsed))
@@ -300,7 +325,7 @@ func (mstats *ModelStats) logTotal(loglevel string, d *StatsDescriptor, elapsed 
 				log(loglevel, fmt.Sprintf("    throughput %s/s: %s", n, bytesMillisToKMGseconds(gatewayspeed)))
 			} else {
 				log(loglevel, fmt.Sprintf("    total: %d", mstats.totalgwy[n]))
-				log(loglevel, fmt.Sprintf("    Gateway %ss/ms: %.0f", n, gatewayspeed))
+				log(loglevel, fmt.Sprintf("    gateway %ss/ms: %.0f", n, gatewayspeed))
 			}
 		} else if (d.scope & StatsScopeServer) > 0 {
 			serverspeed := float64(mstats.totalsrv[n]) * (float64(time.Millisecond) / float64(elapsed))
@@ -309,8 +334,18 @@ func (mstats *ModelStats) logTotal(loglevel string, d *StatsDescriptor, elapsed 
 				log(loglevel, fmt.Sprintf("    throughput %s/s: %s", n, bytesMillisToKMGseconds(serverspeed)))
 			} else {
 				log(loglevel, fmt.Sprintf("    total: %d", mstats.totalsrv[n]))
-				log(loglevel, fmt.Sprintf("    Server %ss/ms: %.0f", n, serverspeed))
+				log(loglevel, fmt.Sprintf("    server %ss/ms: %.0f", n, serverspeed))
 			}
+		}
+	} else if d.kind == StatsKindSampleCount {
+		log(loglevel, n+":")
+		if (d.scope & StatsScopeGateway) > 0 {
+			average := float64(mstats.totalgwy[n]) / float64(config.numGateways) / float64(mstats.iter)
+			log(loglevel, fmt.Sprintf("    gateway average: %.1f", average))
+		}
+		if (d.scope & StatsScopeServer) > 0 {
+			average := float64(mstats.totalsrv[n]) / float64(config.numServers) / float64(mstats.iter)
+			log(loglevel, fmt.Sprintf("    server average: %.1f", average))
 		}
 	} else if d.kind == StatsKindPercentage {
 		log(loglevel, n+"(%):")
@@ -329,7 +364,7 @@ func (mstats *ModelStats) logTotal(loglevel string, d *StatsDescriptor, elapsed 
 		ag := float64(sumgateway) / float64(config.numGateways)
 		as := float64(sumserver) / float64(config.numServers)
 		if ((d.scope & StatsScopeGateway) > 0) && ((d.scope & StatsScopeServer) > 0) {
-			log(loglevel, fmt.Sprintf("    average (Gateway, Server) %s(%%): (%.1f, %.1f)", n, ag, as))
+			log(loglevel, fmt.Sprintf("    average (gateway, server) %s(%%): (%.1f, %.1f)", n, ag, as))
 		} else if (d.scope & StatsScopeGateway) > 0 {
 			log(loglevel, fmt.Sprintf("    average %s(%%): %.1f", n, ag))
 		} else if (d.scope & StatsScopeServer) > 0 {

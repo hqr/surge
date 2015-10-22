@@ -205,6 +205,7 @@ func init() {
 	d.Register("replica", StatsKindCount, StatsScopeGateway)
 	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("rxbytes", StatsKindByteCount, StatsScopeServer|StatsScopeGateway)
+	d.Register("disk-queue-depth", StatsKindSampleCount, StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "UCH-CCPi: Unicast Consistent Hash distribution using Captive Congestion Point"
@@ -238,7 +239,7 @@ func (r *GatewayFive) Run() {
 			if tio.done {
 				log(LOG_V, "tio-done", tio.String())
 				atomic.AddInt64(&r.tiostats, int64(1))
-				r.finishStartReplica(srv)
+				r.finishStartReplica(srv, true)
 			}
 		}
 		return true
@@ -249,7 +250,7 @@ func (r *GatewayFive) Run() {
 		for r.state == RstateRunning {
 			if r.chunk == nil {
 				if r.refillbits > int64(configNetwork.sizeControlPDU*8) {
-					r.startNewChunkReplica()
+					r.startNewChunk()
 				}
 			}
 			// recv
@@ -275,7 +276,7 @@ func (r *GatewayFive) refill(d time.Duration) {
 	}
 
 	applyCallback := func(srv RunnerInterface, flow *Flow) {
-		if flow.tobandwidth == 0 || flow.offset >= r.chunk.sizeb {
+		if flow.tobandwidth == 0 || flow.offset >= flow.totalbytes {
 			return
 		}
 		if flow.refillbits >= maxleakybucket {
@@ -292,7 +293,6 @@ func (r *GatewayFive) refill(d time.Duration) {
 // send data frames
 func (r *GatewayFive) sendata() {
 	q := r.txqueue
-	// FIXME: fifo per target, sizeFrame
 	for k := 0; k < len(q.fifo); k++ {
 		ev := q.fifo[k]
 		if r.Send(ev, false) {
@@ -326,6 +326,10 @@ func (r *GatewayFive) sendata() {
 			r.refillbits -= newbits
 			atomic.AddInt64(&r.txbytestats, int64(frsize))
 			flow.sendnexts = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
+			// opt: start next replica without waiting for the current one's completion
+			if flow.offset >= flow.totalbytes {
+				r.finishStartReplica(flow.to, false)
+			}
 		} else {
 			q.insertEvent(ev)
 		}
@@ -333,15 +337,13 @@ func (r *GatewayFive) sendata() {
 	r.flowsto.apply(applyCallback)
 }
 
-func (r *GatewayFive) startNewChunkReplica() {
-	var num int
-	if r.chunk == nil {
-		r.chunk = NewChunk(r, configStorage.sizeDataChunk*1024)
-		num = 1
-	} else {
-		num = r.replica.num + 1
-		assert(num <= configStorage.numReplicas)
-	}
+func (r *GatewayFive) startNewChunk() {
+	assert(r.chunk == nil)
+	r.chunk = NewChunk(r, configStorage.sizeDataChunk*1024)
+	r.startNewReplica(1)
+}
+
+func (r *GatewayFive) startNewReplica(num int) {
 	r.replica = NewPutReplica(r.chunk, num)
 
 	tgt := r.selectTarget()
@@ -363,17 +365,24 @@ func (r *GatewayFive) startNewChunkReplica() {
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 }
 
-func (r *GatewayFive) finishStartReplica(srv RunnerInterface) {
+func (r *GatewayFive) finishStartReplica(srv RunnerInterface, tiodone bool) {
 	flow := r.flowsto.get(srv, true)
-	log("gwy-flow-and-replica-done-and-gone", flow.String(), r.replica.String())
-	r.flowsto.deleteFlow(srv)
-	if r.replica.num == configStorage.numReplicas {
-		log("chunk-done", r.chunk.String())
-		atomic.AddInt64(&r.chunkstats, int64(1))
-		r.chunk = nil
+	if tiodone {
+		log("replica-acked-flow-gone", flow.String())
+		if flow.num == configStorage.numReplicas {
+			log("chunk-done", r.chunk.String())
+			atomic.AddInt64(&r.chunkstats, int64(1))
+			r.chunk = nil
+		}
+		r.flowsto.deleteFlow(srv)
 		return
 	}
-	r.startNewChunkReplica()
+
+	log("replica-fully-transmitted", flow.String(), r.replica.String())
+	flow.tobandwidth = 0
+	if flow.num < configStorage.numReplicas {
+		r.startNewReplica(flow.num + 1)
+	}
 }
 
 func (r *GatewayFive) rateset(ev *M5RateSetEvent) {
@@ -592,6 +601,8 @@ func (r *ServerFive) receiveReplicaData(ev *M5ReplicaDataEvent) {
 	if flow.offset >= flow.totalbytes {
 		// postpone the ack until after the replica (chunk.sizeb) is written to disk
 		diskdoneintime := r.disk.scheduleWrite(flow.totalbytes)
+		r.disk.queue.insertTime(diskdoneintime)
+
 		putackev := newM5ReplicaPutAckEvent(r, gwy, flow.cid, flow.num, diskdoneintime)
 		tio.next(putackev)
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
@@ -614,6 +625,7 @@ func (r *ServerFive) GetStats(reset bool) NodeStats {
 		s["txbytes"] = atomic.LoadInt64(&r.txbytestats)
 		s["rxbytes"] = atomic.LoadInt64(&r.rxbytestats)
 	}
+	s["disk-queue-depth"] = r.disk.queue.NumPending()
 	return s
 }
 

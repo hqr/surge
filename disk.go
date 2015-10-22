@@ -14,14 +14,17 @@ type Disk struct {
 	reads      int64
 	writebytes int64
 	readbytes  int64
+	queue      *DiskQueue
 }
 
 func NewDisk(r RunnerInterface, mbps int) *Disk {
-	return &Disk{node: r, MBps: mbps, reserved: 0, lastIOdone: Now}
+	d := &Disk{node: r, MBps: mbps, reserved: 0, lastIOdone: Now}
+	d.queue = NewDiskQueue(d, 0)
+	return d
 }
 
-func (d *Disk) String() {
-	fmt.Sprintf("disk-%s,%d,%d,%d,%d", d.node.String(), d.writes, d.reads, d.writebytes, d.readbytes)
+func (d *Disk) String() string {
+	return fmt.Sprintf("disk-%s,%d,%d,%d,%d", d.node.String(), d.writes, d.reads, d.writebytes, d.readbytes)
 }
 
 func (d *Disk) scheduleWrite(sizebytes int) time.Duration {
