@@ -15,8 +15,12 @@
 // chunk replica is separately ACK-ed so that 3 (or configured) replica
 // ACKs constitute a put-chunk.
 //
-// The pipeline includes 3 control events per each replica of each chunk,
-// more details in the code.
+// The UCH-CCPi pipeline includes 3 control events per each replica of
+// each chunk, details in the code.
+//
+// TODO: configStorage.chunksInFlight
+//       add support for multiple chunks in-flight, with gateways starting
+//       to transmit without waiting for completions
 //
 package surge
 
@@ -122,7 +126,7 @@ func (r *GatewayFive) Run() {
 		lastRefill := Now
 		for r.state == RstateRunning {
 			if r.chunk == nil {
-				if r.rb.enough(int64(configNetwork.sizeControlPDU * 8)) {
+				if r.rb.above(int64(configNetwork.sizeControlPDU * 8)) {
 					r.startNewChunk()
 				}
 			}
@@ -171,13 +175,13 @@ func (r *GatewayFive) sendata() {
 			frsize = r.chunk.sizeb - flow.offset
 		}
 		newbits := int64(frsize * 8)
-		if !r.rb.enough(newbits) {
+		if r.rb.below(newbits) {
 			return
 		}
 		if flow.sendnexts.After(Now) {
 			return
 		}
-		if !flow.rb.enough(newbits) {
+		if flow.rb.below(newbits) {
 			return
 		}
 		flow.offset += frsize
@@ -193,6 +197,7 @@ func (r *GatewayFive) sendata() {
 				r.finishStartReplica(flow.to, false)
 			}
 		} else {
+			flow.offset -= frsize
 			q.insertEvent(ev)
 		}
 	}
@@ -382,13 +387,12 @@ func (r *ServerFive) Run() {
 	go func() {
 		numflows := r.flowsfrom.count()
 		for r.state == RstateRunning {
-			// recv
 			r.receiveEnqueue()
-			time.Sleep(time.Microsecond)
 			r.processPendingEvents(rxcallback)
 
 			if numflows != r.flowsfrom.count() {
 				r.rerate()
+				// r.rerateInverseProportional()
 				numflows = r.flowsfrom.count()
 			}
 		}
@@ -403,9 +407,8 @@ func (r *ServerFive) rerate() {
 		return
 	}
 	applyCallback := func(gwy RunnerInterface, flow *Flow) {
-		assert(flow.to == r)
-		assert(flow.rateini)
-		if flow.totalbytes-flow.offset <= configNetwork.sizeFrame {
+		bytesinflight := int64(flow.tobandwidth) * int64(config.timeClusterTrip) / int64(time.Second) / 8
+		if flow.totalbytes-flow.offset <= configNetwork.sizeFrame+int(bytesinflight) {
 			return
 		}
 		ratesetev := newUchRateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
@@ -419,6 +422,40 @@ func (r *ServerFive) rerate() {
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	}
 	r.flowsfrom.apply(applyCallback)
+}
+
+func (r *ServerFive) rerateInverseProportional() {
+	nflows := r.flowsfrom.count()
+	if nflows == 0 {
+		return
+	}
+	totalrem := float64(0)
+	fdir := r.flowsfrom
+	for _, flow := range fdir.flows {
+		rem := flow.totalbytes - flow.offset
+		if rem <= configNetwork.sizeFrame {
+			continue
+		}
+		totalrem += 1.0 / float64(rem)
+	}
+	for gwy, flow := range fdir.flows {
+		rem := flow.totalbytes - flow.offset
+		if rem <= configNetwork.sizeFrame {
+			continue
+		}
+
+		newbwf := float64(configNetwork.linkbps) * (1.0 / float64(rem) / totalrem)
+		newbw := int64(newbwf)
+		ratesetev := newUchRateSetEvent(r, gwy, newbw, flow.cid, flow.num)
+		flow.tobandwidth = newbw
+		ratesetev.SetExtension(flow.tio)
+		flow.ratects = Now
+		flow.raterts = Now.Add(config.timeClusterTrip * 2)
+
+		log(LOG_V, "srv-send-rateset-proportional", flow.String())
+		r.Send(ratesetev, true)
+		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
+	}
 }
 
 func (r *ServerFive) M5putrequest(ev EventInterface) error {

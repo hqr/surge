@@ -43,11 +43,6 @@ func (rb *RateBucket) addtime() bool {
 	return true
 }
 
-func (rb *RateBucket) rerate(newrate int64) {
-	assert(rb.rateptr == nil)
-	rb.rate = newrate
-}
-
 func (rb *RateBucket) maximize() {
 	rb.value = rb.max
 }
@@ -60,6 +55,10 @@ func (rb *RateBucket) use(units int64) bool {
 	return true
 }
 
-func (rb *RateBucket) enough(units int64) bool {
+func (rb *RateBucket) above(units int64) bool {
 	return units <= rb.value
+}
+
+func (rb *RateBucket) below(units int64) bool {
+	return units > rb.value
 }

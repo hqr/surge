@@ -237,7 +237,7 @@ func (q *RxQueue) processPendingEvents(rxcallback processEvent) {
 		t := ev.GetTriggerTime()
 		if t.After(Now) {
 			diff := t.Sub(Now)
-			if diff > config.timeIncStep {
+			if diff > config.timeIncStep && diff > time.Nanosecond*10 {
 				k++
 				continue
 			}
