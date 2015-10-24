@@ -13,6 +13,7 @@ type Config struct {
 	mprefix                              string
 	timeIncStep                          time.Duration
 	timeClusterTrip                      time.Duration
+	timeTripMax                          time.Duration // TODO: randomize trip times
 	timeStatsIval                        time.Duration
 	timeTrackIval                        time.Duration
 	timeToRun                            time.Duration
@@ -33,6 +34,7 @@ var config = Config{
 
 	timeIncStep:     time.Nanosecond, // the Tick
 	timeClusterTrip: time.Microsecond,
+	timeTripMax:     time.Microsecond * 2, // TODO: must be F(busy%, timeClusterTrip)
 
 	timeStatsIval: time.Millisecond / 100,
 	timeTrackIval: time.Millisecond / 10,
@@ -54,13 +56,15 @@ type ConfigStorage struct {
 	numReplicas                  int
 	sizeDataChunk, sizeMetaChunk int
 	diskMBps                     int
+	chunksInFlight               int // TODO: UCH-* models to start next chunk without waiting for ACK..
 }
 
 var configStorage = ConfigStorage{
-	numReplicas:   3,
-	sizeDataChunk: 128, // KB
-	sizeMetaChunk: 1,   // KB
-	diskMBps:      400, // MB/sec
+	numReplicas:    3,
+	sizeDataChunk:  128, // KB
+	sizeMetaChunk:  1,   // KB
+	diskMBps:       400, // MB/sec
+	chunksInFlight: 1,   // TODO: limits total in-flight for a given gateway
 }
 
 //
@@ -71,7 +75,6 @@ type ConfigNetwork struct {
 	sizeFrame      int
 	sizeControlPDU int
 	overheadpct    int
-	leakymax       int
 }
 
 var configNetwork = ConfigNetwork{
@@ -80,6 +83,25 @@ var configNetwork = ConfigNetwork{
 	sizeFrame:      9000, // L2 frame size (bytes)
 	sizeControlPDU: 1000, // solicited/control PDU size (bytes)
 	overheadpct:    1,    // L2 + L3 + L4 + L5 + arp, etc. overhead (%)
+}
+
+//
+// AIMD
+//
+type ConfigAIMD struct {
+	bwAdd          int64         // (client) additive increase (step) in absence of dings, bits/sec
+	timeAdd        time.Duration // (client) dingless interval of time prior to += bwAdd
+	bwDiv          int           // (client) multiplicative decrease
+	bwMinInitial   int64         // (client) initial and minimum, in bits/sec
+	bwMaxPctToDing int           // (target) TODO ding when over the percentage of available
+}
+
+var configAIMD = ConfigAIMD{
+	bwAdd:          1 * 1000 * 1000 * 1000,
+	timeAdd:        config.timeClusterTrip * 3,
+	bwDiv:          2,
+	bwMinInitial:   1 * 1000 * 1000 * 1000,
+	bwMaxPctToDing: 80, // TODO: must instead take into account the speed of growth..
 }
 
 //
@@ -125,12 +147,6 @@ func init() {
 	switch {
 	case config.timeToRun >= time.Second:
 		config.timeStatsIval = config.timeToRun / 1000
-	case config.timeToRun >= time.Millisecond*100:
-		config.timeStatsIval = config.timeToRun / 500
-	case config.timeToRun >= time.Millisecond*10:
-		config.timeStatsIval = config.timeToRun / 200
-	case config.timeToRun >= time.Millisecond:
-		config.timeStatsIval = config.timeToRun / 100
 	default:
 		config.timeStatsIval = config.timeToRun / 100
 	}

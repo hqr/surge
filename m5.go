@@ -1,10 +1,22 @@
 //
-// ModelFive (m5, "5") is the very first approximation to UDP based
-// (unicast) storage-clustering via consistent hashing
+// ModelFive (m5, "5") is the very first realization of the UDP based
+// (unicast) storage-clustering via consistent hashing.
 //
-// The pipeline includes 3 control events per each chunk-replica
-// Congestion control by the targets tries to divide target's bandwidth
-// equally between client gateways
+// Full legal name of this model:
+//   Unicast Consistent Hash distribution using Captive Congestion Point
+//   (UCH-CCPi)
+//
+// The model implements a so called Captive Congestion Point logic,
+// to rate-control clients by dividing the servers's bandwidth equally
+// between all concurrent flows. The latter are getting added when
+// consistent-hasher at a gateway selects a given target, etc.
+//
+// The gateways are further limited by their own network links. Each
+// chunk replica is separately ACK-ed so that 3 (or configured) replica
+// ACKs constitute a put-chunk.
+//
+// The pipeline includes 3 control events per each replica of each chunk,
+// more details in the code.
 //
 package surge
 
@@ -21,145 +33,7 @@ type ModelFive struct {
 }
 
 //========================================================================
-// new types & constructors
-//========================================================================
-type Chunk struct {
-	cid     int64
-	sid     int64 // short id
-	gateway RunnerInterface
-	crtime  time.Time // creation time
-	sizeb   int       // KB
-}
-
-func NewChunk(gwy RunnerInterface, sizebytes int) *Chunk {
-	assert(gwy.(*GatewayFive) != nil)
-	uqid, printid := uqrandom64(gwy.GetId())
-	return &Chunk{cid: uqid, sid: printid, gateway: gwy, crtime: Now, sizeb: sizebytes}
-}
-
-func (chunk *Chunk) String() string {
-	return fmt.Sprintf("[chunk#%d]", chunk.sid)
-}
-
-type PutReplica struct {
-	chunk  *Chunk
-	crtime time.Time // creation time
-	num    int       // 1 .. configStorage.numReplicas
-}
-
-func (replica *PutReplica) String() string {
-	return fmt.Sprintf("[replica#%d,chunk#%d]", replica.num, replica.chunk.sid)
-}
-
-func NewPutReplica(c *Chunk, n int) *PutReplica {
-	return &PutReplica{chunk: c, crtime: Now, num: n}
-}
-
-//========================================================================
-// types: events
-//========================================================================
-type M5Event struct {
-	TimedUcastEvent
-}
-
-type M5ControlEvent struct {
-	M5Event
-	cid int64
-}
-
-type M5ReplicaPutRequestEvent struct {
-	M5ControlEvent
-	num   int // replica num
-	sizeb int // size in bytes
-}
-
-func newM5ReplicaPutRequestEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica) *M5ReplicaPutRequestEvent {
-	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
-	timedev := newTimedUcastEvent(gwy, at, srv)
-	assert(timedev.GetSource().(*GatewayFive) != nil)
-	return &M5ReplicaPutRequestEvent{M5ControlEvent{M5Event{*timedev}, rep.chunk.cid}, rep.num, rep.chunk.sizeb}
-}
-
-type M5ReplicaPutAckEvent struct {
-	M5ControlEvent
-	num int // replica num
-}
-
-func (e *M5ReplicaPutAckEvent) String() string {
-	printid := uqrand(e.cid)
-	return fmt.Sprintf("[PutAckEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
-}
-
-func newM5ReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, chunkid int64, repnum int, atdisk time.Duration) *M5ReplicaPutAckEvent {
-	atnet := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
-	at := atnet + atdisk
-	timedev := newTimedUcastEvent(srv, at, gwy)
-	assert(timedev.GetSource().(*ServerFive) != nil)
-	return &M5ReplicaPutAckEvent{M5ControlEvent{M5Event{*timedev}, chunkid}, repnum}
-}
-
-type M5RateSetEvent struct {
-	M5ControlEvent
-	tobandwidth int64 // bits/sec
-	num         int   // replica num
-}
-
-type M5RateInitEvent struct {
-	M5RateSetEvent
-}
-
-func (e *M5RateInitEvent) String() string {
-	printid := uqrand(e.cid)
-	return fmt.Sprintf("[RateInitEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
-}
-
-func newM5RateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, chunkid int64, repnum int) *M5RateSetEvent {
-	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
-	timedev := newTimedUcastEvent(srv, at, gwy)
-	assert(timedev.GetSource().(*ServerFive) != nil)
-	// factor in the L2+L3+L4 headers overhead + ARP, etc.
-	rate -= rate * int64(configNetwork.overheadpct) / int64(100)
-	return &M5RateSetEvent{M5ControlEvent{M5Event{*timedev}, chunkid}, rate, repnum}
-}
-
-func (e *M5RateSetEvent) String() string {
-	printid := uqrand(e.cid)
-	return fmt.Sprintf("[RateSetEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
-}
-
-func newM5RateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, chunkid int64, repnum int) *M5RateInitEvent {
-	ev := newM5RateSetEvent(srv, gwy, rate, chunkid, repnum)
-	return &M5RateInitEvent{*ev}
-}
-
-type M5DataEvent struct {
-	M5Event
-	cid    int64
-	num    int
-	offset int
-}
-
-type M5ReplicaDataEvent struct {
-	M5DataEvent
-}
-
-func newM5ReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, flow *Flow, frsize int) *M5ReplicaDataEvent {
-	at := sizeToDuration(frsize, "B", flow.tobandwidth, "b") + config.timeClusterTrip
-	timedev := newTimedUcastEvent(gwy, at, srv)
-	assert(timedev.GetSource().(*GatewayFive) != nil)
-	return &M5ReplicaDataEvent{M5DataEvent{M5Event{*timedev}, rep.chunk.cid, rep.num, flow.offset}}
-}
-
-func (e *M5ReplicaDataEvent) String() string {
-	printid := uqrand(e.cid)
-	dcreated := e.crtime.Sub(time.Time{})
-	dtriggered := e.thtime.Sub(time.Time{})
-	return fmt.Sprintf("[ReplicaDataEvent src=%v,tgt=%v,chunk#%d,num=%d,offset=%d,(%11.10v,%11.10v)]",
-		e.source.String(), e.target.String(), printid, e.num, e.offset, dcreated, dtriggered)
-}
-
-//========================================================================
-// types: nodes
+// m5 nodes
 //========================================================================
 type GatewayFive struct {
 	RunnerBase
@@ -168,10 +42,10 @@ type GatewayFive struct {
 	replicastats int64
 	txbytestats  int64
 	rxbytestats  int64
-	chunk        *Chunk // FIXME: one chunk at a time for now
+	chunk        *Chunk
 	replica      *PutReplica
 	flowsto      *FlowDir
-	refillbits   int64 // leaky-bucket on the client side
+	rb           *RateBucket
 }
 
 type ServerFive struct {
@@ -183,11 +57,10 @@ type ServerFive struct {
 }
 
 //
-// init
+// static & init
 //
 var m5 ModelFive
-var maxleakybucket int64
-var linkbpsminus int64
+var maxleakybucket, linkbpsminus int64
 
 func init() {
 	p := NewPipeline()
@@ -211,7 +84,7 @@ func init() {
 	props["description"] = "UCH-CCPi: Unicast Consistent Hash distribution using Captive Congestion Point"
 	RegisterModel("5", &m5, props)
 
-	maxleakybucket = int64(configNetwork.sizeFrame * 8)
+	maxleakybucket = int64(configNetwork.sizeFrame*8) + int64(configNetwork.sizeControlPDU*8)
 	linkbpsminus = configNetwork.linkbps - configNetwork.linkbps*int64(configNetwork.overheadpct)/int64(100)
 }
 
@@ -227,8 +100,8 @@ func (r *GatewayFive) Run() {
 		atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
 
 		switch ev.(type) {
-		case *M5RateSetEvent:
-			ratesetev := ev.(*M5RateSetEvent)
+		case *UchRateSetEvent:
+			ratesetev := ev.(*UchRateSetEvent)
 			log(LOG_V, "GWY::rxcallback:", ratesetev.String())
 			r.rateset(ratesetev)
 		default:
@@ -249,7 +122,7 @@ func (r *GatewayFive) Run() {
 		lastRefill := Now
 		for r.state == RstateRunning {
 			if r.chunk == nil {
-				if r.refillbits > int64(configNetwork.sizeControlPDU*8) {
+				if r.rb.enough(int64(configNetwork.sizeControlPDU * 8)) {
 					r.startNewChunk()
 				}
 			}
@@ -258,7 +131,7 @@ func (r *GatewayFive) Run() {
 			r.processPendingEvents(rxcallback)
 
 			if Now.After(lastRefill) {
-				r.refill(Now.Sub(lastRefill))
+				r.refill()
 				lastRefill = Now
 				r.sendata()
 			}
@@ -267,25 +140,14 @@ func (r *GatewayFive) Run() {
 	}()
 }
 
-func (r *GatewayFive) refill(d time.Duration) {
-	if r.refillbits < maxleakybucket {
-		r.refillbits += linkbpsminus * int64(d) / int64(time.Second)
-		if r.refillbits > maxleakybucket {
-			r.refillbits = maxleakybucket
-		}
-	}
+func (r *GatewayFive) refill() {
+	r.rb.addtime()
 
 	applyCallback := func(srv RunnerInterface, flow *Flow) {
 		if flow.tobandwidth == 0 || flow.offset >= flow.totalbytes {
 			return
 		}
-		if flow.refillbits >= maxleakybucket {
-			return
-		}
-		flow.refillbits += flow.tobandwidth * int64(d) / int64(time.Second)
-		if flow.refillbits > maxleakybucket {
-			flow.refillbits = maxleakybucket
-		}
+		flow.rb.addtime()
 	}
 	r.flowsto.apply(applyCallback)
 }
@@ -309,21 +171,21 @@ func (r *GatewayFive) sendata() {
 			frsize = r.chunk.sizeb - flow.offset
 		}
 		newbits := int64(frsize * 8)
-		if r.refillbits < newbits {
+		if !r.rb.enough(newbits) {
 			return
 		}
 		if flow.sendnexts.After(Now) {
 			return
 		}
-		if flow.refillbits < newbits {
+		if !flow.rb.enough(newbits) {
 			return
 		}
 		flow.offset += frsize
-		ev := newM5ReplicaDataEvent(r, srv, r.replica, flow, frsize)
+		ev := newUchReplicaDataEvent(r, srv, r.replica, flow, frsize)
 		ev.SetExtension(flow.tio)
 		if r.Send(ev, true) {
-			flow.refillbits -= newbits
-			r.refillbits -= newbits
+			flow.rb.use(newbits)
+			r.rb.use(newbits)
 			atomic.AddInt64(&r.txbytestats, int64(frsize))
 			flow.sendnexts = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
 			// opt: start next replica without waiting for the current one's completion
@@ -352,16 +214,18 @@ func (r *GatewayFive) startNewReplica(num int) {
 	tio := m5.putpipeline.NewTio(r)
 	flow := NewFlow(r, tgt, r.chunk.cid, num, tio)
 	flow.tobandwidth = int64(0)
+	flow.rb = NewRateBucket(maxleakybucket, int64(0), int64(0), &flow.tobandwidth)
+
 	flow.totalbytes = r.chunk.sizeb
 	r.flowsto.insertFlow(tgt, flow)
 	log("gwy-new-flow", flow.String())
 
-	ev := newM5ReplicaPutRequestEvent(r, tgt, r.replica)
+	ev := newUchReplicaPutRequestEvent(r, tgt, r.replica)
 	ev.SetExtension(tio)
 
 	tio.next(ev)
-	r.refillbits -= int64(configNetwork.sizeControlPDU * 8)
-	flow.refillbits -= int64(configNetwork.sizeControlPDU * 8)
+	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
+	flow.rb.use(int64(configNetwork.sizeControlPDU * 8))
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 }
 
@@ -385,7 +249,7 @@ func (r *GatewayFive) finishStartReplica(srv RunnerInterface, tiodone bool) {
 	}
 }
 
-func (r *GatewayFive) rateset(ev *M5RateSetEvent) {
+func (r *GatewayFive) rateset(ev *UchRateSetEvent) {
 	tio := ev.extension.(*Tio)
 	assert(tio.source == r)
 
@@ -437,7 +301,7 @@ func (r *GatewayFive) selectTarget() RunnerInterface {
 // GatewayFive TIO handlers
 //=========================
 func (r *GatewayFive) M5rateinit(ev EventInterface) error {
-	tioevent := ev.(*M5RateInitEvent)
+	tioevent := ev.(*UchRateInitEvent)
 	log(LOG_V, r.String(), "::M5rateinit()", tioevent.String())
 	srv := tioevent.GetSource()
 	flow := r.flowsto.get(srv, true)
@@ -447,7 +311,7 @@ func (r *GatewayFive) M5rateinit(ev EventInterface) error {
 		flow.ratects = tioevent.GetCreationTime()
 		flow.raterts = Now
 		flow.rateini = true
-		flow.refillbits = maxleakybucket
+		flow.rb.maximize()
 		flow.tobandwidth = tioevent.tobandwidth
 		log(LOG_V, "gwy-rateinit", flow.String(), r.replica.String())
 	} else {
@@ -460,7 +324,7 @@ func (r *GatewayFive) M5rateinit(ev EventInterface) error {
 }
 
 func (r *GatewayFive) M5replicack(ev EventInterface) error {
-	tioevent := ev.(*M5ReplicaPutAckEvent)
+	tioevent := ev.(*UchReplicaPutAckEvent)
 	srv := tioevent.GetSource()
 	flow := r.flowsto.get(srv, true)
 	assert(flow.cid == tioevent.cid)
@@ -501,8 +365,8 @@ func (r *ServerFive) Run() {
 
 	rxcallback := func(ev EventInterface) bool {
 		switch ev.(type) {
-		case *M5ReplicaDataEvent:
-			tioevent := ev.(*M5ReplicaDataEvent)
+		case *UchReplicaDataEvent:
+			tioevent := ev.(*UchReplicaDataEvent)
 			log(LOG_V, "SRV::rxcallback: replica data", tioevent.String())
 			r.receiveReplicaData(tioevent)
 		default:
@@ -544,7 +408,7 @@ func (r *ServerFive) rerate() {
 		if flow.totalbytes-flow.offset <= configNetwork.sizeFrame {
 			return
 		}
-		ratesetev := newM5RateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
+		ratesetev := newUchRateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
 		flow.tobandwidth = ratesetev.tobandwidth
 		ratesetev.SetExtension(flow.tio)
 		flow.ratects = Now
@@ -560,7 +424,7 @@ func (r *ServerFive) rerate() {
 func (r *ServerFive) M5putrequest(ev EventInterface) error {
 	log(LOG_V, r.String(), "::M5putrequest()", ev.String())
 
-	tioevent := ev.(*M5ReplicaPutRequestEvent)
+	tioevent := ev.(*UchReplicaPutRequestEvent)
 	gwy := tioevent.GetSource()
 	f := r.flowsfrom.get(gwy, false)
 	assert(f == nil)
@@ -574,7 +438,7 @@ func (r *ServerFive) M5putrequest(ev EventInterface) error {
 	r.flowsfrom.insertFlow(gwy, flow)
 
 	nflows := r.flowsfrom.count()
-	rateinitev := newM5RateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
+	rateinitev := newUchRateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
 	flow.tobandwidth = rateinitev.tobandwidth
 	log("srv-new-flow", flow.String(), rateinitev.String())
 
@@ -583,7 +447,7 @@ func (r *ServerFive) M5putrequest(ev EventInterface) error {
 	return nil
 }
 
-func (r *ServerFive) receiveReplicaData(ev *M5ReplicaDataEvent) {
+func (r *ServerFive) receiveReplicaData(ev *UchReplicaDataEvent) {
 	gwy := ev.GetSource()
 	flow := r.flowsfrom.get(gwy, true)
 	log(LOG_V, "srv-recv-data", flow.String(), ev.String())
@@ -603,7 +467,7 @@ func (r *ServerFive) receiveReplicaData(ev *M5ReplicaDataEvent) {
 		diskdoneintime := r.disk.scheduleWrite(flow.totalbytes)
 		r.disk.queue.insertTime(diskdoneintime)
 
-		putackev := newM5ReplicaPutAckEvent(r, gwy, flow.cid, flow.num, diskdoneintime)
+		putackev := newUchReplicaPutAckEvent(r, gwy, flow.cid, flow.num, diskdoneintime)
 		tio.next(putackev)
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 
@@ -635,10 +499,12 @@ func (r *ServerFive) GetStats(reset bool) NodeStats {
 //
 //==================================================================
 func (m *ModelFive) NewGateway(i int) RunnerInterface {
-	gwy := &GatewayFive{RunnerBase{id: i, strtype: "GWY"}, int64(0), int64(0), int64(0), int64(0), int64(0), nil, nil, nil, int64(maxleakybucket)}
+	gwy := &GatewayFive{RunnerBase{id: i, strtype: "GWY"}, int64(0), int64(0), int64(0), int64(0), int64(0), nil, nil, nil, nil}
 	gwy.init(config.numServers)
 
 	gwy.flowsto = NewFlowDir(gwy, config.numServers)
+
+	gwy.rb = NewRateBucket(maxleakybucket, linkbpsminus, maxleakybucket, nil)
 	return gwy
 }
 
