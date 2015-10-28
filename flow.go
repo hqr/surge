@@ -16,13 +16,13 @@ type Flow struct {
 	cid         int64
 	sid         int64
 	tio         *Tio
-	rb          *RateBucket // refill at the tobandwidth rate
-	tobandwidth int64       // bits/sec
-	sendnexts   time.Time   // earliest can send the next frame
-	ratects     time.Time   // rateset creation time
-	raterts     time.Time   // rateset effective time
-	rateini     bool        // rateset inited
-	num         int         // replica num
+	rb          RateBucketInterface // refill at the tobandwidth rate
+	tobandwidth int64               // bits/sec
+	sendnexts   time.Time           // earliest can send the next frame
+	ratects     time.Time           // rateset creation time
+	raterts     time.Time           // rateset effective time
+	rateini     bool                // rateset inited
+	num         int                 // replica num
 	offset      int
 	totalbytes  int
 }

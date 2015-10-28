@@ -75,6 +75,9 @@ type ConfigNetwork struct {
 	sizeFrame      int
 	sizeControlPDU int
 	overheadpct    int
+	// computed and assigned below
+	linkbpsminus     int64
+	maxratebucketval int64
 }
 
 var configNetwork = ConfigNetwork{
@@ -89,19 +92,18 @@ var configNetwork = ConfigNetwork{
 // AIMD
 //
 type ConfigAIMD struct {
-	bwAdd          int64         // (client) additive increase (step) in absence of dings, bits/sec
-	timeAdd        time.Duration // (client) dingless interval of time prior to += bwAdd
-	bwDiv          int           // (client) multiplicative decrease
-	bwMinInitial   int64         // (client) initial and minimum, in bits/sec
-	bwMaxPctToDing int           // (target) TODO ding when over the percentage of available
+	// additive increase (step) in absence of dings, as well as
+	bwMinInitialAdd int64         // (client) initial and minimum bandwidth, bits/sec
+	timeAdd         time.Duration // (client) dingless interval of time prior to += bwAdd
+	bwDiv           int           // (client) multiplicative decrease
+	bwMaxPctToDing  int           // (target) TODO ding when over the percentage of available
 }
 
 var configAIMD = ConfigAIMD{
-	bwAdd:          1 * 1000 * 1000 * 1000,
-	timeAdd:        config.timeClusterTrip * 3,
-	bwDiv:          2,
-	bwMinInitial:   1 * 1000 * 1000 * 1000,
-	bwMaxPctToDing: 80, // TODO: must instead take into account the speed of growth..
+	bwMinInitialAdd: 1 * 1000 * 1000 * 1000, // TODO: add and min together
+	timeAdd:         config.timeClusterTrip * 3,
+	bwDiv:           2,
+	bwMaxPctToDing:  80, // TODO: must instead take into account the speed of growth..
 }
 
 //
@@ -175,4 +177,7 @@ func init() {
 
 	configNetwork.sizeFrame = *l2framePtr
 	configNetwork.linkbps = *linkbpsPtr
+
+	configNetwork.maxratebucketval = int64(configNetwork.sizeFrame*8) + int64(configNetwork.sizeControlPDU*8)
+	configNetwork.linkbpsminus = configNetwork.linkbps - configNetwork.linkbps*int64(configNetwork.overheadpct)/int64(100)
 }

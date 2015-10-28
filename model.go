@@ -44,6 +44,7 @@ var allModelProps map[ModelName]map[string]interface{}
 var allNamesSorted []string
 
 var Now = time.Time{}
+var TimeNil = time.Time{}.Add(time.Hour * 10000)
 
 var allGateways []RunnerInterface
 var allServers []RunnerInterface

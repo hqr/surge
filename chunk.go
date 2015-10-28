@@ -20,7 +20,6 @@ type Chunk struct {
 }
 
 func NewChunk(gwy RunnerInterface, sizebytes int) *Chunk {
-	assert(gwy.(*GatewayFive) != nil)
 	uqid, printid := uqrandom64(gwy.GetId())
 	return &Chunk{cid: uqid, sid: printid, gateway: gwy, crtime: Now, sizeb: sizebytes}
 }
@@ -64,8 +63,18 @@ type UchReplicaPutRequestEvent struct {
 func newUchReplicaPutRequestEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica) *UchReplicaPutRequestEvent {
 	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
 	timedev := newTimedUcastEvent(gwy, at, srv)
-	assert(timedev.GetSource().(*GatewayFive) != nil)
 	return &UchReplicaPutRequestEvent{UchControlEvent{UchEvent{*timedev}, rep.chunk.cid}, rep.num, rep.chunk.sizeb}
+}
+
+type UchReplicaPutRequestAckEvent struct {
+	UchControlEvent
+	num int // replica num
+}
+
+func newUchReplicaPutRequestAckEvent(srv RunnerInterface, gwy RunnerInterface, chunkid int64, repnum int) *UchReplicaPutRequestAckEvent {
+	atnet := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
+	timedev := newTimedUcastEvent(srv, atnet, gwy)
+	return &UchReplicaPutRequestAckEvent{UchControlEvent{UchEvent{*timedev}, chunkid}, repnum}
 }
 
 type UchReplicaPutAckEvent struct {
@@ -82,7 +91,6 @@ func newUchReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, chunkid 
 	atnet := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
 	at := atnet + atdisk
 	timedev := newTimedUcastEvent(srv, at, gwy)
-	assert(timedev.GetSource().(*ServerFive) != nil)
 	return &UchReplicaPutAckEvent{UchControlEvent{UchEvent{*timedev}, chunkid}, repnum}
 }
 
@@ -104,7 +112,6 @@ func (e *UchRateInitEvent) String() string {
 func newUchRateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, chunkid int64, repnum int) *UchRateSetEvent {
 	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
 	timedev := newTimedUcastEvent(srv, at, gwy)
-	assert(timedev.GetSource().(*ServerFive) != nil)
 	// factor in the L2+L3+L4 headers overhead + ARP, etc.
 	rate -= rate * int64(configNetwork.overheadpct) / int64(100)
 	return &UchRateSetEvent{UchControlEvent{UchEvent{*timedev}, chunkid}, rate, repnum}
@@ -118,6 +125,21 @@ func (e *UchRateSetEvent) String() string {
 func newUchRateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, chunkid int64, repnum int) *UchRateInitEvent {
 	ev := newUchRateSetEvent(srv, gwy, rate, chunkid, repnum)
 	return &UchRateInitEvent{*ev}
+}
+
+type UchDingAimdEvent struct {
+	UchControlEvent
+	num int // replica num
+}
+
+func newUchDingAimdEvent(srv RunnerInterface, gwy RunnerInterface, chunkid int64, repnum int) *UchDingAimdEvent {
+	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
+	timedev := newTimedUcastEvent(srv, at, gwy)
+	return &UchDingAimdEvent{UchControlEvent{UchEvent{*timedev}, chunkid}, repnum}
+}
+func (e *UchDingAimdEvent) String() string {
+	printid := uqrand(e.cid)
+	return fmt.Sprintf("[DingAimdEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
 }
 
 type UchDataEvent struct {
@@ -134,7 +156,6 @@ type UchReplicaDataEvent struct {
 func newUchReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, flow *Flow, frsize int) *UchReplicaDataEvent {
 	at := sizeToDuration(frsize, "B", flow.tobandwidth, "b") + config.timeClusterTrip
 	timedev := newTimedUcastEvent(gwy, at, srv)
-	assert(timedev.GetSource().(*GatewayFive) != nil)
 	return &UchReplicaDataEvent{UchDataEvent{UchEvent{*timedev}, rep.chunk.cid, rep.num, flow.offset}}
 }
 
