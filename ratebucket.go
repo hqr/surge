@@ -99,16 +99,13 @@ type RateBucketAIMD struct {
 	minrate int64
 	maxrate int64
 	//
-	addival       time.Duration
 	div           int
 	units2addrate int64 // units to use at the current rate
 }
 
-func NewRateBucketAIMD(minrate int64, maxrate int64, maxval int64, addival time.Duration, div int) *RateBucketAIMD {
+func NewRateBucketAIMD(minrate int64, maxrate int64, maxval int64, div int) *RateBucketAIMD {
 	rb := NewRateBucket(maxval, minrate, maxval) // fully charged & timer-stopped
-
-	u := rb.rate * int64(addival) / int64(time.Second)
-	return &RateBucketAIMD{*rb, minrate, maxrate, addival, div, u}
+	return &RateBucketAIMD{*rb, minrate, maxrate, div, configAIMD.sizeAddBits}
 }
 
 func (rb *RateBucketAIMD) __addrate() {
@@ -130,7 +127,7 @@ func (rb *RateBucketAIMD) use(units int64) bool {
 	rb.units2addrate -= units
 	if rb.units2addrate <= 0 {
 		rb.__addrate()
-		rb.units2addrate = rb.rate * int64(rb.addival) / int64(time.Second)
+		rb.units2addrate = configAIMD.sizeAddBits
 	}
 	return true
 }
@@ -140,7 +137,7 @@ func (rb *RateBucketAIMD) ding() {
 	if rb.rate < rb.minrate {
 		rb.rate = rb.minrate
 	}
-	rb.units2addrate = rb.rate * int64(rb.addival) / int64(time.Second)
+	rb.units2addrate = configAIMD.sizeAddBits
 }
 
 func (rb *RateBucketAIMD) String() string {

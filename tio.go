@@ -97,7 +97,7 @@ func (tio *Tio) String() string {
 		if tio.err == nil {
 			return fmt.Sprintf("[tio#%d done]", tio.sid)
 		} else {
-			return fmt.Sprintf("ERROR: [tio#%d failed]", tio.sid, tio.err)
+			return fmt.Sprintf("ERROR: [tio#%d failed,%#v]", tio.sid, tio.err)
 		}
 	}
 	stage := tio.pipeline.GetStage(tio.index)

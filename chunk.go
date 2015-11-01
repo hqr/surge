@@ -144,9 +144,10 @@ func (e *UchDingAimdEvent) String() string {
 
 type UchDataEvent struct {
 	UchEvent
-	cid    int64
-	num    int
-	offset int
+	cid         int64
+	num         int
+	offset      int
+	tobandwidth int64
 }
 
 type UchReplicaDataEvent struct {
@@ -156,7 +157,7 @@ type UchReplicaDataEvent struct {
 func newUchReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, flow *Flow, frsize int) *UchReplicaDataEvent {
 	at := sizeToDuration(frsize, "B", flow.tobandwidth, "b") + config.timeClusterTrip
 	timedev := newTimedUcastEvent(gwy, at, srv)
-	return &UchReplicaDataEvent{UchDataEvent{UchEvent{*timedev}, rep.chunk.cid, rep.num, flow.offset}}
+	return &UchReplicaDataEvent{UchDataEvent{UchEvent{*timedev}, rep.chunk.cid, rep.num, flow.offset, flow.tobandwidth}}
 }
 
 func (e *UchReplicaDataEvent) String() string {

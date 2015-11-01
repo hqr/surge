@@ -311,10 +311,10 @@ func (mstats *ModelStats) logTotal(loglevel string, d *StatsDescriptor, elapsed 
 			serverspeed := float64(mstats.totalsrv[n]) * (float64(time.Millisecond) / float64(elapsed))
 			gatewayspeed := float64(mstats.totalgwy[n]) * (float64(time.Millisecond) / float64(elapsed))
 			if d.kind == StatsKindByteCount {
-				log(loglevel, fmt.Sprintf("    total gateway: %s, throughput: %s", bytesToKMG(mstats.totalgwy[n]), bytesMillisToKMGseconds(gatewayspeed)))
-				log(loglevel, fmt.Sprintf("    total server: %s, throughput: %s", bytesToKMG(mstats.totalsrv[n]), bytesMillisToKMGseconds(serverspeed)))
+				log(loglevel, fmt.Sprintf("    total (gateways): %s, throughput: %s", bytesToKMG(mstats.totalgwy[n]), bytesMillisToKMGseconds(gatewayspeed)))
+				log(loglevel, fmt.Sprintf("    total (servers): %s, throughput: %s", bytesToKMG(mstats.totalsrv[n]), bytesMillisToKMGseconds(serverspeed)))
 			} else {
-				log(loglevel, fmt.Sprintf("    total (gateway, server): (%d, %d)", mstats.totalgwy[n], mstats.totalsrv[n]))
+				log(loglevel, fmt.Sprintf("    total (gateways, servers): (%d, %d)", mstats.totalgwy[n], mstats.totalsrv[n]))
 				log(loglevel, fmt.Sprintf("    gateway %ss/ms: %.0f", n, gatewayspeed))
 				log(loglevel, fmt.Sprintf("    server %ss/ms: %.0f", n, serverspeed))
 			}
@@ -341,11 +341,11 @@ func (mstats *ModelStats) logTotal(loglevel string, d *StatsDescriptor, elapsed 
 		log(loglevel, n+":")
 		if (d.scope & StatsScopeGateway) > 0 {
 			average := float64(mstats.totalgwy[n]) / float64(config.numGateways) / float64(mstats.iter)
-			log(loglevel, fmt.Sprintf("    gateway average: %.1f", average))
+			log(loglevel, fmt.Sprintf("    gateways average: %.1f", average))
 		}
 		if (d.scope & StatsScopeServer) > 0 {
 			average := float64(mstats.totalsrv[n]) / float64(config.numServers) / float64(mstats.iter)
-			log(loglevel, fmt.Sprintf("    server average: %.1f", average))
+			log(loglevel, fmt.Sprintf("    servers average: %.1f", average))
 		}
 	} else if d.kind == StatsKindPercentage {
 		log(loglevel, n+"(%):")
@@ -364,7 +364,7 @@ func (mstats *ModelStats) logTotal(loglevel string, d *StatsDescriptor, elapsed 
 		ag := float64(sumgateway) / float64(config.numGateways)
 		as := float64(sumserver) / float64(config.numServers)
 		if ((d.scope & StatsScopeGateway) > 0) && ((d.scope & StatsScopeServer) > 0) {
-			log(loglevel, fmt.Sprintf("    average (gateway, server) %s(%%): (%.1f, %.1f)", n, ag, as))
+			log(loglevel, fmt.Sprintf("    average (gateways, servers) %s(%%): (%.1f, %.1f)", n, ag, as))
 		} else if (d.scope & StatsScopeGateway) > 0 {
 			log(loglevel, fmt.Sprintf("    average %s(%%): %.1f", n, ag))
 		} else if (d.scope & StatsScopeServer) > 0 {

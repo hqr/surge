@@ -109,18 +109,20 @@ func (r *GatewayUch) sendata() {
 		flow.offset += frsize
 		ev := newUchReplicaDataEvent(r.realobject(), srv, r.replica, flow, frsize)
 		ev.SetExtension(flow.tio)
+		flow.sendnexts = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
 		if r.Send(ev, true) {
-			flow.rb.use(newbits)
-			r.rb.use(newbits)
 			atomic.AddInt64(&r.txbytestats, int64(frsize))
-			flow.sendnexts = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
 			// starting next replica without waiting for the current one's completion
 			if flow.offset >= flow.totalbytes {
 				r.finishStartReplica(flow.to, false)
+			} else {
+				flow.rb.use(newbits)
+				flow.tobandwidth = flow.rb.getrate()
+				r.rb.use(newbits)
 			}
 		} else {
-			flow.offset -= frsize
 			q.insertEvent(ev)
+			assert(false, "async send not supported yet")
 		}
 	}
 	r.flowsto.apply(applyCallback)
@@ -168,6 +170,7 @@ func (r *GatewayUch) startNewReplica(num int) {
 	tio.next(ev)
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
 	flow.rb.use(int64(configNetwork.sizeControlPDU * 8))
+	flow.sendnexts = Now.Add(time.Duration(configNetwork.sizeControlPDU) * time.Second / time.Duration(configNetwork.linkbpsminus))
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 }
 
@@ -238,13 +241,13 @@ func (r *ServerUch) realobject() RunnerInterface {
 func (r *ServerUch) receiveReplicaData(ev *UchReplicaDataEvent) {
 	gwy := ev.GetSource()
 	flow := r.flowsfrom.get(gwy, true)
+
 	log(LOG_V, "srv-recv-data", flow.String(), ev.String())
 	assert(flow.cid == ev.cid)
 	assert(flow.num == ev.num)
 
 	x := ev.offset - flow.offset
 	assert(x <= configNetwork.sizeFrame, fmt.Sprintf("FATAL: out of order:%d:%s", ev.offset, flow.String()))
-
 	atomic.AddInt64(&r.rxbytestats, int64(x))
 
 	flow.offset = ev.offset

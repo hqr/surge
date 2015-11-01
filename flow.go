@@ -25,6 +25,7 @@ type Flow struct {
 	num         int                 // replica num
 	offset      int
 	totalbytes  int
+	prevoffset  int
 }
 
 // flows to or from a given node

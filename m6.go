@@ -37,7 +37,7 @@ type ServerSix struct {
 // static & init
 //
 var m6 ModelSix
-var timeFrame time.Duration // time to receive a data frame
+var timeFrameFullLink time.Duration // time to receive a data frame
 
 func init() {
 	p := NewPipeline()
@@ -60,7 +60,7 @@ func init() {
 	props["description"] = "UCH-AIMD: Unicast Consistent Hash distribution using AIMD congestion control"
 	RegisterModel("6", &m6, props)
 
-	timeFrame = time.Duration(configNetwork.sizeFrame) * time.Second / time.Duration(configNetwork.linkbpsminus)
+	timeFrameFullLink = time.Duration(configNetwork.sizeFrame*8) * time.Second / time.Duration(configNetwork.linkbpsminus)
 }
 
 //==================================================================
@@ -142,7 +142,6 @@ func (r *GatewaySix) M6putreqack(ev EventInterface) error {
 	flow := r.flowsto.get(ev.GetSource(), false)
 	assert(flow != nil, "FATAL: M6putreqack non-existing flow:"+tio.String()+":"+tioevent.String())
 	assert(flow.tio == tio, flow.String()+":"+tio.String())
-	assert(flow.tobandwidth == int64(0))
 
 	flow.tobandwidth = flow.rb.getrate()
 	return nil
@@ -163,9 +162,12 @@ func (r *ServerSix) Run() {
 	rxcallback := func(ev EventInterface) bool {
 		switch ev.(type) {
 		case *UchReplicaDataEvent:
-			tioevent := ev.(*UchReplicaDataEvent)
-			log(LOG_V, "SRV::rxcallback: replica data", tioevent.String())
-			r.receiveReplicaData(tioevent)
+			dataev := ev.(*UchReplicaDataEvent)
+			log(LOG_V, "SRV::rxcallback: replica data", dataev.String())
+			gwy := ev.GetSource()
+			flow := r.flowsfrom.get(gwy, true)
+			flow.tobandwidth = dataev.tobandwidth
+			r.receiveReplicaData(dataev)
 		default:
 			atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
 			tio := ev.GetExtension().(*Tio)
@@ -182,7 +184,7 @@ func (r *ServerSix) Run() {
 			r.receiveEnqueue()
 			r.processPendingEvents(rxcallback)
 
-			if Now.Sub(lastAimdCheck) > (timeFrame + config.timeClusterTrip) {
+			if Now.Sub(lastAimdCheck) > (timeFrameFullLink + config.timeClusterTrip*3) {
 				r.aimdCheck()
 				lastAimdCheck = Now
 			}
@@ -192,30 +194,56 @@ func (r *ServerSix) Run() {
 	}()
 }
 
-// FIXME: take into account disk queue as well..
 func (r *ServerSix) aimdCheck() {
-	q := r.rxqueue
-	dingcnt := 0
-	linktime := Now
+	var gwy RunnerInterface = nil
+	linktime := TimeNil
+	linkoverage := 0
+	dingall := false
+	frsize := configNetwork.sizeFrame
+	if r.disk.queue.NumPending() > int64(configAIMD.diskoverage) {
+		dingall = true
+		log("srv-dingall", r.String())
+	}
 
-	q.lock()
-	defer q.unlock()
-
-	for k := 0; k < len(q.pending); k++ {
-		ev := q.pending[k]
+	r.rxqueue.lock()
+	for k := 0; k < len(r.rxqueue.pending); k++ {
+		ev := r.rxqueue.pending[k]
 		_, ok := ev.(*UchReplicaDataEvent)
 		if !ok {
 			continue
 		}
-		t := ev.GetTriggerTime()
-		if t.Before(linktime) || t.Sub(linktime) < timeFrame {
-			r.dingOne(ev.GetSource())
-			dingcnt++
-			if dingcnt > 1 { // ding upto ... in one go
-				break
+		if dingall {
+			gwy = ev.GetSource()
+			flow := r.flowsfrom.get(gwy, true)
+			if flow.offset+3*frsize < flow.totalbytes && flow.prevoffset+frsize < flow.offset {
+				r.dingOne(gwy)
+				flow.prevoffset = flow.offset + frsize
 			}
+			continue
 		}
-		linktime = linktime.Add(timeFrame)
+		t := ev.GetTriggerTime()
+		if linktime.Equal(TimeNil) {
+			linktime = t
+			gwy = ev.GetSource()
+			continue
+		}
+		assert(!t.Before(linktime))
+		if t.Sub(linktime) <= timeFrameFullLink {
+			linkoverage++
+		}
+		linktime = t
+	}
+	r.rxqueue.unlock()
+
+	if dingall {
+		return
+	}
+	if linkoverage >= configAIMD.linkoverage {
+		flow := r.flowsfrom.get(gwy, true)
+		if flow.offset+3*frsize < flow.totalbytes && flow.prevoffset+frsize < flow.offset {
+			r.dingOne(gwy)
+			flow.prevoffset = flow.offset + frsize
+		}
 	}
 }
 
@@ -224,7 +252,7 @@ func (r *ServerSix) dingOne(gwy RunnerInterface) {
 	dingev := newUchDingAimdEvent(r, gwy, flow.cid, flow.num)
 	dingev.SetExtension(flow.tio)
 
-	log(LOG_V, "srv-send-ding", flow.String())
+	log("srv-send-ding", flow.String())
 	r.Send(dingev, true)
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 }
@@ -261,7 +289,6 @@ func (m *ModelSix) NewGateway(i int) RunnerInterface {
 			configAIMD.bwMinInitialAdd,     // minrate
 			configNetwork.linkbpsminus,     // maxrate
 			configNetwork.maxratebucketval, // maxval
-			configAIMD.timeAdd,             // Additive time interval
 			configAIMD.bwDiv)               // Multiplicative divisor
 	}
 

@@ -93,17 +93,19 @@ var configNetwork = ConfigNetwork{
 //
 type ConfigAIMD struct {
 	// additive increase (step) in absence of dings, as well as
-	bwMinInitialAdd int64         // (client) initial and minimum bandwidth, bits/sec
-	timeAdd         time.Duration // (client) dingless interval of time prior to += bwAdd
-	bwDiv           int           // (client) multiplicative decrease
-	bwMaxPctToDing  int           // (target) TODO ding when over the percentage of available
+	bwMinInitialAdd int64 // (client) initial and minimum bandwidth, bits/sec
+	sizeAddBits     int64 // (client) number of bits to transmit without dings prior to += bwAdd
+	bwDiv           int   // (client) multiplicative decrease
+	linkoverage     int   // (target) ding when the network queue gets too deep
+	diskoverage     int   // (target) ding when the disk queue gets too deep
 }
 
 var configAIMD = ConfigAIMD{
-	bwMinInitialAdd: 1 * 1000 * 1000 * 1000, // TODO: add and min together
-	timeAdd:         config.timeClusterTrip * 3,
+	bwMinInitialAdd: configNetwork.linkbps / int64(10),
+	sizeAddBits:     int64(configNetwork.sizeFrame*8) + int64(configNetwork.sizeControlPDU*8),
 	bwDiv:           2,
-	bwMaxPctToDing:  80, // TODO: must instead take into account the speed of growth..
+	linkoverage:     2,
+	diskoverage:     16,
 }
 
 //
