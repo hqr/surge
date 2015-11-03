@@ -19,14 +19,14 @@ const (
 	LOG_VVVV = "VVVV"
 )
 
-var logfd *os.File = nil
-var logstream *bufio.Writer = nil
-var logMutex *sync.Mutex = &sync.Mutex{}
-var logTimestamp bool = true
+var logfd *os.File
+var logstream *bufio.Writer
+var logMutex = &sync.Mutex{}
+var logTimestamp = true
 
 func initLog() {
 	if len(config.LogFile) > 0 {
-		var err error = nil
+		var err error
 		logfd, err = os.Create(config.LogFile)
 		assert(err == nil, "failed to create logfile", config.LogFile)
 		logstream = bufio.NewWriter(logfd)

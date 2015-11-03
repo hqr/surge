@@ -26,8 +26,8 @@ type Config struct {
 }
 
 var config = Config{
-	numGateways: 100,
-	numServers:  100,
+	numGateways: 10,
+	numServers:  10,
 	numDisksPer: 1,
 
 	mprefix: "",

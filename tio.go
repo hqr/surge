@@ -49,7 +49,7 @@ func (tio *Tio) nextAnon(when time.Duration, tgt RunnerInterface) {
 
 // advance the stage & send specific event to the next stage's target
 func (tio *Tio) next(newev EventInterface) {
-	var src RunnerInterface = nil
+	var src RunnerInterface
 	if tio.index == -1 {
 		src = tio.source
 		tio.strtime = Now
@@ -96,9 +96,8 @@ func (tio *Tio) String() string {
 	if tio.done {
 		if tio.err == nil {
 			return fmt.Sprintf("[tio#%d done]", tio.sid)
-		} else {
-			return fmt.Sprintf("ERROR: [tio#%d failed,%#v]", tio.sid, tio.err)
 		}
+		return fmt.Sprintf("ERROR: [tio#%d failed,%#v]", tio.sid, tio.err)
 	}
 	stage := tio.pipeline.GetStage(tio.index)
 	if tio.err == nil {

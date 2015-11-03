@@ -89,6 +89,7 @@ type ModelInterface interface {
 //============================================================================
 
 func NowIsDone() bool {
+	runtime.Gosched()
 	for ij := 0; ij < config.numGateways+config.numServers; ij++ {
 		r := allNodes[ij]
 		if !r.NowIsDone() {

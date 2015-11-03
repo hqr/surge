@@ -185,7 +185,8 @@ func (r *ServerSix) Run() {
 			r.processPendingEvents(rxcallback)
 
 			if Now.Sub(lastAimdCheck) > (timeFrameFullLink + config.timeClusterTrip*3) {
-				r.aimdCheck()
+				r.aimdCheckRxQueueFuture()
+				// r.aimdCheckTotalBandwidth()
 				lastAimdCheck = Now
 			}
 		}
@@ -194,8 +195,8 @@ func (r *ServerSix) Run() {
 	}()
 }
 
-func (r *ServerSix) aimdCheck() {
-	var gwy RunnerInterface = nil
+func (r *ServerSix) aimdCheckRxQueueFuture() {
+	var gwy RunnerInterface
 	linktime := TimeNil
 	linkoverage := 0
 	dingall := false
@@ -215,10 +216,8 @@ func (r *ServerSix) aimdCheck() {
 		if dingall {
 			gwy = ev.GetSource()
 			flow := r.flowsfrom.get(gwy, true)
-			if flow.offset+3*frsize < flow.totalbytes && flow.prevoffset+frsize < flow.offset {
-				r.dingOne(gwy)
-				flow.prevoffset = flow.offset + frsize
-			}
+			r.dingOne(gwy)
+			flow.prevoffset = flow.offset + frsize
 			continue
 		}
 		t := ev.GetTriggerTime()
@@ -227,7 +226,6 @@ func (r *ServerSix) aimdCheck() {
 			gwy = ev.GetSource()
 			continue
 		}
-		assert(!t.Before(linktime))
 		if t.Sub(linktime) <= timeFrameFullLink {
 			linkoverage++
 		}
@@ -243,6 +241,54 @@ func (r *ServerSix) aimdCheck() {
 		if flow.offset+3*frsize < flow.totalbytes && flow.prevoffset+frsize < flow.offset {
 			r.dingOne(gwy)
 			flow.prevoffset = flow.offset + frsize
+		}
+	}
+}
+
+func (r *ServerSix) aimdCheckTotalBandwidth() {
+	nflows := 0
+	totalcurbw := int64(0)
+	fdir := r.flowsfrom
+	dingall := false
+	frsize := configNetwork.sizeFrame
+
+	if r.disk.queue.NumPending() > int64(configAIMD.diskoverage) {
+		dingall = true
+		log("srv-dingall", r.String())
+	}
+
+	for gwy, flow := range fdir.flows {
+		if flow.totalbytes-flow.offset < 2*configNetwork.sizeFrame {
+			continue
+		}
+		if dingall {
+			r.dingOne(gwy)
+			flow.prevoffset = flow.offset + frsize
+			continue
+		}
+		totalcurbw += flow.tobandwidth
+		nflows++
+	}
+	if dingall || nflows <= 1 {
+		return
+	}
+
+	totalfutbw := totalcurbw + configAIMD.bwMinInitialAdd*int64(nflows)
+	if totalfutbw <= configNetwork.linkbpsminus {
+		return
+	}
+	// do some dinging and keep computing the resulting bw while doing so
+	for gwy, flow := range fdir.flows {
+		if flow.totalbytes-flow.offset < 2*configNetwork.sizeFrame {
+			continue
+		}
+		if flow.offset+3*frsize < flow.totalbytes && flow.prevoffset+frsize < flow.offset {
+			r.dingOne(gwy)
+			flow.prevoffset = flow.offset + frsize
+			totalfutbw -= flow.tobandwidth / int64(configAIMD.bwDiv)
+			if totalfutbw <= configNetwork.linkbpsminus {
+				break
+			}
 		}
 	}
 }
