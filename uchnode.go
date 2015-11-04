@@ -51,10 +51,14 @@ func NewGatewayUch(i int, p *Pipeline, cb setFlowRateBucketCallback) *GatewayUch
 	return gwy
 }
 
+// realobject stores to pointer the the gateway's instance that embeds this
+// instance of GatewayUch
 func (r *GatewayUch) realobject() RunnerInterface {
 	return r.rptr
 }
 
+// selectTarget randomly selects target server that is not yet talking to this
+// gateway
 func (r *GatewayUch) selectTarget() RunnerInterface {
 	numPeers := cap(r.eps) - 1
 	assert(numPeers > 1)
@@ -143,6 +147,8 @@ func (r *GatewayUch) sendata() {
 	r.flowsto.apply(applyCallback)
 }
 
+// finishStartReplica finishes the replica or the entire chunk, the latter
+// when all the required configStorage.numReplicas copies are fully stored
 func (r *GatewayUch) finishStartReplica(srv RunnerInterface, tiodone bool) {
 	flow := r.flowsto.get(srv, true)
 	if tiodone {
@@ -163,6 +169,9 @@ func (r *GatewayUch) finishStartReplica(srv RunnerInterface, tiodone bool) {
 	}
 }
 
+// startNewReplica allocates new replica and tio to drive the former
+// through the pipeline. Flow peer-to-peer object is created as well
+// here, subject to the concrete modeled protocol
 func (r *GatewayUch) startNewReplica(num int) {
 	r.replica = NewPutReplica(r.chunk, num)
 
@@ -206,6 +215,13 @@ func (r *GatewayUch) replicack(ev EventInterface) error {
 //
 // stats
 //
+// GetStats implements the corresponding RunnerInterface method for the
+// GatewayUch common counters. Some of them are inc-ed inside this module,
+// others - elsewhere, for instance in the concrete gateway's instance
+// that embeds this GatewayUch
+// The caller (such as, e.g., stats.go) will typically collect all the
+// atomic counters and reset them to zeros to collect new values with the
+// next iteration..
 func (r *GatewayUch) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
 	if reset {
@@ -287,6 +303,13 @@ func (r *ServerUch) receiveReplicaData(ev *UchReplicaDataEvent) {
 //
 // stats
 //
+// GetStats implements the corresponding RunnerInterface method for the
+// ServerUch common counters. Some of them may be inc-ed inside this module,
+// others - elsewhere, for instance in the concrete server's instance
+// that embeds this GatewayUch
+// The caller (such as, e.g., stats.go) will typically collect all the
+// atomic counters and reset them to zeros to collect new values with the
+// next iteration..
 func (r *ServerUch) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
 	if reset {
