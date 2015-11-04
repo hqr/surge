@@ -1,3 +1,9 @@
+// Package surge provides a framework for discrete event simulation, as well as
+// a number of models for Unsolicited and Reservation Group based Edge-driven
+// load balancing
+//
+// GatewayUch and ServerUch implement common Unicast-Consistent-Hashing
+// gateway and server, respectively.
 package surge
 
 import (
@@ -31,6 +37,8 @@ type GatewayUch struct {
 	setflowrbcb  setFlowRateBucketCallback
 }
 
+// NewGatewayUch constructs GatewayUch. The latter embeds RunnerBase and must in turn
+// be embedded
 func NewGatewayUch(i int, p *Pipeline, cb setFlowRateBucketCallback) *GatewayUch {
 	rbase := RunnerBase{id: i, strtype: "GWY"}
 	gwy := &GatewayUch{RunnerBase: rbase}
@@ -78,7 +86,10 @@ func (r *GatewayUch) startNewChunk() {
 	r.startNewReplica(1)
 }
 
-// send data frames
+// sendata sends data packets (frames) in the form of UchReplicaDataEvent,
+// each carrying configNetwork.sizeFrame bytes (9000 jumbo by default)
+// The sending is throttled both by the gateway's own egress link (r.rb)
+// and the end-to-end flow (flow,rb)
 func (r *GatewayUch) sendata() {
 	q := r.txqueue
 	for k := 0; k < len(q.fifo); k++ {
@@ -97,18 +108,22 @@ func (r *GatewayUch) sendata() {
 			frsize = r.chunk.sizeb - flow.offset
 		}
 		newbits := int64(frsize * 8)
+		// check with the gateway's egress link implemented as ratebucket
 		if r.rb.below(newbits) {
 			return
 		}
+		// must ensure previous send is fully done
 		if flow.sendnexts.After(Now) {
 			return
 		}
+		// check with the flow's own ratebucket
 		if flow.rb.below(newbits) {
 			return
 		}
 		flow.offset += frsize
 		ev := newUchReplicaDataEvent(r.realobject(), srv, r.replica, flow, frsize)
 		ev.SetExtension(flow.tio)
+		// time for the bits to get fully transmitted given the current flow's bandwidth
 		flow.sendnexts = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
 		if r.Send(ev, true) {
 			atomic.AddInt64(&r.txbytestats, int64(frsize))
@@ -183,7 +198,7 @@ func (r *GatewayUch) replicack(ev EventInterface) error {
 	flow := r.flowsto.get(srv, true)
 	assert(flow.cid == tioevent.cid)
 	assert(flow.num == tioevent.num)
-	log(LOG_V, "::replicack()", flow.String(), tioevent.String())
+	log(LogV, "::replicack()", flow.String(), tioevent.String())
 	atomic.AddInt64(&r.replicastats, int64(1))
 	return nil
 }
@@ -222,6 +237,8 @@ type ServerUch struct {
 	putpipeline *Pipeline
 }
 
+// NewServerUch constructs ServerUch. The latter embeds RunnerBase and must in turn
+// be embedded
 func NewServerUch(i int, p *Pipeline) *ServerUch {
 	rbase := RunnerBase{id: i, strtype: "SRV"}
 	srv := &ServerUch{RunnerBase: rbase}
@@ -242,7 +259,7 @@ func (r *ServerUch) receiveReplicaData(ev *UchReplicaDataEvent) {
 	gwy := ev.GetSource()
 	flow := r.flowsfrom.get(gwy, true)
 
-	log(LOG_V, "srv-recv-data", flow.String(), ev.String())
+	log(LogV, "srv-recv-data", flow.String(), ev.String())
 	assert(flow.cid == ev.cid)
 	assert(flow.num == ev.num)
 

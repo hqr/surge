@@ -31,7 +31,7 @@ type RunnerInterface interface {
 	NumPendingEvents(exact bool) int64
 
 	GetState() RunnerStateEnum
-	GetId() int
+	GetID() int
 	GetStats(reset bool) NodeStats
 
 	String() string
@@ -63,7 +63,7 @@ type processEvent func(ev EventInterface) bool
 // RunnerBase interface methods
 //==================================================================
 func (r *RunnerBase) setChannels(peer RunnerInterface, txch chan EventInterface, rxch chan EventInterface) {
-	peerid := peer.GetId()
+	peerid := peer.GetID()
 
 	assert(0 < peerid && peerid < cap(r.txchans) && peerid < cap(r.rxchans))
 	assert(peerid < cap(r.eps))
@@ -81,7 +81,7 @@ func (r *RunnerBase) setChannels(peer RunnerInterface, txch chan EventInterface,
 }
 
 func (r *RunnerBase) getChannels(peer RunnerInterface) (chan EventInterface, chan EventInterface) {
-	peerid := peer.GetId()
+	peerid := peer.GetID()
 	assert(r.eps[peerid] == peer)
 	return r.txchans[peerid], r.rxchans[peerid]
 }
@@ -97,7 +97,7 @@ func (r *RunnerBase) PrepareToStop() {
 }
 
 func (r *RunnerBase) GetState() RunnerStateEnum { return r.state }
-func (r *RunnerBase) GetId() int                { return r.id }
+func (r *RunnerBase) GetID() int                { return r.id }
 
 func (r *RunnerBase) GetStats(reset bool) NodeStats {
 	return r.rxqueue.GetStats(reset)
@@ -182,7 +182,7 @@ func (r *RunnerBase) receiveEnqueue() (bool, error) {
 				log("ERROR", r.String(), err)
 			}
 		} else if ev != nil {
-			log(LOG_VVV, "recv-ed", ev.String())
+			log(LogVVV, "recv-ed", ev.String())
 			if !locked {
 				r.rxqueue.lock()
 				locked = true
@@ -207,7 +207,7 @@ func (r *RunnerBase) recvNextEvent() (EventInterface, error) {
 		}
 
 		// SelectDefault case
-		var selectedcase reflect.SelectCase = r.cases[chosen]
+		var selectedcase = r.cases[chosen]
 		if selectedcase.Dir == reflect.SelectDefault {
 			return nil, nil
 		}

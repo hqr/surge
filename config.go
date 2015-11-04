@@ -161,13 +161,13 @@ func init() {
 	if *qPtr {
 		config.LogLevel = ""
 	} else if *vPtr {
-		config.LogLevel = LOG_V
+		config.LogLevel = LogV
 	} else if *vvPtr {
-		config.LogLevel = LOG_VV
+		config.LogLevel = LogVV
 	} else if *vvvPtr {
-		config.LogLevel = LOG_VVV
+		config.LogLevel = LogVVV
 	} else if *vvvvPtr {
-		config.LogLevel = LOG_VVVV
+		config.LogLevel = LogVVVV
 	}
 
 	config.DEBUG = *dbPtr

@@ -1,5 +1,5 @@
 //
-// ModelFour (m4, "4") is a step-up in terms of layering:
+// modelFour (m4, "4") is a step-up in terms of layering:
 // this model uses a simple 4-stages IO pipeline via the farmework's
 // TIO service...
 //
@@ -16,23 +16,23 @@ import (
 )
 
 // implements ModelInterface
-type ModelFour struct {
+type modelFour struct {
 	pipeline *Pipeline
 }
 
-type GatewayFour struct {
+type gatewayFour struct {
 	RunnerBase
 	tiostats int64
 }
 
-type ServerFour struct {
+type serverFour struct {
 	RunnerBase
 }
 
 //
 // init
 //
-var m4 ModelFour
+var m4 modelFour
 
 func init() {
 	p := NewPipeline()
@@ -55,17 +55,17 @@ func init() {
 
 //==================================================================
 //
-// GatewayFour methods
+// gatewayFour methods
 //
 //==================================================================
-func (r *GatewayFour) Run() {
+func (r *gatewayFour) Run() {
 	r.state = RstateRunning
 	outstanding := 0
 
 	rxcallback := func(ev EventInterface) bool {
 		tioevent := ev.(*TimedUcastEvent)
 		tio := tioevent.extension.(*Tio)
-		log(LOG_VV, "GWY rxcallback", tio.String())
+		log(LogVV, "GWY rxcallback", tio.String())
 		tio.doStage(r)
 
 		if tio.done {
@@ -104,8 +104,8 @@ func (r *GatewayFour) Run() {
 	}()
 }
 
-func (r *GatewayFour) M4putreqack(ev EventInterface) error {
-	log(LOG_VV, r.String(), "::M4putreqack()", ev.String())
+func (r *gatewayFour) M4putreqack(ev EventInterface) error {
+	log(LogVV, r.String(), "::M4putreqack()", ev.String())
 
 	// create event here and ask tio to follow up
 	at := clusterTripPlusRandom()
@@ -118,13 +118,13 @@ func (r *GatewayFour) M4putreqack(ev EventInterface) error {
 	return nil
 }
 
-func (r *GatewayFour) M4putxferack(ev EventInterface) error {
-	log(LOG_VV, r.String(), "::M4putxferack()", ev.String())
+func (r *gatewayFour) M4putxferack(ev EventInterface) error {
+	log(LogVV, r.String(), "::M4putxferack()", ev.String())
 
 	return nil
 }
 
-func (r *GatewayFour) GetStats(reset bool) NodeStats {
+func (r *gatewayFour) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
 	if reset {
 		s["tio"] = atomic.SwapInt64(&r.tiostats, int64(0))
@@ -136,16 +136,16 @@ func (r *GatewayFour) GetStats(reset bool) NodeStats {
 
 //==================================================================
 //
-// ServerFour methods
+// serverFour methods
 //
 //==================================================================
-func (r *ServerFour) Run() {
+func (r *serverFour) Run() {
 	r.state = RstateRunning
 
 	rxcallback := func(ev EventInterface) bool {
 		tioevent := ev.(*TimedUcastEvent)
 		tio := tioevent.extension.(*Tio)
-		log(LOG_VV, "SRV rxcallback", tio.String())
+		log(LogVV, "SRV rxcallback", tio.String())
 
 		tio.doStage(r)
 
@@ -164,8 +164,8 @@ func (r *ServerFour) Run() {
 	}()
 }
 
-func (r *ServerFour) M4putrequest(ev EventInterface) error {
-	log(LOG_VV, r.String(), "::M4putrequest()", ev.String())
+func (r *serverFour) M4putrequest(ev EventInterface) error {
+	log(LogVV, r.String(), "::M4putrequest()", ev.String())
 
 	tioevent := ev.(*TimedUcastEvent)
 	tio := tioevent.extension.(*Tio)
@@ -175,8 +175,8 @@ func (r *ServerFour) M4putrequest(ev EventInterface) error {
 	return nil
 }
 
-func (r *ServerFour) M4putxfer(ev EventInterface) error {
-	log(LOG_VV, r.String(), "::M4putxfer()", ev.String())
+func (r *serverFour) M4putxfer(ev EventInterface) error {
+	log(LogVV, r.String(), "::M4putxfer()", ev.String())
 
 	at := clusterTripPlusRandom()
 
@@ -188,26 +188,26 @@ func (r *ServerFour) M4putxfer(ev EventInterface) error {
 
 //==================================================================
 //
-// ModelFour methods
+// modelFour methods
 //
 //==================================================================
 //
-// ModelFour interface methods
+// modelFour interface methods
 //
-func (m *ModelFour) NewGateway(i int) RunnerInterface {
-	gwy := &GatewayFour{RunnerBase{id: i, strtype: "GWY"}, int64(0)}
+func (m *modelFour) NewGateway(i int) RunnerInterface {
+	gwy := &gatewayFour{RunnerBase{id: i, strtype: "GWY"}, int64(0)}
 	gwy.init(config.numServers)
 	return gwy
 }
 
-func (m *ModelFour) NewServer(i int) RunnerInterface {
-	srv := &ServerFour{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
+func (m *modelFour) NewServer(i int) RunnerInterface {
+	srv := &serverFour{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
 	srv.init(config.numGateways)
 	return srv
 }
 
-func (m *ModelFour) NewDisk(i int) RunnerInterface { return nil }
+func (m *modelFour) NewDisk(i int) RunnerInterface { return nil }
 
-func (m *ModelFour) Configure() {
+func (m *modelFour) Configure() {
 	config.timeClusterTrip = time.Microsecond * 2
 }

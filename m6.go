@@ -1,5 +1,8 @@
+// Package surge provides a framework for discrete event simulation, as well as
+// a number of models for Unsolicited and Reservation Group based Edge-driven
+// load balancing
 //
-// ModelSix (m6, "6"), aka UCH-AIMD:
+// modelSix (m6, "6"), aka UCH-AIMD:
 // Unicast Consistent Hash distribution using AIMD
 //
 // AIMD or Additive Increase/Multiplicative Decrease
@@ -17,26 +20,25 @@ import (
 	"time"
 )
 
-// implements ModelInterface
-type ModelSix struct {
+type modelSix struct {
 	putpipeline *Pipeline
 }
 
 //========================================================================
 // m6 nodes
 //========================================================================
-type GatewaySix struct {
+type gatewaySix struct {
 	GatewayUch
 }
 
-type ServerSix struct {
+type serverSix struct {
 	ServerUch
 }
 
 //
 // static & init
 //
-var m6 ModelSix
+var m6 modelSix
 var timeFrameFullLink time.Duration // time to receive a data frame
 
 func init() {
@@ -65,10 +67,10 @@ func init() {
 
 //==================================================================
 //
-// GatewaySix methods
+// gatewaySix methods
 //
 //==================================================================
-func (r *GatewaySix) Run() {
+func (r *gatewaySix) Run() {
 	r.state = RstateRunning
 
 	rxcallback := func(ev EventInterface) bool {
@@ -77,15 +79,15 @@ func (r *GatewaySix) Run() {
 		switch ev.(type) {
 		case *UchDingAimdEvent:
 			dingev := ev.(*UchDingAimdEvent)
-			log(LOG_V, "GWY::rxcallback", dingev.String())
+			log(LogV, "GWY::rxcallback", dingev.String())
 			r.ding(dingev)
 		default:
 			srv := ev.GetSource()
 			tio := ev.GetExtension().(*Tio)
-			log(LOG_V, "GWY::rxcallback", tio.String())
+			log(LogV, "GWY::rxcallback", tio.String())
 			tio.doStage(r)
 			if tio.done {
-				log(LOG_V, "tio-done", tio.String())
+				log(LogV, "tio-done", tio.String())
 				atomic.AddInt64(&r.tiostats, int64(1))
 				r.finishStartReplica(srv, true)
 			}
@@ -114,7 +116,7 @@ func (r *GatewaySix) Run() {
 	}()
 }
 
-func (r *GatewaySix) ding(dingev *UchDingAimdEvent) {
+func (r *gatewaySix) ding(dingev *UchDingAimdEvent) {
 	tio := dingev.extension.(*Tio)
 	assert(tio.source == r)
 
@@ -130,11 +132,11 @@ func (r *GatewaySix) ding(dingev *UchDingAimdEvent) {
 }
 
 //=========================
-// GatewaySix TIO handlers
+// gatewaySix TIO handlers
 //=========================
-func (r *GatewaySix) M6putreqack(ev EventInterface) error {
+func (r *gatewaySix) M6putreqack(ev EventInterface) error {
 	tioevent := ev.(*UchReplicaPutRequestAckEvent)
-	log(LOG_V, r.String(), "::M6putreqack()", tioevent.String())
+	log(LogV, r.String(), "::M6putreqack()", tioevent.String())
 
 	tio := tioevent.extension.(*Tio)
 	assert(tio.source == r)
@@ -147,23 +149,23 @@ func (r *GatewaySix) M6putreqack(ev EventInterface) error {
 	return nil
 }
 
-func (r *GatewaySix) M6replicack(ev EventInterface) error {
+func (r *gatewaySix) M6replicack(ev EventInterface) error {
 	return r.replicack(ev)
 }
 
 //==================================================================
 //
-// ServerSix methods
+// serverSix methods
 //
 //==================================================================
-func (r *ServerSix) Run() {
+func (r *serverSix) Run() {
 	r.state = RstateRunning
 
 	rxcallback := func(ev EventInterface) bool {
 		switch ev.(type) {
 		case *UchReplicaDataEvent:
 			dataev := ev.(*UchReplicaDataEvent)
-			log(LOG_V, "SRV::rxcallback: replica data", dataev.String())
+			log(LogV, "SRV::rxcallback: replica data", dataev.String())
 			gwy := ev.GetSource()
 			flow := r.flowsfrom.get(gwy, true)
 			flow.tobandwidth = dataev.tobandwidth
@@ -171,7 +173,7 @@ func (r *ServerSix) Run() {
 		default:
 			atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
 			tio := ev.GetExtension().(*Tio)
-			log(LOG_V, "SRV::rxcallback", tio.String())
+			log(LogV, "SRV::rxcallback", tio.String())
 			tio.doStage(r)
 		}
 
@@ -195,7 +197,7 @@ func (r *ServerSix) Run() {
 	}()
 }
 
-func (r *ServerSix) aimdCheckRxQueueFuture() {
+func (r *serverSix) aimdCheckRxQueueFuture() {
 	var gwy RunnerInterface
 	linktime := TimeNil
 	linkoverage := 0
@@ -245,7 +247,7 @@ func (r *ServerSix) aimdCheckRxQueueFuture() {
 	}
 }
 
-func (r *ServerSix) aimdCheckTotalBandwidth() {
+func (r *serverSix) aimdCheckTotalBandwidth() {
 	nflows := 0
 	totalcurbw := int64(0)
 	fdir := r.flowsfrom
@@ -293,7 +295,7 @@ func (r *ServerSix) aimdCheckTotalBandwidth() {
 	}
 }
 
-func (r *ServerSix) dingOne(gwy RunnerInterface) {
+func (r *serverSix) dingOne(gwy RunnerInterface) {
 	flow := r.flowsfrom.get(gwy, true)
 	dingev := newUchDingAimdEvent(r, gwy, flow.cid, flow.num)
 	dingev.SetExtension(flow.tio)
@@ -303,8 +305,8 @@ func (r *ServerSix) dingOne(gwy RunnerInterface) {
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 }
 
-func (r *ServerSix) M6putrequest(ev EventInterface) error {
-	log(LOG_V, r.String(), "::M6putrequest()", ev.String())
+func (r *serverSix) M6putrequest(ev EventInterface) error {
+	log(LogV, r.String(), "::M6putrequest()", ev.String())
 
 	tioevent := ev.(*UchReplicaPutRequestEvent)
 	gwy := tioevent.GetSource()
@@ -326,10 +328,10 @@ func (r *ServerSix) M6putrequest(ev EventInterface) error {
 
 //==================================================================
 //
-// ModelSix interface methods
+// modelSix interface methods
 //
 //==================================================================
-func (m *ModelSix) NewGateway(i int) RunnerInterface {
+func (m *modelSix) NewGateway(i int) RunnerInterface {
 	setflowratebucket := func(flow *Flow) {
 		flow.rb = NewRateBucketAIMD(
 			configAIMD.bwMinInitialAdd,     // minrate
@@ -343,20 +345,20 @@ func (m *ModelSix) NewGateway(i int) RunnerInterface {
 		configNetwork.maxratebucketval, // maxval
 		configNetwork.linkbpsminus,     // rate
 		configNetwork.maxratebucketval) // value
-	rgwy := &GatewaySix{*gwy}
+	rgwy := &gatewaySix{*gwy}
 	rgwy.GatewayUch.rptr = rgwy
 	return rgwy
 }
 
-func (m *ModelSix) NewServer(i int) RunnerInterface {
+func (m *modelSix) NewServer(i int) RunnerInterface {
 	srv := NewServerUch(i, m6.putpipeline)
-	rsrv := &ServerSix{*srv}
+	rsrv := &serverSix{*srv}
 	rsrv.ServerUch.rptr = rsrv
 	return rsrv
 }
 
-func (m *ModelSix) NewDisk(i int) RunnerInterface { return nil }
+func (m *modelSix) NewDisk(i int) RunnerInterface { return nil }
 
-func (m *ModelSix) Configure() {
+func (m *modelSix) Configure() {
 	configNetwork.sizeControlPDU = 100
 }

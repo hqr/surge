@@ -1,5 +1,5 @@
 //
-// ModelThree (name = "3") is a simple ping-pong with a random server
+// modelThree (name = "3") is a simple ping-pong with a random server
 // selection
 // Each event produced by the configured gateways is pseudo-randomly ID-ed
 // Server-recipient responds back to the source with a new event that carries
@@ -19,15 +19,15 @@ import (
 )
 
 // implements ModelInterface
-type ModelThree struct {
+type modelThree struct {
 }
 
-type GatewayThree struct {
+type gatewayThree struct {
 	RunnerBase
 	waitingResponse []int64
 }
 
-type ServerThree struct {
+type serverThree struct {
 	RunnerBase
 }
 
@@ -39,7 +39,7 @@ type TimedUniqueEvent struct {
 func newTimedUniqueEvent(src RunnerInterface, when time.Duration, tgt RunnerInterface, id int64) *TimedUniqueEvent {
 	ev := newTimedUcastEvent(src, when, tgt)
 	if id == 0 {
-		id, _ = uqrandom64(src.GetId())
+		id, _ = uqrandom64(src.GetID())
 	}
 	return &TimedUniqueEvent{*ev, id}
 }
@@ -54,26 +54,26 @@ func init() {
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "ping-pong with a random target selection"
-	RegisterModel("3", &ModelThree{}, props)
+	RegisterModel("3", &modelThree{}, props)
 }
 
 //==================================================================
 //
-// GatewayThree methods
+// gatewayThree methods
 //
 //==================================================================
 //
 // generate random event (storm) => random servers
 //
-func (r *GatewayThree) Run() {
+func (r *gatewayThree) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) bool {
-		log(LOG_V, "GWY rxcallback", r.String(), ev.String())
+		log(LogV, "GWY rxcallback", r.String(), ev.String())
 
 		// validate that we got response from the right target
-		id := ev.GetSource().GetId()
+		id := ev.GetSource().GetID()
 		assert(r.waitingResponse[id] != 0)
 
 		// validate that we got response to the right event
@@ -91,13 +91,13 @@ func (r *GatewayThree) Run() {
 			for i := 0; i < 10; i++ {
 				srv := r.selectTarget()
 				if srv != nil {
-					tgtid := srv.GetId()
-					eventId, _ := uqrandom64(r.GetId())
+					tgtid := srv.GetID()
+					eventID, _ := uqrandom64(r.GetID())
 					at := clusterTripPlusRandom()
-					ev := newTimedUniqueEvent(r, at, srv, eventId)
+					ev := newTimedUniqueEvent(r, at, srv, eventID)
 					r.Send(ev, true)
 
-					r.waitingResponse[tgtid] = eventId
+					r.waitingResponse[tgtid] = eventID
 				}
 			}
 			// recv
@@ -110,7 +110,7 @@ func (r *GatewayThree) Run() {
 	}()
 }
 
-func (r *GatewayThree) selectTarget() RunnerInterface {
+func (r *gatewayThree) selectTarget() RunnerInterface {
 	numPeers := cap(r.eps) - 1
 	assert(numPeers > 1)
 	id := rand.Intn(numPeers) + 1
@@ -134,16 +134,16 @@ func (r *GatewayThree) selectTarget() RunnerInterface {
 
 //==================================================================
 //
-// ServerThree methods
+// serverThree methods
 //
 //==================================================================
-func (r *ServerThree) Run() {
+func (r *serverThree) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) bool {
 		assert(r == ev.GetTarget())
-		log(LOG_V, "SRV rxcallback", r.String(), ev.String())
+		log(LogV, "SRV rxcallback", r.String(), ev.String())
 
 		realevent, ok := ev.(*TimedUniqueEvent)
 		assert(ok)
@@ -167,14 +167,14 @@ func (r *ServerThree) Run() {
 
 //==================================================================
 //
-// ModelThree methods
+// modelThree methods
 //
 //==================================================================
 //
-// ModelThree interface methods
+// modelThree interface methods
 //
-func (m *ModelThree) NewGateway(i int) RunnerInterface {
-	gwy := &GatewayThree{
+func (m *modelThree) NewGateway(i int) RunnerInterface {
+	gwy := &gatewayThree{
 		RunnerBase:      RunnerBase{id: i, strtype: "GWY"},
 		waitingResponse: nil,
 	}
@@ -184,14 +184,14 @@ func (m *ModelThree) NewGateway(i int) RunnerInterface {
 	return gwy
 }
 
-func (m *ModelThree) NewServer(i int) RunnerInterface {
-	srv := &ServerThree{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
+func (m *modelThree) NewServer(i int) RunnerInterface {
+	srv := &serverThree{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
 	srv.init(config.numGateways)
 	return srv
 }
 
-func (m *ModelThree) NewDisk(i int) RunnerInterface { return nil }
+func (m *modelThree) NewDisk(i int) RunnerInterface { return nil }
 
-func (m *ModelThree) Configure() {
+func (m *modelThree) Configure() {
 	config.timeClusterTrip = time.Microsecond * 2
 }

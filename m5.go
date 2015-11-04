@@ -1,5 +1,5 @@
 //
-// ModelFive (m5, "5") is the very first realization of the UDP based
+// modelFive (m5, "5") is the very first realization of the UDP based
 // (unicast) storage-clustering via consistent hashing.
 //
 // Full legal name of this model:
@@ -30,25 +30,25 @@ import (
 )
 
 // implements ModelInterface
-type ModelFive struct {
+type modelFive struct {
 	putpipeline *Pipeline
 }
 
 //========================================================================
 // m5 nodes
 //========================================================================
-type GatewayFive struct {
+type gatewayFive struct {
 	GatewayUch
 }
 
-type ServerFive struct {
+type serverFive struct {
 	ServerUch
 }
 
 //
 // static & init
 //
-var m5 ModelFive
+var m5 modelFive
 
 func init() {
 	p := NewPipeline()
@@ -75,10 +75,10 @@ func init() {
 
 //==================================================================
 //
-// GatewayFive methods
+// gatewayFive methods
 //
 //==================================================================
-func (r *GatewayFive) Run() {
+func (r *gatewayFive) Run() {
 	r.state = RstateRunning
 
 	rxcallback := func(ev EventInterface) bool {
@@ -87,15 +87,15 @@ func (r *GatewayFive) Run() {
 		switch ev.(type) {
 		case *UchRateSetEvent:
 			ratesetev := ev.(*UchRateSetEvent)
-			log(LOG_V, "GWY::rxcallback:", ratesetev.String())
+			log(LogV, "GWY::rxcallback:", ratesetev.String())
 			r.rateset(ratesetev)
 		default:
 			srv := ev.GetSource()
 			tio := ev.GetExtension().(*Tio)
-			log(LOG_V, "GWY::rxcallback", tio.String())
+			log(LogV, "GWY::rxcallback", tio.String())
 			tio.doStage(r)
 			if tio.done {
-				log(LOG_V, "tio-done", tio.String())
+				log(LogV, "tio-done", tio.String())
 				atomic.AddInt64(&r.tiostats, int64(1))
 				r.finishStartReplica(srv, true)
 			}
@@ -124,7 +124,7 @@ func (r *GatewayFive) Run() {
 	}()
 }
 
-func (r *GatewayFive) rateset(ev *UchRateSetEvent) {
+func (r *gatewayFive) rateset(ev *UchRateSetEvent) {
 	tio := ev.extension.(*Tio)
 	assert(tio.source == r)
 
@@ -146,16 +146,16 @@ func (r *GatewayFive) rateset(ev *UchRateSetEvent) {
 		flow.tobandwidth = ev.tobandwidth
 		flow.rb.setrate(flow.tobandwidth)
 
-		log(LOG_V, "gwy-rateset", flow.String())
+		log(LogV, "gwy-rateset", flow.String())
 	}
 }
 
 //=========================
-// GatewayFive TIO handlers
+// gatewayFive TIO handlers
 //=========================
-func (r *GatewayFive) M5rateinit(ev EventInterface) error {
+func (r *gatewayFive) M5rateinit(ev EventInterface) error {
 	tioevent := ev.(*UchRateInitEvent)
-	log(LOG_V, r.String(), "::M5rateinit()", tioevent.String())
+	log(LogV, r.String(), "::M5rateinit()", tioevent.String())
 	srv := tioevent.GetSource()
 	flow := r.flowsto.get(srv, true)
 	assert(flow.cid == tioevent.cid)
@@ -168,38 +168,38 @@ func (r *GatewayFive) M5rateinit(ev EventInterface) error {
 		flow.tobandwidth = tioevent.tobandwidth
 		flow.rb.setrate(flow.tobandwidth)
 
-		log(LOG_V, "gwy-rateinit", flow.String(), r.replica.String())
+		log(LogV, "gwy-rateinit", flow.String(), r.replica.String())
 	} else {
-		log(LOG_V, "gwy-rate-already-set", flow.String())
+		log(LogV, "gwy-rate-already-set", flow.String())
 	}
 
-	log(LOG_V, "gwy-rateinit", flow.String(), r.replica.String())
+	log(LogV, "gwy-rateinit", flow.String(), r.replica.String())
 
 	return nil
 }
 
-func (r *GatewayFive) M5replicack(ev EventInterface) error {
+func (r *gatewayFive) M5replicack(ev EventInterface) error {
 	return r.replicack(ev)
 }
 
 //==================================================================
 //
-// ServerFive methods
+// serverFive methods
 //
 //==================================================================
-func (r *ServerFive) Run() {
+func (r *serverFive) Run() {
 	r.state = RstateRunning
 
 	rxcallback := func(ev EventInterface) bool {
 		switch ev.(type) {
 		case *UchReplicaDataEvent:
 			tioevent := ev.(*UchReplicaDataEvent)
-			log(LOG_V, "SRV::rxcallback: replica data", tioevent.String())
+			log(LogV, "SRV::rxcallback: replica data", tioevent.String())
 			r.receiveReplicaData(tioevent)
 		default:
 			atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
 			tio := ev.GetExtension().(*Tio)
-			log(LOG_V, "SRV::rxcallback", tio.String())
+			log(LogV, "SRV::rxcallback", tio.String())
 			tio.doStage(r)
 		}
 
@@ -226,7 +226,7 @@ func (r *ServerFive) Run() {
 //
 // note: two possible implementations: rerate() and rerateInverseProportional()
 //
-func (r *ServerFive) rerate() {
+func (r *serverFive) rerate() {
 	nflows := r.flowsfrom.count()
 	if nflows == 0 {
 		return
@@ -242,14 +242,14 @@ func (r *ServerFive) rerate() {
 		flow.ratects = Now
 		flow.raterts = Now.Add(config.timeClusterTrip * 2)
 
-		log(LOG_V, "srv-send-rateset", flow.String())
+		log(LogV, "srv-send-rateset", flow.String())
 		r.Send(ratesetev, true)
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	}
 	r.flowsfrom.apply(applyCallback)
 }
 
-func (r *ServerFive) rerateInverseProportional() {
+func (r *serverFive) rerateInverseProportional() {
 	nflows := r.flowsfrom.count()
 	if nflows == 0 {
 		return
@@ -277,14 +277,14 @@ func (r *ServerFive) rerateInverseProportional() {
 		flow.ratects = Now
 		flow.raterts = Now.Add(config.timeClusterTrip * 2)
 
-		log(LOG_V, "srv-send-rateset-proportional", flow.String())
+		log(LogV, "srv-send-rateset-proportional", flow.String())
 		r.Send(ratesetev, true)
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	}
 }
 
-func (r *ServerFive) M5putrequest(ev EventInterface) error {
-	log(LOG_V, r.String(), "::M5putrequest()", ev.String())
+func (r *serverFive) M5putrequest(ev EventInterface) error {
+	log(LogV, r.String(), "::M5putrequest()", ev.String())
 
 	tioevent := ev.(*UchReplicaPutRequestEvent)
 	gwy := tioevent.GetSource()
@@ -311,10 +311,10 @@ func (r *ServerFive) M5putrequest(ev EventInterface) error {
 
 //==================================================================
 //
-// ModelFive interface methods
+// modelFive interface methods
 //
 //==================================================================
-func (m *ModelFive) NewGateway(i int) RunnerInterface {
+func (m *modelFive) NewGateway(i int) RunnerInterface {
 	setflowratebucket := func(flow *Flow) { // maxval, rate, value, rateptr
 		flow.rb = NewRateBucket(configNetwork.maxratebucketval, int64(0), configNetwork.maxratebucketval)
 	}
@@ -324,20 +324,20 @@ func (m *ModelFive) NewGateway(i int) RunnerInterface {
 		configNetwork.maxratebucketval, // maxval
 		configNetwork.linkbpsminus,     // rate
 		configNetwork.maxratebucketval) // value
-	rgwy := &GatewayFive{*gwy}
+	rgwy := &gatewayFive{*gwy}
 	rgwy.GatewayUch.rptr = rgwy
 	return rgwy
 }
 
-func (m *ModelFive) NewServer(i int) RunnerInterface {
+func (m *modelFive) NewServer(i int) RunnerInterface {
 	srv := NewServerUch(i, m5.putpipeline)
-	rsrv := &ServerFive{*srv}
+	rsrv := &serverFive{*srv}
 	rsrv.ServerUch.rptr = rsrv
 	return rsrv
 }
 
-func (m *ModelFive) NewDisk(i int) RunnerInterface { return nil }
+func (m *modelFive) NewDisk(i int) RunnerInterface { return nil }
 
-func (m *ModelFive) Configure() {
+func (m *modelFive) Configure() {
 	configNetwork.sizeControlPDU = 100
 }

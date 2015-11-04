@@ -1,5 +1,5 @@
 //
-// ModelTwo (m2, "2") implements random send, random receive
+// modelTwo (m2, "2") implements random send, random receive
 // Gateway and Server types are almost indistinguishable in this model
 // as they both execute indentical Run()
 //
@@ -14,21 +14,21 @@ import (
 )
 
 // implements ModelInterface
-type ModelTwo struct {
+type modelTwo struct {
 }
 
-type GatewayTwo struct {
+type gatewayTwo struct {
 	RunnerBase
 }
 
-type ServerTwo struct {
+type serverTwo struct {
 	RunnerBase
 }
 
 //
 // init
 //
-var m2 ModelTwo = ModelTwo{}
+var m2 = modelTwo{}
 
 func init() {
 	d := NewStatsDescriptors("2")
@@ -42,15 +42,15 @@ func init() {
 
 //==================================================================
 //
-// GatewayTwo methods
+// gatewayTwo methods
 //
 //==================================================================
-func (r *GatewayTwo) Run() {
+func (r *gatewayTwo) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) bool {
-		log(LOG_V, "GWY rxcallback", r.String(), ev.String())
+		log(LogV, "GWY rxcallback", r.String(), ev.String())
 		return true
 	}
 
@@ -59,16 +59,16 @@ func (r *GatewayTwo) Run() {
 
 //==================================================================
 //
-// ServerTwo methods
+// serverTwo methods
 //
 //==================================================================
-func (r *ServerTwo) Run() {
+func (r *serverTwo) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) bool {
 		assert(r == ev.GetTarget())
-		log(LOG_V, "SRV rxcallback", r.String(), ev.String())
+		log(LogV, "SRV rxcallback", r.String(), ev.String())
 		return true
 	}
 
@@ -77,30 +77,30 @@ func (r *ServerTwo) Run() {
 
 //==================================================================
 //
-// ModelTwo methods
+// modelTwo methods
 //
 //==================================================================
 //
-// ModelTwo interface methods
+// modelTwo interface methods
 //
-func (m *ModelTwo) NewGateway(i int) RunnerInterface {
-	gwy := &GatewayTwo{RunnerBase{id: i, strtype: "GWY"}}
+func (m *modelTwo) NewGateway(i int) RunnerInterface {
+	gwy := &gatewayTwo{RunnerBase{id: i, strtype: "GWY"}}
 	gwy.init(config.numServers)
 	return gwy
 }
 
-func (m *ModelTwo) NewServer(i int) RunnerInterface {
-	srv := &ServerTwo{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
+func (m *modelTwo) NewServer(i int) RunnerInterface {
+	srv := &serverTwo{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
 	srv.init(config.numGateways)
 	return srv
 }
 
-func (m *ModelTwo) NewDisk(i int) RunnerInterface { return nil }
+func (m *modelTwo) NewDisk(i int) RunnerInterface { return nil }
 
 //
-// ModelTwo private methods: common Gateway/Server send/recv and run()
+// modelTwo private methods: common Gateway/Server send/recv and run()
 //
-func (m *ModelTwo) run(rb *RunnerBase, rxcallback processEvent) {
+func (m *modelTwo) run(rb *RunnerBase, rxcallback processEvent) {
 	for rb.state == RstateRunning {
 		m2.recv(rb, rxcallback)
 		if !m2.send(rb) {
@@ -116,13 +116,13 @@ func (m *ModelTwo) run(rb *RunnerBase, rxcallback processEvent) {
 	rb.closeTxChannels()
 }
 
-func (m *ModelTwo) recv(r *RunnerBase, rxcallback processEvent) {
+func (m *modelTwo) recv(r *RunnerBase, rxcallback processEvent) {
 	r.receiveEnqueue()
 	time.Sleep(time.Microsecond)
 	r.processPendingEvents(rxcallback)
 }
 
-func (m *ModelTwo) send(r *RunnerBase) bool {
+func (m *modelTwo) send(r *RunnerBase) bool {
 	r1 := r.selectRandomPeer(64)
 	r2 := r.selectRandomPeer(64)
 	if r1 == nil || r2 == nil {
@@ -137,4 +137,4 @@ func (m *ModelTwo) send(r *RunnerBase) bool {
 	return r.Send(ev, false)
 }
 
-func (m *ModelTwo) Configure() {}
+func (m *modelTwo) Configure() {}

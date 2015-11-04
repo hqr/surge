@@ -27,7 +27,7 @@ type Tio struct {
 func NewTio(src RunnerInterface, p *Pipeline) *Tio {
 	assert(p.Count() > 0)
 
-	uqid, printid := uqrandom64(src.GetId())
+	uqid, printid := uqrandom64(src.GetID())
 	return &Tio{id: uqid, sid: printid, pipeline: p, index: -1, source: src}
 }
 
@@ -61,7 +61,7 @@ func (tio *Tio) next(newev EventInterface) {
 	tio.event = newev
 	tio.index++
 
-	log(LOG_V, "stage-next", tio.String())
+	log(LogV, "stage-next", tio.String())
 
 	src.Send(tio.event, true) // blocking
 }
@@ -81,9 +81,9 @@ func (tio *Tio) doStage(r RunnerInterface) error {
 	}
 	if rcValue[0].IsNil() {
 		if tio.done {
-			log(LOG_V, tio.String())
+			log(LogV, tio.String())
 		} else {
-			log(LOG_V, "stage-done", stage.name, tio.String())
+			log(LogV, "stage-done", stage.name, tio.String())
 		}
 		return nil
 	}

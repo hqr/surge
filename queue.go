@@ -9,7 +9,7 @@ import (
 //
 // const
 //
-const INITIAL_QUEUE_SIZE int = 64
+const initialQueueSize int = 64
 
 //==================================================================
 //
@@ -24,7 +24,7 @@ type DiskQueue struct {
 
 func NewDiskQueue(d *Disk, size int) *DiskQueue {
 	if size == 0 {
-		size = INITIAL_QUEUE_SIZE
+		size = initialQueueSize
 	}
 	initialQ := make([]time.Time, size)
 	return &DiskQueue{
@@ -43,7 +43,7 @@ func (q *DiskQueue) insertTime(at time.Duration) {
 
 	l := len(q.pending)
 	if l == cap(q.pending) {
-		log(LOG_V, "growing disk queue", q.disk.String(), cap(q.pending))
+		log(LogV, "growing disk queue", q.disk.String(), cap(q.pending))
 	}
 
 	q.pending = append(q.pending, time.Time{})
@@ -103,7 +103,7 @@ type TxQueue struct {
 
 func NewTxQueue(ri RunnerInterface, size int) *TxQueue {
 	if size == 0 {
-		size = INITIAL_QUEUE_SIZE
+		size = initialQueueSize
 	}
 	initialQ := make([]EventInterface, size)
 	return &TxQueue{
@@ -119,7 +119,7 @@ func (q *TxQueue) NowIsDone() bool {
 func (q *TxQueue) insertEvent(ev EventInterface) {
 	l := len(q.fifo)
 	if l == cap(q.fifo) {
-		log(LOG_VV, "growing tx queue", q.r.String(), cap(q.fifo))
+		log(LogVV, "growing tx queue", q.r.String(), cap(q.fifo))
 	}
 	q.fifo = append(q.fifo, nil)
 	q.fifo[l] = ev
@@ -159,7 +159,7 @@ type RxQueueSorted struct {
 //==================================================================
 func NewRxQueue(ri RunnerInterface, size int) *RxQueue {
 	if size == 0 {
-		size = INITIAL_QUEUE_SIZE
+		size = initialQueueSize
 	}
 	evsq := make([]EventInterface, size)
 
@@ -210,7 +210,7 @@ func (q *RxQueue) NumPendingEvents(exact bool) int64 {
 func (q *RxQueue) insertEvent(ev EventInterface) {
 	l := len(q.pending)
 	if l == cap(q.pending) {
-		log(LOG_VV, "growing rx queue", q.r.String(), cap(q.pending))
+		log(LogVV, "growing rx queue", q.r.String(), cap(q.pending))
 	}
 	q.pending = append(q.pending, nil)
 	q.pending[l] = ev
@@ -258,7 +258,7 @@ func (q *RxQueue) processPendingEvents(rxcallback processEvent) {
 			if diff > config.timeIncStep && diff > time.Nanosecond*10 {
 				eventsPastDeadline++
 				if diff >= config.timeClusterTrip && diff >= time.Microsecond {
-					log(LOG_BOTH, "WARNING: past trigger time", diff, eventsPastDeadline)
+					log(LogBoth, "WARNING: past trigger time", diff, eventsPastDeadline)
 				} else {
 					log("WARNING: past trigger time", diff, eventsPastDeadline)
 				}
@@ -346,7 +346,7 @@ func (q *RxQueue) GetStats(reset bool) NodeStats {
 func (q *RxQueueSorted) insertEvent(ev EventInterface) {
 	l := len(q.pending)
 	if l == cap(q.pending) {
-		log(LOG_V, "growing queue", q.r.String(), cap(q.pending))
+		log(LogV, "growing queue", q.r.String(), cap(q.pending))
 	}
 
 	q.pending = append(q.pending, nil)
@@ -395,7 +395,7 @@ func (q *RxQueueSorted) processPendingEvents(rxcallback processEvent) {
 			if diff > config.timeIncStep && diff > time.Nanosecond*10 {
 				eventsPastDeadline++
 				if diff >= config.timeClusterTrip && diff >= time.Microsecond {
-					log(LOG_BOTH, "WARNING: past trigger time", diff, eventsPastDeadline)
+					log(LogBoth, "WARNING: past trigger time", diff, eventsPastDeadline)
 				} else {
 					log("WARNING: past trigger time", diff, eventsPastDeadline)
 				}

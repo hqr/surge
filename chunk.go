@@ -20,7 +20,7 @@ type Chunk struct {
 }
 
 func NewChunk(gwy RunnerInterface, sizebytes int) *Chunk {
-	uqid, printid := uqrandom64(gwy.GetId())
+	uqid, printid := uqrandom64(gwy.GetID())
 	return &Chunk{cid: uqid, sid: printid, gateway: gwy, crtime: Now, sizeb: sizebytes}
 }
 

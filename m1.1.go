@@ -1,5 +1,5 @@
 //
-// ModelOne's variation (m11, "1.1") is the same as m1.go with a single
+// modelOne's variation (m11, "1.1") is the same as m1.go with a single
 // primary difference: the senders do a double-take of sorts
 // to select the least loaded server out of a pair of two randomly selected.
 //
@@ -14,14 +14,14 @@ import (
 )
 
 // implements ModelInterface
-type ModelOneDotOne struct {
+type modelOneDotOne struct {
 }
 
-type GatewayOneDotOne struct {
+type gatewayOneDotOne struct {
 	RunnerBase
 }
 
-type ServerOneDotOne struct {
+type serverOneDotOne struct {
 	RunnerBase
 }
 
@@ -35,18 +35,18 @@ func init() {
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "unidirectional storm of random events, with partially random selection"
-	RegisterModel("1.1", &ModelOneDotOne{}, props)
+	RegisterModel("1.1", &modelOneDotOne{}, props)
 }
 
 //==================================================================
 //
-// GatewayOneDotOne methods
+// gatewayOneDotOne methods
 //
 //==================================================================
 //
 // generate random event (storm) => random servers
 //
-func (r *GatewayOneDotOne) Run() {
+func (r *gatewayOneDotOne) Run() {
 	r.state = RstateRunning
 
 	go func() {
@@ -58,7 +58,7 @@ func (r *GatewayOneDotOne) Run() {
 	}()
 }
 
-func (r *GatewayOneDotOne) send() {
+func (r *gatewayOneDotOne) send() {
 	srv1 := r.selectRandomPeer(64)
 	srv2 := r.selectRandomPeer(64)
 	if srv1 == nil || srv2 == nil {
@@ -74,16 +74,16 @@ func (r *GatewayOneDotOne) send() {
 
 //==================================================================
 //
-// ServerOneDotOne methods
+// serverOneDotOne methods
 //
 //==================================================================
-func (r *ServerOneDotOne) Run() {
+func (r *serverOneDotOne) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) bool {
 		assert(r == ev.GetTarget())
-		log(LOG_VV, "proc-ed", ev.String())
+		log(LogVV, "proc-ed", ev.String())
 		return true
 	}
 
@@ -101,20 +101,20 @@ func (r *ServerOneDotOne) Run() {
 // ModelInterface methods
 //
 //==================================================================
-func (m *ModelOneDotOne) NewGateway(i int) RunnerInterface {
-	gwy := &GatewayOneDotOne{RunnerBase{id: i, strtype: "GWY"}}
+func (m *modelOneDotOne) NewGateway(i int) RunnerInterface {
+	gwy := &gatewayOneDotOne{RunnerBase{id: i, strtype: "GWY"}}
 	gwy.init(config.numServers)
 	return gwy
 }
 
-func (m *ModelOneDotOne) NewServer(i int) RunnerInterface {
-	srv := &ServerOneDotOne{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
+func (m *modelOneDotOne) NewServer(i int) RunnerInterface {
+	srv := &serverOneDotOne{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
 	srv.init(config.numGateways)
 	return srv
 }
 
-func (m *ModelOneDotOne) NewDisk(i int) RunnerInterface { return nil }
+func (m *modelOneDotOne) NewDisk(i int) RunnerInterface { return nil }
 
-func (m *ModelOneDotOne) Configure() {
+func (m *modelOneDotOne) Configure() {
 	config.timeClusterTrip = time.Microsecond * 4
 }

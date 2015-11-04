@@ -28,7 +28,7 @@ const (
 	StatsScopeServer
 )
 
-const MAX_STATS_DESCRIPTORS int = 10
+const maxStatsDescriptors int = 10
 
 //
 // types
@@ -67,9 +67,9 @@ var oneIterNodeStats []NodeStats
 //=================================================================================
 func NewStatsDescriptors(name ModelName) *ModelStatsDescriptors {
 	if allDtors == nil || len(allDtors) == 0 {
-		allDtors = make(map[ModelName]*ModelStatsDescriptors, MAX_MODELS)
+		allDtors = make(map[ModelName]*ModelStatsDescriptors, maxModels)
 	}
-	dtors := make(map[string]*StatsDescriptor, MAX_STATS_DESCRIPTORS)
+	dtors := make(map[string]*StatsDescriptor, maxStatsDescriptors)
 	allDtors[name] = &ModelStatsDescriptors{dtors}
 	return allDtors[name]
 }
@@ -85,7 +85,7 @@ func (mstats *ModelStats) init(mname ModelName) {
 	mstats.totalgwy = make(map[string]int64, len(mdtors.x))
 	mstats.totalsrv = make(map[string]int64, len(mdtors.x))
 
-	for k, _ := range mdtors.x {
+	for k := range mdtors.x {
 		mstats.totalgwy[k] = 0
 		mstats.totalsrv[k] = 0
 	}
@@ -95,7 +95,7 @@ func (mstats *ModelStats) init(mname ModelName) {
 
 	for ij := 0; ij < config.numGateways+config.numServers; ij++ {
 		mstats.allNodeStats[ij] = make(map[string]int64, len(mdtors.x))
-		for n, _ := range mdtors.x {
+		for n := range mdtors.x {
 			mstats.allNodeStats[ij][n] = 0
 		}
 	}
@@ -105,7 +105,7 @@ func (mstats *ModelStats) init(mname ModelName) {
 	if cap(mdtsortednames) > 0 {
 		mdtsortednames = mdtsortednames[0:0]
 	}
-	for n, _ := range mdtors.x {
+	for n := range mdtors.x {
 		mdtsortednames = append(mdtsortednames, n)
 	}
 	sort.Strings(mdtsortednames)
@@ -216,7 +216,7 @@ func (mstats *ModelStats) log(final bool) {
 	loglevel := ""
 	elapsed := Now.Sub(time.Time{})
 	if final {
-		loglevel = LOG_BOTH
+		loglevel = LogBoth
 		elapsed = config.timeToRun
 		if Now.Sub(mstats.lastUpdateTs) > config.timeStatsIval*9/10 {
 			mstats.iter++

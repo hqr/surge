@@ -12,7 +12,7 @@ import (
 )
 
 // constants
-const MAX_MODELS int = 16
+const maxModels int = 16
 
 // each model self-registers at startup
 type ModelName string
@@ -37,7 +37,7 @@ func RegisterModel(name ModelName, model ModelInterface, props ...map[string]int
 //
 // globals & init
 //
-var inited bool = false
+var inited = false
 
 var allModels map[ModelName]ModelInterface // all registered models
 var allModelProps map[ModelName]map[string]interface{}
@@ -59,8 +59,8 @@ func init() {
 }
 
 func __init() {
-	allModels = make(map[ModelName]ModelInterface, MAX_MODELS)
-	allModelProps = make(map[ModelName]map[string]interface{}, MAX_MODELS)
+	allModels = make(map[ModelName]ModelInterface, maxModels)
+	allModelProps = make(map[ModelName]map[string]interface{}, maxModels)
 
 	allGateways = make([]RunnerInterface, config.numGateways)
 	allServers = make([]RunnerInterface, config.numServers)
@@ -166,7 +166,7 @@ func RunAllModels() {
 			continue
 		}
 		if hasprefix > 0 {
-			log(LOG_BOTH, "====")
+			log(LogBoth, "====")
 		}
 		hasprefix++
 
@@ -178,7 +178,7 @@ func RunAllModels() {
 		if desc, ok := props["description"]; ok {
 			namedesc += " [ " + desc.(string) + " ]"
 		}
-		log(LOG_BOTH, "Model "+namedesc)
+		log(LogBoth, "Model "+namedesc)
 
 		if maxprocs, ok := props["GOMAXPROCS"]; ok {
 			runtime.GOMAXPROCS(maxprocs.(int))

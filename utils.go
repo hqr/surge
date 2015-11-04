@@ -12,11 +12,11 @@ import (
 )
 
 const (
-	LOG_BOTH = "both"
-	LOG_V    = "V"
-	LOG_VV   = "VV"
-	LOG_VVV  = "VVV"
-	LOG_VVVV = "VVVV"
+	LogBoth = "both"
+	LogV    = "V"
+	LogVV   = "VV"
+	LogVVV  = "VVV"
+	LogVVVV = "VVVV"
 )
 
 var logfd *os.File
@@ -78,11 +78,11 @@ func log(level string, args ...interface{}) {
 	if !logTimestamp {
 		message = ""
 	}
-	if level == "" || level == LOG_V || strings.HasPrefix(level, LOG_VV) {
+	if level == "" || level == LogV || strings.HasPrefix(level, LogVV) {
 		if len(level) > len(config.LogLevel) {
 			return
 		}
-	} else if level == LOG_BOTH {
+	} else if level == LogBoth {
 		logboth = true
 	} else {
 		if l1 >= 0 {

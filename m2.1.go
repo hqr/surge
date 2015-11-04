@@ -1,7 +1,7 @@
 //
-// ModelTwoDotOne ("2.1") = ModelTwo + Rate Control
+// modelTwoDotOne ("2.1") = modelTwo + Rate Control
 // where the latter is a simple(st) variation of leaky bucket
-// Similar to ModelTwo, gateway and server execute indentical Run()
+// Similar to modelTwo, gateway and server execute indentical Run()
 //
 package surge
 
@@ -16,21 +16,21 @@ const (
 )
 
 // implements ModelInterface
-type ModelTwoDotOne struct {
+type modelTwoDotOne struct {
 }
 
-type GatewayTwoDotOne struct {
+type gatewayTwoDotOne struct {
 	RunnerBase
 }
 
-type ServerTwoDotOne struct {
+type serverTwoDotOne struct {
 	RunnerBase
 }
 
 //
 // init
 //
-var m21 ModelTwoDotOne = ModelTwoDotOne{}
+var m21 = modelTwoDotOne{}
 
 func init() {
 	d := NewStatsDescriptors("2.1")
@@ -44,15 +44,15 @@ func init() {
 
 //==================================================================
 //
-// GatewayTwoDotOne methods
+// gatewayTwoDotOne methods
 //
 //==================================================================
-func (r *GatewayTwoDotOne) Run() {
+func (r *gatewayTwoDotOne) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) bool {
-		log(LOG_V, "GWY rxcallback", r.String(), ev.String())
+		log(LogV, "GWY rxcallback", r.String(), ev.String())
 		return true
 	}
 
@@ -61,16 +61,16 @@ func (r *GatewayTwoDotOne) Run() {
 
 //==================================================================
 //
-// ServerTwoDotOne methods
+// serverTwoDotOne methods
 //
 //==================================================================
-func (r *ServerTwoDotOne) Run() {
+func (r *serverTwoDotOne) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) bool {
 		assert(r == ev.GetTarget())
-		log(LOG_V, "SRV rxcallback", r.String(), ev.String())
+		log(LogV, "SRV rxcallback", r.String(), ev.String())
 		return true
 	}
 
@@ -79,31 +79,31 @@ func (r *ServerTwoDotOne) Run() {
 
 //==================================================================
 //
-// ModelTwoDotOne methods
+// modelTwoDotOne methods
 //
 //==================================================================
 //
-// ModelTwoDotOne interface methods
+// modelTwoDotOne interface methods
 //
-func (m *ModelTwoDotOne) NewGateway(i int) RunnerInterface {
-	gwy := &GatewayTwoDotOne{RunnerBase{id: i, strtype: "GWY"}}
+func (m *modelTwoDotOne) NewGateway(i int) RunnerInterface {
+	gwy := &gatewayTwoDotOne{RunnerBase{id: i, strtype: "GWY"}}
 	gwy.init(config.numServers)
 	return gwy
 }
 
-func (m *ModelTwoDotOne) NewServer(i int) RunnerInterface {
-	srv := &ServerTwoDotOne{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
+func (m *modelTwoDotOne) NewServer(i int) RunnerInterface {
+	srv := &serverTwoDotOne{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
 	srv.init(config.numGateways)
 	return srv
 }
 
-func (m *ModelTwoDotOne) NewDisk(i int) RunnerInterface { return nil }
+func (m *modelTwoDotOne) NewDisk(i int) RunnerInterface { return nil }
 
 //
-// ModelTwoDotOne private methods: common Gateway/Server send/recv and run()
+// modelTwoDotOne private methods: common Gateway/Server send/recv and run()
 //
 
-func (m *ModelTwoDotOne) run(rb *RunnerBase, rxcallback processEvent) {
+func (m *modelTwoDotOne) run(rb *RunnerBase, rxcallback processEvent) {
 	lastRefill := Now
 	leakyBucket := float64(MaxBucket)
 
@@ -129,12 +129,12 @@ func (m *ModelTwoDotOne) run(rb *RunnerBase, rxcallback processEvent) {
 	rb.closeTxChannels()
 }
 
-func (m *ModelTwoDotOne) recv(r *RunnerBase, rxcallback processEvent) {
+func (m *modelTwoDotOne) recv(r *RunnerBase, rxcallback processEvent) {
 	r.receiveEnqueue()
 	r.processPendingEvents(rxcallback)
 }
 
-func (m *ModelTwoDotOne) send(r *RunnerBase) bool {
+func (m *modelTwoDotOne) send(r *RunnerBase) bool {
 	r1 := r.selectRandomPeer(64)
 	r2 := r.selectRandomPeer(64)
 	if r1 == nil || r2 == nil {
@@ -149,6 +149,6 @@ func (m *ModelTwoDotOne) send(r *RunnerBase) bool {
 	return r.Send(ev, false)
 }
 
-func (m *ModelTwoDotOne) Configure() {
+func (m *modelTwoDotOne) Configure() {
 	config.timeClusterTrip = time.Microsecond * 4
 }
