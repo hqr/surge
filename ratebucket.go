@@ -1,3 +1,8 @@
+// Package surge provides a framework for discrete event simulation, as well as
+// a number of models for Unsolicited and Reservation Group based Edge-driven
+// load balancing. Targeted modeling area includes large and super-large storage
+// clusters with multiple access points (referred to as "gateways") and multiple
+// storage targets (referred to as "servers").
 package surge
 
 import (
@@ -8,6 +13,16 @@ import (
 //=====================================================================
 // RateBucketInterface
 //=====================================================================
+// RateBucketInterface provides a common interface for a variety of leaky-
+// bucket type schemes and lists all the methods common for the simple
+// RateBucket, RateBucketAIMD and possible TBD rate bucket implementations.
+//
+// For instance, prior to transmitting a packet, a user
+// will execute the use(size) method, where size is the corresponding
+// number of bits the user is intending to send.
+// If the underlying bucket does not contain enough bit "units",
+// it'll return false indicating that the send operation must be postponed.
+//
 type RateBucketInterface interface {
 	use(units int64) bool
 	setrate(newrate int64)
@@ -22,6 +37,11 @@ type RateBucketInterface interface {
 //=====================================================================
 // RateBucket
 //=====================================================================
+// RateBucket represents the most basic leaky bucket type where the "units"
+// (for instance, bits of the network packets) get recharged at the given
+// RateBucket.rate up to the specified RateBucket.maxval.
+// RateBucket.value contains currently available number of units,
+// as the implies.
 type RateBucket struct {
 	maxval    int64
 	rate      int64 // units/sec
@@ -94,6 +114,17 @@ func (rb *RateBucket) String() string {
 //=====================================================================
 // RateBucketAIMD
 //=====================================================================
+// RateBucketAIMD embeds the simple RateBucket and implements RateBucketInterface.
+//
+// The logic inside will add minrate to its own current rate (the additive step)
+// and divides the RateBucketAIMD.rate by the RateBucketAIMD.div when
+// being dinged. The ding() method here represents congestion
+// notification (think "ECN") for the client, prompting the latter to
+// reduce its own rate multiplicatively.
+// The "additive" step is automatically performed each configAIMD.sizeAddBits
+// units used (via RateBucketAIMD.use()) without any intermediate ding()
+// calls.
+//
 type RateBucketAIMD struct {
 	RateBucket
 	minrate int64

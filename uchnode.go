@@ -1,6 +1,8 @@
 // Package surge provides a framework for discrete event simulation, as well as
 // a number of models for Unsolicited and Reservation Group based Edge-driven
-// load balancing
+// load balancing. Targeted modeling area includes large and super-large storage
+// clusters with multiple access points (referred to as "gateways") and multiple
+// storage targets (referred to as "servers").
 //
 // GatewayUch and ServerUch implement common Unicast-Consistent-Hashing
 // gateway and server, respectively.
@@ -38,7 +40,7 @@ type GatewayUch struct {
 }
 
 // NewGatewayUch constructs GatewayUch. The latter embeds RunnerBase and must in turn
-// be embedded
+// be embedded by a concrete and ultimate modeled gateway.
 func NewGatewayUch(i int, p *Pipeline, cb setFlowRateBucketCallback) *GatewayUch {
 	rbase := RunnerBase{id: i, strtype: "GWY"}
 	gwy := &GatewayUch{RunnerBase: rbase}
@@ -58,7 +60,7 @@ func (r *GatewayUch) realobject() RunnerInterface {
 }
 
 // selectTarget randomly selects target server that is not yet talking to this
-// gateway
+// particular gateway.
 func (r *GatewayUch) selectTarget() RunnerInterface {
 	numPeers := cap(r.eps) - 1
 	assert(numPeers > 1)
@@ -271,6 +273,17 @@ func (r *ServerUch) realobject() RunnerInterface {
 	return r.rptr
 }
 
+// receiveReplicaData is executed in the UCH server's receive data path for
+// each received event of the type (*UchReplicaPutAckEvent). The event itself
+// carries (or rather, is modeled to carry) a full or partial frame, that is,
+// up to configNetwork.sizeFrame bytes.  In addition
+// to taking care of the flow.offset and receive side statistics, the routine
+// may generate an ACK acknowledging receiption of the full replica.
+// Delivery of this ACK is accomplished via the corresponding tio that controls
+// passage of the stages in accordance with the modeled IO pipeline.
+// (putting a single replica is a single transaction that will typpically include
+// 3 or more IO stages)
+//
 func (r *ServerUch) receiveReplicaData(ev *UchReplicaDataEvent) {
 	gwy := ev.GetSource()
 	flow := r.flowsfrom.get(gwy, true)

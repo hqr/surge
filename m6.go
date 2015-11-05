@@ -1,6 +1,8 @@
 // Package surge provides a framework for discrete event simulation, as well as
 // a number of models for Unsolicited and Reservation Group based Edge-driven
-// load balancing
+// load balancing. Targeted modeling area includes large and super-large storage
+// clusters with multiple access points (referred to as "gateways") and multiple
+// storage targets (referred to as "servers").
 //
 // modelSix (m6, "6"), aka UCH-AIMD:
 // Unicast Consistent Hash distribution using AIMD
@@ -41,6 +43,14 @@ type serverSix struct {
 var m6 modelSix
 var timeFrameFullLink time.Duration // time to receive a data frame
 
+// init initializes UCH-AIMD model. In particular, model-specific IO pipeline
+// will contain 3 named stages paired with their respective stage handlers
+// (callbacks) specified below as methods of the model's gateways and servers.
+//
+// The other part of initialization includes statistic counters this model
+// supports; each counter has one of the enumerated "scopes" and "kinds" with
+// generic support via stats.go module.
+//
 func init() {
 	p := NewPipeline()
 	p.AddStage(&PipelineStage{name: "PUT-REQ", handler: "M6putrequest"})
@@ -70,6 +80,15 @@ func init() {
 // gatewaySix methods
 //
 //==================================================================
+// Run contains the gateway's receive callback and its goroutine. Each of the
+// gateway instances (the running number of which is configured as
+// config.numGateways) has a type gatewayFile and spends all its given runtime
+// inside its own goroutine.
+//
+// As per rxcallback below, the gateway handles congestion notification "ding"
+// that is asynchronous as far as the model's pipeline stages.
+// The latter are executed as well via generic tio.doStage()
+//
 func (r *gatewaySix) Run() {
 	r.state = RstateRunning
 
@@ -116,6 +135,11 @@ func (r *gatewaySix) Run() {
 	}()
 }
 
+// ding handles (reception of the) UchDingAimdEvent. which boils down to
+// "dinging" the corresponding rate bucket, which in turn performs the
+// multiplicative-decrease step on itself.
+// Note that RateBucketAIMD is used here for the gateways flows..
+//
 func (r *gatewaySix) ding(dingev *UchDingAimdEvent) {
 	tio := dingev.extension.(*Tio)
 	assert(tio.source == r)
@@ -132,7 +156,7 @@ func (r *gatewaySix) ding(dingev *UchDingAimdEvent) {
 }
 
 //=========================
-// gatewaySix TIO handlers
+// gatewaySix TIO handlers - as per the pipeline declared above
 //=========================
 func (r *gatewaySix) M6putreqack(ev EventInterface) error {
 	tioevent := ev.(*UchReplicaPutRequestAckEvent)
@@ -158,6 +182,14 @@ func (r *gatewaySix) M6replicack(ev EventInterface) error {
 // serverSix methods
 //
 //==================================================================
+// Run contains the server's receive callback and the server's goroutine.
+// Each of the servers (the running number of which is configured as
+// config.numServers) has a type serverSix and spends all its given runtime
+// inside its own goroutine.
+//
+// As per rxcallback below, the UCH-AIMD server handles replica data and
+// control PDUs from the client gateways.
+//
 func (r *serverSix) Run() {
 	r.state = RstateRunning
 
@@ -186,6 +218,12 @@ func (r *serverSix) Run() {
 			r.receiveEnqueue()
 			r.processPendingEvents(rxcallback)
 
+			// two alternative AIMD-implementing methods below
+			// one based on walking the receive queue, another taking
+			// into account gateway-reported bandwidths
+			// We space in time the ding-generating checks by at least
+			// the time to receive
+			// a full data frame plus 1.5 roundtrip times
 			if Now.Sub(lastAimdCheck) > (timeFrameFullLink + config.timeClusterTrip*3) {
 				r.aimdCheckRxQueueFuture()
 				// r.aimdCheckTotalBandwidth()

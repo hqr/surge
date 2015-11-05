@@ -1,3 +1,8 @@
+// Package surge provides a framework for discrete event simulation, as well as
+// a number of models for Unsolicited and Reservation Group based Edge-driven
+// load balancing. Targeted modeling area includes large and super-large storage
+// clusters with multiple access points (referred to as "gateways") and multiple
+// storage targets (referred to as "servers").
 package surge
 
 import (

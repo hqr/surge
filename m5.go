@@ -1,3 +1,8 @@
+// Package surge provides a framework for discrete event simulation, as well as
+// a number of models for Unsolicited and Reservation Group based Edge-driven
+// load balancing. Targeted modeling area includes large and super-large storage
+// clusters with multiple access points (referred to as "gateways") and multiple
+// storage targets (referred to as "servers").
 //
 // modelFive (m5, "5") is the very first realization of the UDP based
 // (unicast) storage-clustering via consistent hashing.
@@ -50,6 +55,14 @@ type serverFive struct {
 //
 var m5 modelFive
 
+// init initializes UCH-CCPi model. In particular, model-specific IO pipeline
+// will contain 3 named stages paired with their respective stage handlers
+// (callbacks) specified below as methods of the model's gateways and servers.
+//
+// The other part of initialization includes statistic counters this model
+// supports; each counter has one of the enumerated "scopes" and "kinds" with
+// generic support via stats.go module.
+//
 func init() {
 	p := NewPipeline()
 	p.AddStage(&PipelineStage{name: "PUT-REQ", handler: "M5putrequest"})
@@ -78,6 +91,15 @@ func init() {
 // gatewayFive methods
 //
 //==================================================================
+// Run contains the gateway's receive callback and its goroutine. Each of the
+// gateway instances (the running number of which is configured as
+// config.numGateways) has a type gatewayFile and spends all its given runtime
+// inside its own goroutine.
+//
+// As per rxcallback below, the gateway handles rate-changing event
+// UchRateSetEvent that is asynchronous as far as the model's pipeline stages.
+// The latter are executed as well via generic tio.doStage()
+//
 func (r *gatewayFive) Run() {
 	r.state = RstateRunning
 
@@ -107,14 +129,25 @@ func (r *gatewayFive) Run() {
 		lastRefill := Now
 		for r.state == RstateRunning {
 			if r.chunk == nil {
+				// the gateway does currently one chunk at a time;
+				// configStorage.chunksInFlight > 1 is not supported yet
+				//
+				// if there no chunk in flight (r.chunk == nil)
+				// we must make sure the gateways ratebucket has
+				// at least sizeControlPDU bits to send the new PUT..
 				if r.rb.above(int64(configNetwork.sizeControlPDU * 8)) {
 					r.startNewChunk()
 				}
 			}
-			// recv
+			// recv processing is always two steps: collect new events
+			// from all the Rx channels of this gateway, and process
+			// those which time has arrived, via the gateway's rxcallback
+			// (above)
 			r.receiveEnqueue()
 			r.processPendingEvents(rxcallback)
 
+			// the gateway's transmit side uses common GatewayUch method
+			// to send replica data if and when appropriate
 			if Now.After(lastRefill) {
 				lastRefill = Now
 				r.sendata()
@@ -124,6 +157,12 @@ func (r *gatewayFive) Run() {
 	}()
 }
 
+// rateset handles the namesake event from a rate-setting server, which for
+// the UCH-CCPi model boils down to setting the prescribed rate on the
+// corresponding active flow (to this server).
+// The new rate is delegated to the flow's own rate bucket, which in response
+// will start filling up slower or faster, depending on the rate..
+//
 func (r *gatewayFive) rateset(ev *UchRateSetEvent) {
 	tio := ev.extension.(*Tio)
 	assert(tio.source == r)
@@ -212,6 +251,11 @@ func (r *serverFive) Run() {
 			r.receiveEnqueue()
 			r.processPendingEvents(rxcallback)
 
+			// two alternative CCPi-implementing methods below,
+			// one simply dividing the server's bandwidth equally between
+			// all incoming flows, another - trying the weighted approach,
+			// with weights inverse proportional to the remaining bytes
+			// to send..
 			if numflows != r.flowsfrom.count() {
 				r.rerate()
 				// r.rerateInverseProportional()

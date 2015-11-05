@@ -1,3 +1,9 @@
+// Package surge provides a framework for discrete event simulation, as well as
+// a number of models for Unsolicited and Reservation Group based Edge-driven
+// load balancing. Targeted modeling area includes large and super-large storage
+// clusters with multiple access points (referred to as "gateways") and multiple
+// storage targets (referred to as "servers").
+//
 package surge
 
 import (
@@ -8,7 +14,23 @@ import (
 )
 
 //
-// types
+// Tio (transactional IO) provides generic way to execute a sequence of
+// operations as one compound transaction. The important part of each tio
+// instance is its pipeline - typically, a static object instantiated at the
+// model's init time - that *declares* this aforementioned sequence (of
+// operations or stages) for all the future tios of a given type.
+//
+// In addition to Tio.pipeline, start and stop time. source node
+// that has created this tio instance and a few other properties,
+// each tio has a unique ID (Tio.id) and its printable counterpart tio.sid -
+// the latter for easy tracking in the logs.
+//
+// Propagation of tio through its pipeline is accomplished via tio.next()
+// while execution of the current stage is done via tio.doStage()
+// The latter uses generic Go reflect interfaces to execute declared
+// callbacks - the pipeline stage handlers. Once the last stage is reached
+// and executed, tio.done is set to true.
+// Strict ordering of (passing through) the pipeline stages is enforced..
 //
 type Tio struct {
 	id       int64
