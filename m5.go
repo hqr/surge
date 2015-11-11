@@ -93,7 +93,7 @@ func init() {
 //==================================================================
 // Run contains the gateway's receive callback and its goroutine. Each of the
 // gateway instances (the running number of which is configured as
-// config.numGateways) has a type gatewayFile and spends all its given runtime
+// config.numGateways) has a type gatewayFive and spends all its given runtime
 // inside its own goroutine.
 //
 // As per rxcallback below, the gateway handles rate-changing event
@@ -133,7 +133,7 @@ func (r *gatewayFive) Run() {
 				// configStorage.chunksInFlight > 1 is not supported yet
 				//
 				// if there no chunk in flight (r.chunk == nil)
-				// we must make sure the gateways ratebucket has
+				// we must make sure the gateway's rate bucket has
 				// at least sizeControlPDU bits to send the new PUT..
 				if r.rb.above(int64(configNetwork.sizeControlPDU * 8)) {
 					r.startNewChunk()

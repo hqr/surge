@@ -3,20 +3,25 @@ SURGE: discrete event Simulator for Unsolicited and Reservation Group based
        Edge-driven load balancing
 
 
-# Overview
+## Overview
 
 SURGE is a discrete event simulation framework written in Go. Targeted
 modeling area includes (but is not limited to) large and super-large storage
 clusters with multiple access points (referred to as "gateways") connected to
 both user/application and storage networks.
 
-The second simulated type of a clustered node is a storage target aka "server".
+Behind the gateways there are storage targets aka servers. Together gateways
+and servers (that can in real life be collocated on the same physical or
+virtual machines) are referred to as nodes and form a distributed cluster.
+
+![Distributed Cluster](images/system1.png)
+
 Both "gateway" and "server" are fundamental abstractions with a great variety
-of realizations in real world of distributed clusters where "gateways"
-typically are responsible for the first stages of IO pipeline (including
-chunking/striping, checkumming and distributing user content), while "servers"
-provide the ultimate stable storage. Sometimes the two are colocated on the
-same physical or virtual machines.
+of realizations. Gateways are typically responsible for the first stages
+of IO pipeline (including write logging and caching, compression and/or
+deduplication, chunking/striping, checkumming, and ultimately, distributing
+user content across two or more servers). While backend servers in turn
+provide the ultimate stable storage. There are variations of course.
 						  
 Each storage node (gateway or server) in the SURGE is a separate
 lightweight thread: a goroutine. The framework connects all configured nodes
@@ -25,21 +30,44 @@ startup all clustered nodes (of this model) get automatically connected and
 ready to Go: send, receive and handle events and IO requests from all other
 nodes.
 
-All models are named. There's a growing number of built-in models named "1"
-(m1.go), "2" (m2.go), "3" (m3.go), etc.  provided both for illustration purposes
-as well as self-testing reasons. The Usage section below has some examples and
-options to run and test any/all of these built-in models with all supported
-command-line options, including numbers of gateways and servers.
+## Models
 
-Overall, the idea and the motivation to do this framework and concrete models
-based on it comes out of:
+Overall, the idea and the motivation to develop this framework and concrete
+models based on it comes out of (naturally):
 
-* unanswered questions also sometimes called ideas
-* chronic lack of hardware to run massive benchmarks
-* and of course, total lack of months and years to build/validate the former and
-then run the latter 
+* unanswered questions, also sometimes called "ideas"
+* chronic lack of hardware to setup massive distributed benchmarks
+* total lack of time to build/validate the former and run/compare the latter
 
-# Services
+SURGE models are named. The repository contains a growing number of
+built-in models named "1" (m1.go), "2" (m2.go), "3" (m3.go), etc. that are
+being added both for illustration and regression testing purposes
+
+The following couple models must be set apart as they both represent
+certain non-trivial aspects of distributed storage processing:
+
+* m5.go "Unicast Consistent Hash distribution using Captive Congestion Point"
+* m6.go "Unicast Consistent Hash distribution using AIMD"
+
+These two "unicast" models support the following generic pipeline:
+
+![Unicast Generic Pipeline](images/pipeline1.png)
+
+- where for each data chunk there is a certain configurable number of replicas
+that must be stored (the default is 3), and for each replica each of the
+configured gateways randomly selects one of the configured servers and executes
+the depicted handshake followed by transmission of MTU-size data packets.
+
+Each replica is then separately acknowledged. All data and control transfers
+are in fact simulated. The resulting performance provides further food for thought.
+
+More details in the code.
+
+The Usage section below provides examples to run and test any/all built-in
+models, with command-line options that include numbers of gateways and servers
+in the simulated cluster, time to run the benchmark, log verbosity, and more.
+
+## Services
 
 The SURGE framework currently provides the following initial services:
 
@@ -99,7 +127,7 @@ RunnerBase. The latter provides utility functions and implements part of the
 abstract interfaces that all clustered gateways, servers, and in the future -
 (remote) disks and network switches - must implement as well..
 
-# Usage
+## Usage
 
 To run all built-in models, one after another back to back:
 
