@@ -95,8 +95,6 @@ func (m *modelTwo) NewServer(i int) RunnerInterface {
 	return srv
 }
 
-func (m *modelTwo) NewDisk(i int) RunnerInterface { return nil }
-
 //
 // modelTwo private methods: common Gateway/Server send/recv and run()
 //
@@ -133,8 +131,8 @@ func (m *modelTwo) send(r *RunnerBase) bool {
 		peer = r2
 	}
 	at := clusterTripPlusRandom()
-	ev := newTimedUcastEvent(r, at, peer)
-	return r.Send(ev, false)
+	ev := newTimedAnyEvent(r, at, peer)
+	return r.Send(ev, SmethodDontWait)
 }
 
 func (m *modelTwo) Configure() {}

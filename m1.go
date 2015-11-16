@@ -65,7 +65,7 @@ func (r *gatewayOne) send() {
 	sr := r.selectRandomPeer(64) // hardcoded max load
 	if sr != nil {
 		at := clusterTripPlusRandom()
-		r.Send(newTimedUcastEvent(r, at, sr), false)
+		r.Send(newTimedAnyEvent(r, at, sr), SmethodDontWait)
 	}
 }
 
@@ -109,8 +109,6 @@ func (m *modelOne) NewServer(i int) RunnerInterface {
 	srv.init(config.numGateways)
 	return srv
 }
-
-func (m *modelOne) NewDisk(i int) RunnerInterface { return nil }
 
 func (m *modelOne) Configure() {
 	config.timeClusterTrip = time.Microsecond * 2

@@ -32,12 +32,12 @@ type serverThree struct {
 }
 
 type TimedUniqueEvent struct {
-	TimedUcastEvent
+	TimedAnyEvent
 	id int64
 }
 
 func newTimedUniqueEvent(src RunnerInterface, when time.Duration, tgt RunnerInterface, id int64) *TimedUniqueEvent {
-	ev := newTimedUcastEvent(src, when, tgt)
+	ev := newTimedAnyEvent(src, when, tgt)
 	if id == 0 {
 		id, _ = uqrandom64(src.GetID())
 	}
@@ -95,7 +95,7 @@ func (r *gatewayThree) Run() {
 					eventID, _ := uqrandom64(r.GetID())
 					at := clusterTripPlusRandom()
 					ev := newTimedUniqueEvent(r, at, srv, eventID)
-					r.Send(ev, true)
+					r.Send(ev, SmethodWait)
 
 					r.waitingResponse[tgtid] = eventID
 				}
@@ -152,7 +152,7 @@ func (r *serverThree) Run() {
 		gwysrc := ev.GetSource()
 		at := clusterTripPlusRandom()
 		evresponse := newTimedUniqueEvent(r, at, gwysrc, realevent.id)
-		r.Send(evresponse, true)
+		r.Send(evresponse, SmethodWait)
 		return true
 	}
 
@@ -189,8 +189,6 @@ func (m *modelThree) NewServer(i int) RunnerInterface {
 	srv.init(config.numGateways)
 	return srv
 }
-
-func (m *modelThree) NewDisk(i int) RunnerInterface { return nil }
 
 func (m *modelThree) Configure() {
 	config.timeClusterTrip = time.Microsecond * 2

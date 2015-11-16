@@ -62,6 +62,7 @@ func init() {
 	d := NewStatsDescriptors("6")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer)
+	d.Register("tio", StatsKindCount, StatsScopeGateway)
 	d.Register("chunk", StatsKindCount, StatsScopeGateway)
 	d.Register("replica", StatsKindCount, StatsScopeGateway)
 	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
@@ -101,14 +102,12 @@ func (r *gatewaySix) Run() {
 			log(LogV, "GWY::rxcallback", dingev.String())
 			r.ding(dingev)
 		default:
-			srv := ev.GetSource()
-			tio := ev.GetExtension().(*Tio)
+			tio := ev.GetTio()
 			log(LogV, "GWY::rxcallback", tio.String())
 			tio.doStage(r)
 			if tio.done {
 				log(LogV, "tio-done", tio.String())
 				atomic.AddInt64(&r.tiostats, int64(1))
-				r.finishStartReplica(srv, true)
 			}
 		}
 		return true
@@ -141,7 +140,7 @@ func (r *gatewaySix) Run() {
 // Note that RateBucketAIMD is used here for the gateways flows..
 //
 func (r *gatewaySix) ding(dingev *UchDingAimdEvent) {
-	tio := dingev.extension.(*Tio)
+	tio := dingev.GetTio()
 	assert(tio.source == r)
 
 	flow := r.flowsto.get(dingev.GetSource(), false)
@@ -162,7 +161,7 @@ func (r *gatewaySix) M6putreqack(ev EventInterface) error {
 	tioevent := ev.(*UchReplicaPutRequestAckEvent)
 	log(LogV, r.String(), "::M6putreqack()", tioevent.String())
 
-	tio := tioevent.extension.(*Tio)
+	tio := tioevent.GetTio()
 	assert(tio.source == r)
 
 	flow := r.flowsto.get(ev.GetSource(), false)
@@ -204,7 +203,7 @@ func (r *serverSix) Run() {
 			r.receiveReplicaData(dataev)
 		default:
 			atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
-			tio := ev.GetExtension().(*Tio)
+			tio := ev.GetTio()
 			log(LogV, "SRV::rxcallback", tio.String())
 			tio.doStage(r)
 		}
@@ -335,11 +334,10 @@ func (r *serverSix) aimdCheckTotalBandwidth() {
 
 func (r *serverSix) dingOne(gwy RunnerInterface) {
 	flow := r.flowsfrom.get(gwy, true)
-	dingev := newUchDingAimdEvent(r, gwy, flow.cid, flow.num)
-	dingev.SetExtension(flow.tio)
+	dingev := newUchDingAimdEvent(r, gwy, flow.cid, flow.num, flow.tio)
 
 	log("srv-send-ding", flow.String())
-	r.Send(dingev, true)
+	r.Send(dingev, SmethodWait)
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 }
 
@@ -351,7 +349,7 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 	f := r.flowsfrom.get(gwy, false)
 	assert(f == nil)
 
-	tio := tioevent.extension.(*Tio)
+	tio := tioevent.GetTio()
 	flow := NewFlow(gwy, r, tioevent.cid, tioevent.num, tio)
 	flow.totalbytes = tioevent.sizeb
 	r.flowsfrom.insertFlow(gwy, flow)
@@ -394,8 +392,6 @@ func (m *modelSix) NewServer(i int) RunnerInterface {
 	rsrv.ServerUch.rptr = rsrv
 	return rsrv
 }
-
-func (m *modelSix) NewDisk(i int) RunnerInterface { return nil }
 
 func (m *modelSix) Configure() {
 	configNetwork.sizeControlPDU = 100

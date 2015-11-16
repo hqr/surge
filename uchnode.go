@@ -37,6 +37,7 @@ type GatewayUch struct {
 	rptr         RunnerInterface // real object
 	putpipeline  *Pipeline
 	setflowrbcb  setFlowRateBucketCallback
+	numreplicas  int
 }
 
 // NewGatewayUch constructs GatewayUch. The latter embeds RunnerBase and must in turn
@@ -89,6 +90,7 @@ func (r *GatewayUch) selectTarget() RunnerInterface {
 func (r *GatewayUch) startNewChunk() {
 	assert(r.chunk == nil)
 	r.chunk = NewChunk(r.realobject(), configStorage.sizeDataChunk*1024)
+	r.numreplicas = 0
 	r.startNewReplica(1)
 }
 
@@ -100,7 +102,7 @@ func (r *GatewayUch) sendata() {
 	q := r.txqueue
 	for k := 0; k < len(q.fifo); k++ {
 		ev := q.fifo[k]
-		if r.Send(ev, false) {
+		if r.Send(ev, SmethodDontWait) {
 			q.deleteEvent(k)
 			atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeFrame))
 		}
@@ -127,15 +129,14 @@ func (r *GatewayUch) sendata() {
 			return
 		}
 		flow.offset += frsize
-		ev := newUchReplicaDataEvent(r.realobject(), srv, r.replica, flow, frsize)
-		ev.SetExtension(flow.tio)
+		ev := newUchReplicaDataEvent(r.realobject(), srv, r.replica, flow, frsize, flow.tio)
 		// time for the bits to get fully transmitted given the current flow's bandwidth
 		flow.sendnexts = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
-		if r.Send(ev, true) {
+		if r.Send(ev, SmethodWait) {
 			atomic.AddInt64(&r.txbytestats, int64(frsize))
 			// starting next replica without waiting for the current one's completion
 			if flow.offset >= flow.totalbytes {
-				r.finishStartReplica(flow.to, false)
+				r.finishStartReplica(flow.to)
 			} else {
 				flow.rb.use(newbits)
 				flow.tobandwidth = flow.rb.getrate()
@@ -151,18 +152,8 @@ func (r *GatewayUch) sendata() {
 
 // finishStartReplica finishes the replica or the entire chunk, the latter
 // when all the required configStorage.numReplicas copies are fully stored
-func (r *GatewayUch) finishStartReplica(srv RunnerInterface, tiodone bool) {
+func (r *GatewayUch) finishStartReplica(srv RunnerInterface) {
 	flow := r.flowsto.get(srv, true)
-	if tiodone {
-		log("replica-acked-flow-gone", flow.String())
-		if flow.num == configStorage.numReplicas {
-			log("chunk-done", r.chunk.String())
-			atomic.AddInt64(&r.chunkstats, int64(1))
-			r.chunk = nil
-		}
-		r.flowsto.deleteFlow(srv)
-		return
-	}
 
 	log("replica-fully-transmitted", flow.String(), r.replica.String())
 	flow.tobandwidth = 0
@@ -190,8 +181,7 @@ func (r *GatewayUch) startNewReplica(num int) {
 	r.flowsto.insertFlow(tgt, flow)
 	log("gwy-new-flow", flow.String())
 
-	ev := newUchReplicaPutRequestEvent(r.realobject(), tgt, r.replica)
-	ev.SetExtension(tio)
+	ev := newUchReplicaPutRequestEvent(r.realobject(), tgt, r.replica, tio)
 
 	tio.next(ev)
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
@@ -211,6 +201,15 @@ func (r *GatewayUch) replicack(ev EventInterface) error {
 	assert(flow.num == tioevent.num)
 	log(LogV, "::replicack()", flow.String(), tioevent.String())
 	atomic.AddInt64(&r.replicastats, int64(1))
+
+	log("replica-acked-flow-gone", flow.String())
+	r.numreplicas++
+	if r.numreplicas == configStorage.numReplicas {
+		log("chunk-done", r.chunk.String())
+		atomic.AddInt64(&r.chunkstats, int64(1))
+		r.chunk = nil
+	}
+	r.flowsto.deleteFlow(srv)
 	return nil
 }
 
@@ -297,7 +296,7 @@ func (r *ServerUch) receiveReplicaData(ev *UchReplicaDataEvent) {
 	atomic.AddInt64(&r.rxbytestats, int64(x))
 
 	flow.offset = ev.offset
-	tio := ev.extension.(*Tio)
+	tio := ev.GetTio()
 
 	if flow.offset >= flow.totalbytes {
 		// postpone the ack until after the replica (chunk.sizeb) is written to disk
@@ -305,10 +304,11 @@ func (r *ServerUch) receiveReplicaData(ev *UchReplicaDataEvent) {
 		r.disk.queue.insertTime(diskdoneintime)
 
 		putackev := newUchReplicaPutAckEvent(r.realobject(), gwy, flow.cid, flow.num, diskdoneintime)
+		ts := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
 		tio.next(putackev)
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 
-		log("srv-replica-done-and-gone", flow.String())
+		log("srv-replica-done-and-gone", flow.String(), ts)
 		r.flowsfrom.deleteFlow(gwy)
 	}
 }

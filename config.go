@@ -114,8 +114,19 @@ var configAIMD = ConfigAIMD{
 }
 
 //
-// init
+// Replicast
 //
+type ConfigReplicast struct {
+	countNgtGroup int
+}
+
+var configReplicast = ConfigReplicast{
+	countNgtGroup: 9,
+}
+
+//===============================================================
+// init
+//===============================================================
 func init() {
 	gwPtr := flag.Int("gateways", config.numGateways, "number of gateways")
 	srPtr := flag.Int("servers", config.numServers, "number of servers")

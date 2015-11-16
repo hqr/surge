@@ -80,7 +80,6 @@ func __init() {
 type ModelInterface interface {
 	NewGateway(id int) RunnerInterface
 	NewServer(id int) RunnerInterface
-	NewDisk(id int) RunnerInterface
 	Configure() // model can optionally change global config and/or prepare to run
 }
 

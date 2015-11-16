@@ -60,11 +60,11 @@ func (tio *Tio) GetStage() (string, int) {
 
 // advance the stage, generate and send anonymous tio event to the next stage's target
 func (tio *Tio) nextAnon(when time.Duration, tgt RunnerInterface) {
-	var ev *TimedUcastEvent
+	var ev *TimedAnyEvent
 	if tio.index == -1 {
-		ev = newTimedUcastEvent(tio.source, when, tgt)
+		ev = newTimedAnyEvent(tio.source, when, tgt)
 	} else {
-		ev = newTimedUcastEvent(tio.event.GetTarget(), when, tgt)
+		ev = newTimedAnyEvent(tio.event.GetTarget(), when, tgt)
 	}
 	tio.next(ev)
 }
@@ -79,13 +79,13 @@ func (tio *Tio) next(newev EventInterface) {
 		assert(tio.index < tio.pipeline.Count()-1)
 		src = newev.GetSource()
 	}
-	newev.SetExtension(tio)
+	newev.setOneArg(tio)
 	tio.event = newev
 	tio.index++
 
 	log(LogV, "stage-next", tio.String())
 
-	src.Send(tio.event, true) // blocking
+	src.Send(tio.event, SmethodWait) // blocking
 }
 
 func (tio *Tio) doStage(r RunnerInterface) error {

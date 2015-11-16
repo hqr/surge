@@ -69,7 +69,7 @@ func (r *gatewayOneDotOne) send() {
 		srv = srv2
 	}
 	at := clusterTripPlusRandom()
-	r.Send(newTimedUcastEvent(r, at, srv), false)
+	r.Send(newTimedAnyEvent(r, at, srv), SmethodDirectInsert)
 }
 
 //==================================================================
@@ -112,8 +112,6 @@ func (m *modelOneDotOne) NewServer(i int) RunnerInterface {
 	srv.init(config.numGateways)
 	return srv
 }
-
-func (m *modelOneDotOne) NewDisk(i int) RunnerInterface { return nil }
 
 func (m *modelOneDotOne) Configure() {
 	config.timeClusterTrip = time.Microsecond * 4

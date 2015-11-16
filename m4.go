@@ -63,8 +63,8 @@ func (r *gatewayFour) Run() {
 	outstanding := 0
 
 	rxcallback := func(ev EventInterface) bool {
-		tioevent := ev.(*TimedUcastEvent)
-		tio := tioevent.extension.(*Tio)
+		tioevent := ev.(*TimedAnyEvent)
+		tio := tioevent.GetTio()
 		log(LogVV, "GWY rxcallback", tio.String())
 		tio.doStage(r)
 
@@ -109,10 +109,10 @@ func (r *gatewayFour) M4putreqack(ev EventInterface) error {
 
 	// create event here and ask tio to follow up
 	at := clusterTripPlusRandom()
-	nextev := newTimedUcastEvent(r, at, ev.GetSource())
+	nextev := newTimedAnyEvent(r, at, ev.GetSource())
 
-	tioevent := ev.(*TimedUcastEvent)
-	tio := tioevent.extension.(*Tio)
+	tioevent := ev.(*TimedAnyEvent)
+	tio := tioevent.GetTio()
 
 	tio.next(nextev)
 	return nil
@@ -143,8 +143,8 @@ func (r *serverFour) Run() {
 	r.state = RstateRunning
 
 	rxcallback := func(ev EventInterface) bool {
-		tioevent := ev.(*TimedUcastEvent)
-		tio := tioevent.extension.(*Tio)
+		tioevent := ev.(*TimedAnyEvent)
+		tio := tioevent.GetTio()
 		log(LogVV, "SRV rxcallback", tio.String())
 
 		tio.doStage(r)
@@ -167,8 +167,8 @@ func (r *serverFour) Run() {
 func (r *serverFour) M4putrequest(ev EventInterface) error {
 	log(LogVV, r.String(), "::M4putrequest()", ev.String())
 
-	tioevent := ev.(*TimedUcastEvent)
-	tio := tioevent.extension.(*Tio)
+	tioevent := ev.(*TimedAnyEvent)
+	tio := tioevent.GetTio()
 
 	at := clusterTripPlusRandom()
 	tio.nextAnon(at, ev.GetSource())
@@ -180,8 +180,8 @@ func (r *serverFour) M4putxfer(ev EventInterface) error {
 
 	at := clusterTripPlusRandom()
 
-	tioevent := ev.(*TimedUcastEvent)
-	tio := tioevent.extension.(*Tio)
+	tioevent := ev.(*TimedAnyEvent)
+	tio := tioevent.GetTio()
 	tio.nextAnon(at, ev.GetSource())
 	return nil
 }
@@ -205,8 +205,6 @@ func (m *modelFour) NewServer(i int) RunnerInterface {
 	srv.init(config.numGateways)
 	return srv
 }
-
-func (m *modelFour) NewDisk(i int) RunnerInterface { return nil }
 
 func (m *modelFour) Configure() {
 	config.timeClusterTrip = time.Microsecond * 2

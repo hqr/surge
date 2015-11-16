@@ -112,14 +112,12 @@ func (r *gatewayFive) Run() {
 			log(LogV, "GWY::rxcallback:", ratesetev.String())
 			r.rateset(ratesetev)
 		default:
-			srv := ev.GetSource()
-			tio := ev.GetExtension().(*Tio)
+			tio := ev.GetTio()
 			log(LogV, "GWY::rxcallback", tio.String())
 			tio.doStage(r)
 			if tio.done {
 				log(LogV, "tio-done", tio.String())
 				atomic.AddInt64(&r.tiostats, int64(1))
-				r.finishStartReplica(srv, true)
 			}
 		}
 		return true
@@ -163,26 +161,26 @@ func (r *gatewayFive) Run() {
 // The new rate is delegated to the flow's own rate bucket, which in response
 // will start filling up slower or faster, depending on the rate..
 //
-func (r *gatewayFive) rateset(ev *UchRateSetEvent) {
-	tio := ev.extension.(*Tio)
+func (r *gatewayFive) rateset(tioevent *UchRateSetEvent) {
+	tio := tioevent.GetTio()
 	assert(tio.source == r)
 
 	if tio.done {
 		return
 	}
-	flow := r.flowsto.get(ev.GetSource(), false)
-	assert(flow != nil, "FATAL: gwy-rateset on non-existing flow:"+tio.String()+":"+ev.String())
+	flow := r.flowsto.get(tioevent.GetSource(), false)
+	assert(flow != nil, "FATAL: gwy-rateset on non-existing flow:"+tio.String()+":"+tioevent.String())
 
 	if flow.offset >= flow.totalbytes {
 		return
 	}
 	assert(flow.tio == tio, flow.String()+":"+tio.String())
-	if !flow.rateini || flow.ratects.Before(ev.GetCreationTime()) {
-		flow.ratects = ev.GetCreationTime()
+	if !flow.rateini || flow.ratects.Before(tioevent.GetCreationTime()) {
+		flow.ratects = tioevent.GetCreationTime()
 		flow.raterts = Now
 		flow.rateini = true
 
-		flow.tobandwidth = ev.tobandwidth
+		flow.tobandwidth = tioevent.tobandwidth
 		flow.rb.setrate(flow.tobandwidth)
 
 		log(LogV, "gwy-rateset", flow.String())
@@ -237,7 +235,7 @@ func (r *serverFive) Run() {
 			r.receiveReplicaData(tioevent)
 		default:
 			atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
-			tio := ev.GetExtension().(*Tio)
+			tio := ev.GetTio()
 			log(LogV, "SRV::rxcallback", tio.String())
 			tio.doStage(r)
 		}
@@ -280,14 +278,13 @@ func (r *serverFive) rerate() {
 		if flow.totalbytes-flow.offset <= configNetwork.sizeFrame+int(bytesinflight) {
 			return
 		}
-		ratesetev := newUchRateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
+		ratesetev := newUchRateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num, flow.tio)
 		flow.tobandwidth = ratesetev.tobandwidth
-		ratesetev.SetExtension(flow.tio)
 		flow.ratects = Now
 		flow.raterts = Now.Add(config.timeClusterTrip * 2)
 
 		log(LogV, "srv-send-rateset", flow.String())
-		r.Send(ratesetev, true)
+		r.Send(ratesetev, SmethodWait)
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	}
 	r.flowsfrom.apply(applyCallback)
@@ -315,14 +312,13 @@ func (r *serverFive) rerateInverseProportional() {
 
 		newbwf := float64(configNetwork.linkbps) * (1.0 / float64(rem) / totalrem)
 		newbw := int64(newbwf)
-		ratesetev := newUchRateSetEvent(r, gwy, newbw, flow.cid, flow.num)
+		ratesetev := newUchRateSetEvent(r, gwy, newbw, flow.cid, flow.num, flow.tio)
 		flow.tobandwidth = newbw
-		ratesetev.SetExtension(flow.tio)
 		flow.ratects = Now
 		flow.raterts = Now.Add(config.timeClusterTrip * 2)
 
 		log(LogV, "srv-send-rateset-proportional", flow.String())
-		r.Send(ratesetev, true)
+		r.Send(ratesetev, SmethodWait)
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	}
 }
@@ -335,7 +331,7 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 	f := r.flowsfrom.get(gwy, false)
 	assert(f == nil)
 
-	tio := tioevent.extension.(*Tio)
+	tio := tioevent.GetTio()
 	flow := NewFlow(gwy, r, tioevent.cid, tioevent.num, tio)
 	flow.totalbytes = tioevent.sizeb
 	flow.rateini = true
@@ -379,8 +375,6 @@ func (m *modelFive) NewServer(i int) RunnerInterface {
 	rsrv.ServerUch.rptr = rsrv
 	return rsrv
 }
-
-func (m *modelFive) NewDisk(i int) RunnerInterface { return nil }
 
 func (m *modelFive) Configure() {
 	configNetwork.sizeControlPDU = 100

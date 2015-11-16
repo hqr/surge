@@ -97,8 +97,6 @@ func (m *modelTwoDotOne) NewServer(i int) RunnerInterface {
 	return srv
 }
 
-func (m *modelTwoDotOne) NewDisk(i int) RunnerInterface { return nil }
-
 //
 // modelTwoDotOne private methods: common Gateway/Server send/recv and run()
 //
@@ -145,8 +143,8 @@ func (m *modelTwoDotOne) send(r *RunnerBase) bool {
 		peer = r2
 	}
 	at := clusterTripPlusRandom()
-	ev := newTimedUcastEvent(r, at, peer)
-	return r.Send(ev, false)
+	ev := newTimedAnyEvent(r, at, peer)
+	return r.Send(ev, SmethodDontWait)
 }
 
 func (m *modelTwoDotOne) Configure() {

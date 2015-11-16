@@ -17,6 +17,14 @@ const (
 	RstateStopped
 )
 
+type SendMethodEnum int
+
+const (
+	SmethodDontWait SendMethodEnum = iota
+	SmethodWait
+	SmethodDirectInsert
+)
+
 //
 // interfaces
 //
@@ -36,7 +44,7 @@ type RunnerInterface interface {
 
 	String() string
 
-	Send(ev EventInterface, wait bool) bool
+	Send(ev EventInterface, how SendMethodEnum) bool
 }
 
 //==================================================================
@@ -105,13 +113,26 @@ func (r *RunnerBase) GetStats(reset bool) NodeStats {
 
 func (r *RunnerBase) String() string { return fmt.Sprintf("[%s#%v]", r.strtype, r.id) }
 
-func (r *RunnerBase) Send(ev EventInterface, wait bool) bool {
+func (r *RunnerBase) Send(ev EventInterface, how SendMethodEnum) bool {
 	peer := ev.GetTarget()
+	if how == SmethodDirectInsert {
+		if peer.String() != r.String() { // FIXME: better identity checking
+			peer.Send(ev, how)
+		} else {
+			r.rxqueue.lock()
+			r.rxqueue.insertEvent(ev)
+			r.rxqueue.unlock()
+		}
+		return true
+	}
+
 	txch, _ := r.getChannels(peer)
-	if wait {
+	if how == SmethodWait {
 		txch <- ev
 		return true
 	}
+
+	assert(how == SmethodDontWait)
 	select {
 	case txch <- ev:
 		// all good, do nothing
