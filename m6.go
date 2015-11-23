@@ -176,6 +176,26 @@ func (r *gatewaySix) M6replicack(ev EventInterface) error {
 	return r.replicack(ev)
 }
 
+//
+// flow factory interface impl - notice model-specific ratebucket
+//
+func (r *gatewaySix) newflow(t interface{}, repnum int) *Flow {
+	tgt := t.(RunnerInterface)
+	tio := r.putpipeline.NewTio(r)
+	flow := NewFlow(r, tgt, r.chunk.cid, repnum, tio)
+	flow.tobandwidth = int64(0) // transmit upon further notice
+	flow.totalbytes = r.chunk.sizeb
+
+	flow.rb = NewRateBucketAIMD(
+		configAIMD.bwMinInitialAdd,     // minrate
+		configNetwork.linkbpsminus,     // maxrate
+		configNetwork.maxratebucketval, // maxval
+		configAIMD.bwDiv)               // Multiplicative divisor
+
+	r.flowsto.insertFlow(tgt, flow)
+	return flow
+}
+
 //==================================================================
 //
 // serverSix methods
@@ -349,11 +369,13 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 	f := r.flowsfrom.get(gwy, false)
 	assert(f == nil)
 
+	//new server's flow
 	tio := tioevent.GetTio()
 	flow := NewFlow(gwy, r, tioevent.cid, tioevent.num, tio)
 	flow.totalbytes = tioevent.sizeb
 	r.flowsfrom.insertFlow(gwy, flow)
 
+	// respond to the put-request
 	putreqackev := newUchReplicaPutRequestAckEvent(r, gwy, flow.cid, flow.num)
 	log("srv-new-flow", flow.String(), putreqackev.String())
 
@@ -368,21 +390,15 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 //
 //==================================================================
 func (m *modelSix) NewGateway(i int) RunnerInterface {
-	setflowratebucket := func(flow *Flow) {
-		flow.rb = NewRateBucketAIMD(
-			configAIMD.bwMinInitialAdd,     // minrate
-			configNetwork.linkbpsminus,     // maxrate
-			configNetwork.maxratebucketval, // maxval
-			configAIMD.bwDiv)               // Multiplicative divisor
-	}
-
-	gwy := NewGatewayUch(i, m6.putpipeline, setflowratebucket)
+	gwy := NewGatewayUch(i, m6.putpipeline)
 	gwy.rb = NewRateBucket(
 		configNetwork.maxratebucketval, // maxval
 		configNetwork.linkbpsminus,     // rate
 		configNetwork.maxratebucketval) // value
 	rgwy := &gatewaySix{*gwy}
 	rgwy.GatewayUch.rptr = rgwy
+	rgwy.ffi = rgwy
+	rgwy.flowsto = NewFlowDir(rgwy, config.numServers)
 	return rgwy
 }
 

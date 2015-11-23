@@ -219,6 +219,22 @@ func (r *gatewayFive) M5replicack(ev EventInterface) error {
 	return r.replicack(ev)
 }
 
+//
+// flow factory interface impl - notice model-specific ratebucket
+//
+func (r *gatewayFive) newflow(t interface{}, repnum int) *Flow {
+	tgt := t.(RunnerInterface)
+	tio := r.putpipeline.NewTio(r)
+	flow := NewFlow(r, tgt, r.chunk.cid, repnum, tio)
+	flow.tobandwidth = int64(0) // transmit upon further notice
+	flow.totalbytes = r.chunk.sizeb
+
+	flow.rb = NewRateBucket(configNetwork.maxratebucketval, int64(0), configNetwork.maxratebucketval)
+
+	r.flowsto.insertFlow(tgt, flow)
+	return flow
+}
+
 //==================================================================
 //
 // serverFive methods
@@ -331,6 +347,7 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 	f := r.flowsfrom.get(gwy, false)
 	assert(f == nil)
 
+	//new server's flow
 	tio := tioevent.GetTio()
 	flow := NewFlow(gwy, r, tioevent.cid, tioevent.num, tio)
 	flow.totalbytes = tioevent.sizeb
@@ -339,6 +356,7 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 	flow.raterts = Now.Add(config.timeClusterTrip * 2)
 	r.flowsfrom.insertFlow(gwy, flow)
 
+	// respond to the put witn RateInit
 	nflows := r.flowsfrom.count()
 	rateinitev := newUchRateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
 	flow.tobandwidth = rateinitev.tobandwidth
@@ -355,17 +373,15 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 //
 //==================================================================
 func (m *modelFive) NewGateway(i int) RunnerInterface {
-	setflowratebucket := func(flow *Flow) { // maxval, rate, value, rateptr
-		flow.rb = NewRateBucket(configNetwork.maxratebucketval, int64(0), configNetwork.maxratebucketval)
-	}
-
-	gwy := NewGatewayUch(i, m5.putpipeline, setflowratebucket)
+	gwy := NewGatewayUch(i, m5.putpipeline)
 	gwy.rb = NewRateBucket(
 		configNetwork.maxratebucketval, // maxval
 		configNetwork.linkbpsminus,     // rate
 		configNetwork.maxratebucketval) // value
 	rgwy := &gatewayFive{*gwy}
-	rgwy.GatewayUch.rptr = rgwy
+	rgwy.rptr = rgwy
+	rgwy.ffi = rgwy
+	rgwy.flowsto = NewFlowDir(rgwy, config.numServers)
 	return rgwy
 }
 

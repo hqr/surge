@@ -174,3 +174,36 @@ func (rb *RateBucketAIMD) ding() {
 func (rb *RateBucketAIMD) String() string {
 	return fmt.Sprintf("%+v", *rb)
 }
+
+//=====================================================================
+// DummyRateBucket
+//=====================================================================
+// DummyRateBucket represents link rate and unlimited value (to use)
+// serving as a convenience-placeholder for the reservation-based flows,
+// or more generally, flows that are throttled by non-ratebucket type
+// mechanisms
+type DummyRateBucket struct {
+}
+
+func (rb *DummyRateBucket) use(units int64) bool {
+	return true
+}
+
+func (rb *DummyRateBucket) setrate(newrate int64) {
+}
+
+func (rb *DummyRateBucket) getrate() int64 {
+	return configNetwork.linkbps
+}
+
+func (rb *DummyRateBucket) above(units int64) bool {
+	return true
+}
+
+func (rb *DummyRateBucket) below(units int64) bool {
+	return false
+}
+
+func (rb *DummyRateBucket) String() string {
+	return "dummy-rb"
+}

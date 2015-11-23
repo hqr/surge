@@ -117,11 +117,11 @@ var configAIMD = ConfigAIMD{
 // Replicast
 //
 type ConfigReplicast struct {
-	countNgtGroup int
+	sizeNgtGroup int
 }
 
 var configReplicast = ConfigReplicast{
-	countNgtGroup: 9,
+	sizeNgtGroup: 9,
 }
 
 //===============================================================

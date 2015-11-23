@@ -13,7 +13,7 @@ type Chunk struct {
 	sid     int64 // short id
 	gateway RunnerInterface
 	crtime  time.Time // creation time
-	sizeb   int       // KB
+	sizeb   int       // bytes
 }
 
 func NewChunk(gwy RunnerInterface, sizebytes int) *Chunk {

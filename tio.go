@@ -85,7 +85,12 @@ func (tio *Tio) next(newev EventInterface) {
 
 	log(LogV, "stage-next", tio.String())
 
-	src.Send(tio.event, SmethodWait) // blocking
+	group := newev.GetGroup()
+	if group == nil {
+		src.Send(newev, SmethodWait) // blocking
+	} else {
+		group.SendGroup(newev, SmethodDirectInsert)
+	}
 }
 
 func (tio *Tio) doStage(r RunnerInterface) error {
