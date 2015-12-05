@@ -60,7 +60,7 @@ func (rb *RateBucket) __addtime() {
 	if !Now.After(rb.timestamp) {
 		return
 	}
-	if rb.value == rb.maxval || rb.rate == int64(0) {
+	if rb.value == rb.maxval || rb.rate == 0 {
 		rb.timestamp = TimeNil // STOP the ratebucket timer
 		return
 	}
@@ -78,7 +78,7 @@ func (rb *RateBucket) use(units int64) bool {
 	if units > rb.value {
 		return false
 	}
-	if rb.value == rb.maxval && rb.rate > int64(0) {
+	if rb.value == rb.maxval && rb.rate > 0 {
 		rb.timestamp = Now // START the ratebucket timer
 	}
 	rb.value -= units
@@ -88,7 +88,7 @@ func (rb *RateBucket) use(units int64) bool {
 func (rb *RateBucket) setrate(newrate int64) {
 	rb.__addtime()
 	rb.rate = newrate
-	if rb.value < rb.maxval && rb.rate > int64(0) {
+	if rb.value < rb.maxval && rb.rate > 0 {
 		rb.timestamp = Now // START the ratebucket timer
 	}
 }
@@ -151,7 +151,7 @@ func (rb *RateBucketAIMD) use(units int64) bool {
 	if units > rb.value {
 		return false
 	}
-	if rb.value == rb.maxval && rb.rate > int64(0) {
+	if rb.value == rb.maxval && rb.rate > 0 {
 		rb.timestamp = Now // START the ratebucket timer
 	}
 	rb.value -= units

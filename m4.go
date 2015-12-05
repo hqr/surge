@@ -127,7 +127,7 @@ func (r *gatewayFour) M4putxferack(ev EventInterface) error {
 func (r *gatewayFour) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
 	if reset {
-		s["tio"] = atomic.SwapInt64(&r.tiostats, int64(0))
+		s["tio"] = atomic.SwapInt64(&r.tiostats, 0)
 	} else {
 		s["tio"] = atomic.LoadInt64(&r.tiostats)
 	}
@@ -195,7 +195,7 @@ func (r *serverFour) M4putxfer(ev EventInterface) error {
 // modelFour interface methods
 //
 func (m *modelFour) NewGateway(i int) RunnerInterface {
-	gwy := &gatewayFour{RunnerBase{id: i, strtype: "GWY"}, int64(0)}
+	gwy := &gatewayFour{RunnerBase{id: i, strtype: "GWY"}, 0}
 	gwy.init(config.numServers)
 	return gwy
 }

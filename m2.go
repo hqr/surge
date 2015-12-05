@@ -98,7 +98,7 @@ func (m *modelTwo) NewServer(i int) RunnerInterface {
 //
 // modelTwo private methods: common Gateway/Server send/recv and run()
 //
-func (m *modelTwo) run(rb *RunnerBase, rxcallback processEvent) {
+func (m *modelTwo) run(rb *RunnerBase, rxcallback processEventCb) {
 	for rb.state == RstateRunning {
 		m2.recv(rb, rxcallback)
 		if !m2.send(rb) {
@@ -114,7 +114,7 @@ func (m *modelTwo) run(rb *RunnerBase, rxcallback processEvent) {
 	rb.closeTxChannels()
 }
 
-func (m *modelTwo) recv(r *RunnerBase, rxcallback processEvent) {
+func (m *modelTwo) recv(r *RunnerBase, rxcallback processEventCb) {
 	r.receiveEnqueue()
 	time.Sleep(time.Microsecond)
 	r.processPendingEvents(rxcallback)

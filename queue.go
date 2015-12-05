@@ -96,7 +96,6 @@ func (q *DiskQueue) clearOld() {
 //
 //==================================================================
 type TxQueue struct {
-	// FIXME: map[]fifo, with fifo per target
 	fifo []EventInterface
 	r    RunnerInterface
 }
@@ -166,10 +165,10 @@ func NewRxQueue(ri RunnerInterface, size int) *RxQueue {
 	return &RxQueue{
 		pending:          evsq[0:0],
 		pendingMutex:     &sync.RWMutex{},
-		eventstats:       int64(0),
-		busycnt:          int64(0),
-		idlecnt:          int64(0),
-		realpendingdepth: int64(0),
+		eventstats:       0,
+		busycnt:          0,
+		idlecnt:          0,
+		realpendingdepth: 0,
 		busyidletick:     time.Now(), // != Now
 		r:                ri,
 	}
@@ -229,7 +228,7 @@ func (q *RxQueue) deleteEvent(k int) {
 //
 // handle those that are AT or BEFORE the current time
 //
-func (q *RxQueue) processPendingEvents(rxcallback processEvent) {
+func (q *RxQueue) processPendingEvents(rxcallback processEventCb) {
 	q.lock()
 	defer q.unlock()
 	for k := 0; k < len(q.pending); {
@@ -322,15 +321,15 @@ func (q *RxQueue) GetStats(reset bool) NodeStats {
 	var b, i int64
 	s := map[string]int64{}
 	if reset {
-		s["event"] = atomic.SwapInt64(&q.eventstats, int64(0))
-		b = atomic.SwapInt64(&q.busycnt, int64(0))
-		i = atomic.SwapInt64(&q.idlecnt, int64(0))
+		s["event"] = atomic.SwapInt64(&q.eventstats, 0)
+		b = atomic.SwapInt64(&q.busycnt, 0)
+		i = atomic.SwapInt64(&q.idlecnt, 0)
 	} else {
 		s["event"] = atomic.LoadInt64(&q.eventstats)
 		b = atomic.LoadInt64(&q.busycnt)
 		i = atomic.LoadInt64(&q.idlecnt)
 	}
-	s["rxbusy"] = int64(0)
+	s["rxbusy"] = 0
 	if b > 0 {
 		s["rxbusy"] = b * 100 / (b + i)
 	}
@@ -366,7 +365,7 @@ func (q *RxQueueSorted) insertEvent(ev EventInterface) {
 	q.pending[k] = ev
 }
 
-func (q *RxQueueSorted) processPendingEvents(rxcallback processEvent) {
+func (q *RxQueueSorted) processPendingEvents(rxcallback processEventCb) {
 	q.lock()
 	defer q.unlock()
 

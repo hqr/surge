@@ -44,13 +44,60 @@ type Tio struct {
 	event EventInterface
 	done  bool
 	err   error
+
+	cid      int64
+	chunksid int64
+	parent   *Tio
+	flow     *Flow
+	children map[RunnerInterface]*Tio
+	repnum   int
+	target   RunnerInterface
 }
 
-func NewTio(src RunnerInterface, p *Pipeline) *Tio {
+func newTio(src RunnerInterface, p *Pipeline, args []interface{}) *Tio {
 	assert(p.Count() > 0)
 
 	uqid, printid := uqrandom64(src.GetID())
-	return &Tio{id: uqid, sid: printid, pipeline: p, index: -1, source: src}
+	tio := &Tio{id: uqid, sid: printid, pipeline: p, index: -1, source: src}
+
+	for i := 0; i < len(args); i++ {
+		tio.setOneArg(args[i])
+	}
+	// linkage
+	if tio.parent == nil {
+		tio.source.AddTio(tio) // see RemoveTio below
+		return tio
+	}
+	if tio.parent.children == nil {
+		tio.parent.children = make(map[RunnerInterface]*Tio, 2)
+	}
+	tio.parent.children[tio.target] = tio
+	return tio
+}
+
+func (tio *Tio) setOneArg(a interface{}) {
+	switch a.(type) {
+	case *Chunk:
+		tio.cid = a.(*Chunk).cid
+		tio.chunksid = a.(*Chunk).sid
+	case *PutReplica:
+		tio.repnum = a.(*PutReplica).num
+		tio.cid = a.(*PutReplica).chunk.cid
+		tio.chunksid = a.(*PutReplica).chunk.sid
+	case *Tio:
+		assert(tio.parent == nil)
+		tio.parent = a.(*Tio)
+	case RunnerInterface:
+		tio.target = a.(RunnerInterface)
+	case *Flow:
+		tio.flow = a.(*Flow)
+	default:
+		assert(false, fmt.Sprintf("unexpected type: %#v", a))
+	}
+}
+
+func (tioparent *Tio) haschild(tiochild *Tio) bool {
+	return tioparent.children[tiochild.target] == tiochild
 }
 
 func (tio *Tio) GetStage() (string, int) {
@@ -85,26 +132,35 @@ func (tio *Tio) next(newev EventInterface) {
 
 	log(LogV, "stage-next", tio.String())
 
-	group := newev.GetGroup()
-	if group == nil {
-		src.Send(newev, SmethodWait) // blocking
-	} else {
-		group.SendGroup(newev, SmethodDirectInsert)
-	}
+	src.Send(newev, SmethodWait) // blocking
 }
 
-func (tio *Tio) doStage(r RunnerInterface) error {
-	assert(r == tio.event.GetTarget())
+func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
+	tioevent := tio.event
+	if len(args) > 0 {
+		tioevent = args[0].(EventInterface)
+	}
+	assert(r == tioevent.GetTarget())
+	assert(tio == tioevent.GetTio())
 
 	stage := tio.pipeline.GetStage(tio.index)
 	assert(tio.index == stage.index)
 
 	methodValue := reflect.ValueOf(r).MethodByName(stage.handler)
-	rcValue := methodValue.Call([]reflect.Value{reflect.ValueOf(tio.event)})
+	rcValue := methodValue.Call([]reflect.Value{reflect.ValueOf(tioevent)})
 
 	if tio.index == tio.pipeline.Count()-1 {
 		tio.fintime = Now
 		tio.done = true
+		if tio.parent == nil {
+			tio.source.RemoveTio(tio)
+		} else {
+			assert(tio.parent.haschild(tio))
+			delete(tio.parent.children, tio.target)
+			if len(tio.parent.children) == 0 {
+				tio.parent.source.RemoveTio(tio.parent)
+			}
+		}
 	}
 	if rcValue[0].IsNil() {
 		if tio.done {
@@ -120,15 +176,24 @@ func (tio *Tio) doStage(r RunnerInterface) error {
 }
 
 func (tio *Tio) String() string {
+	tioidstr := fmt.Sprintf("%d", tio.sid)
+	if tio.repnum != 0 {
+		tioidstr += fmt.Sprintf("(%d,%d)", tio.chunksid, tio.repnum)
+	} else if tio.cid != 0 {
+		tioidstr += fmt.Sprintf("(%d)", tio.chunksid)
+	}
 	if tio.done {
 		if tio.err == nil {
-			return fmt.Sprintf("[tio#%d done]", tio.sid)
+			return fmt.Sprintf("[tio#%s done]", tioidstr)
 		}
-		return fmt.Sprintf("ERROR: [tio#%d failed,%#v]", tio.sid, tio.err)
+		return fmt.Sprintf("ERROR: [tio#%s failed,%#v]", tioidstr, tio.err)
+	}
+	if tio.index < 0 {
+		return fmt.Sprintf("[tio#%s,stage-prerun]", tioidstr)
 	}
 	stage := tio.pipeline.GetStage(tio.index)
 	if tio.err == nil {
-		return fmt.Sprintf("[tio#%d,stage(%s,%d)]", tio.sid, stage.name, tio.index)
+		return fmt.Sprintf("[tio#%s,stage(%s,%d)]", tioidstr, stage.name, tio.index)
 	}
-	return fmt.Sprintf("ERROR: [tio#%d,stage(%s,%d) failed]", tio.sid, stage.name, tio.index)
+	return fmt.Sprintf("ERROR: [tio#%s,stage(%s,%d) failed]", tioidstr, stage.name, tio.index)
 }

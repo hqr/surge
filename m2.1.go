@@ -101,7 +101,7 @@ func (m *modelTwoDotOne) NewServer(i int) RunnerInterface {
 // modelTwoDotOne private methods: common Gateway/Server send/recv and run()
 //
 
-func (m *modelTwoDotOne) run(rb *RunnerBase, rxcallback processEvent) {
+func (m *modelTwoDotOne) run(rb *RunnerBase, rxcallback processEventCb) {
 	lastRefill := Now
 	leakyBucket := float64(MaxBucket)
 
@@ -127,7 +127,7 @@ func (m *modelTwoDotOne) run(rb *RunnerBase, rxcallback processEvent) {
 	rb.closeTxChannels()
 }
 
-func (m *modelTwoDotOne) recv(r *RunnerBase, rxcallback processEvent) {
+func (m *modelTwoDotOne) recv(r *RunnerBase, rxcallback processEventCb) {
 	r.receiveEnqueue()
 	r.processPendingEvents(rxcallback)
 }

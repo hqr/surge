@@ -161,41 +161,39 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 			}
 		}
 
-		// log one iter
-		if d.kind == StatsKindCount || d.kind == StatsKindByteCount {
-			spgwy := float64(newgwy) * (float64(time.Millisecond) / float64(elapsed))
-			spsrv := float64(newsrv) * (float64(time.Millisecond) / float64(elapsed))
+		// log one iteration
+		if d.scope&StatsScopeGateway > 0 && newgwy != 0 {
+			if d.kind == StatsKindCount || d.kind == StatsKindByteCount {
+				spgwy := float64(newgwy) * (float64(time.Millisecond) / float64(elapsed))
 
-			if d.scope&StatsScopeGateway > 0 {
 				if d.kind == StatsKindByteCount {
 					log(fmt.Sprintf("new-gwy-%s,%d,total-gwy-%s,%s,%s/s, %s", n, newgwy, n, bytesToKMG(mstats.totalgwy[n]), n, bytesMillisToKMGseconds(spgwy)))
 				} else {
 					log(fmt.Sprintf("new-gwy-%ss,%d,total-gwy-%ss,%d,%ss/ms, %.0f", n, newgwy, n, mstats.totalgwy[n], n, spgwy))
 				}
+			} else if d.kind == StatsKindSampleCount {
+				avesample := float64(newgwy) / float64(config.numGateways)
+				log(fmt.Sprintf("new-gwy-average-%s,%.1f", n, avesample))
+			} else if d.kind == StatsKindPercentage {
+				busygwy := float64(newgwy) / float64(config.numGateways)
+				log(fmt.Sprintf("gwy-%s(%%),%.0f", n, busygwy))
 			}
-			if d.scope&StatsScopeServer > 0 {
+		}
+
+		if d.scope&StatsScopeServer > 0 && newsrv != 0 {
+			if d.kind == StatsKindCount || d.kind == StatsKindByteCount {
+				spsrv := float64(newsrv) * (float64(time.Millisecond) / float64(elapsed))
+
 				if d.kind == StatsKindByteCount {
 					log(fmt.Sprintf("new-srv-%s,%d,total-srv-%s,%s,%s/s, %s", n, newsrv, n, bytesToKMG(mstats.totalsrv[n]), n, bytesMillisToKMGseconds(spsrv)))
 				} else {
 					log(fmt.Sprintf("new-srv-%ss,%d,total-srv-%ss,%d,%ss/ms, %.0f", n, newsrv, n, mstats.totalsrv[n], n, spsrv))
 				}
-			}
-		} else if d.kind == StatsKindSampleCount {
-			if (d.scope & StatsScopeGateway) > 0 {
-				avesample := float64(newgwy) / float64(config.numGateways)
-				log(fmt.Sprintf("new-gwy-average-%s,%.1f", n, avesample))
-			}
-			if (d.scope & StatsScopeServer) > 0 {
+			} else if d.kind == StatsKindSampleCount {
 				avesample := float64(newsrv) / float64(config.numServers)
 				log(fmt.Sprintf("new-srv-average-%s,%.1f", n, avesample))
-			}
-		} else if d.kind == StatsKindPercentage {
-			busygwy := float64(newgwy) / float64(config.numGateways)
-			busysrv := float64(newsrv) / float64(config.numServers)
-			if (d.scope & StatsScopeGateway) > 0 {
-				log(fmt.Sprintf("gwy-%s(%%),%.0f", n, busygwy))
-			}
-			if (d.scope & StatsScopeServer) > 0 {
+			} else if d.kind == StatsKindPercentage {
+				busysrv := float64(newsrv) / float64(config.numServers)
 				log(fmt.Sprintf("srv-%s(%%),%.0f", n, busysrv))
 			}
 		}

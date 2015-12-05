@@ -42,6 +42,9 @@ type RunnerInterface interface {
 	GetID() int
 	GetStats(reset bool) NodeStats
 
+	AddTio(tio *Tio)
+	RemoveTio(tio *Tio)
+
 	String() string
 
 	Send(ev EventInterface, how SendMethodEnum) bool
@@ -52,6 +55,11 @@ type RunnerInterface interface {
 // base runner with a bunch of private methods that can be used by subclasses
 //
 //==================================================================
+//
+// const
+//
+const initialTioCnt int = 4
+
 type RunnerBase struct {
 	id      int
 	state   RunnerStateEnum
@@ -59,13 +67,12 @@ type RunnerBase struct {
 	rxchans []chan EventInterface
 	eps     []RunnerInterface
 	cases   []reflect.SelectCase
+	tios    map[int64]*Tio
 	rxqueue *RxQueueSorted
 	txqueue *TxQueue
 	strtype string // log
 	rxcount int    // num live Rx connections
 }
-
-type processEvent func(ev EventInterface) bool
 
 //==================================================================
 // RunnerBase interface methods
@@ -160,6 +167,26 @@ func (r *RunnerBase) init(numPeers int) {
 	r.eps[0] = nil
 }
 
+func (r *RunnerBase) initios(args ...interface{}) {
+	cnt := initialTioCnt
+	if len(args) > 0 {
+		cnt = args[0].(int)
+	}
+	r.tios = make(map[int64]*Tio, cnt)
+}
+
+func (r *RunnerBase) AddTio(tio *Tio) {
+	_, ok := r.tios[tio.id]
+	assert(!ok, r.String()+": tio already exists: "+tio.String())
+	r.tios[tio.id] = tio
+}
+
+func (r *RunnerBase) RemoveTio(tio *Tio) {
+	_, ok := r.tios[tio.id]
+	assert(ok, r.String()+": tio does not exist: "+tio.String())
+	delete(r.tios, tio.id)
+}
+
 func (r *RunnerBase) selectRandomPeer(maxload int) RunnerInterface {
 	numPeers := cap(r.eps) - 1
 	if numPeers == 1 {
@@ -247,7 +274,7 @@ func (r *RunnerBase) NumPendingEvents(exact bool) int64 {
 	return r.rxqueue.NumPendingEvents(exact)
 }
 
-func (r *RunnerBase) processPendingEvents(rxcallback processEvent) {
+func (r *RunnerBase) processPendingEvents(rxcallback processEventCb) {
 	r.rxqueue.processPendingEvents(rxcallback)
 }
 

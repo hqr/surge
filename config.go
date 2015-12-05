@@ -80,8 +80,8 @@ type ConfigNetwork struct {
 	sizeFrame      int
 	sizeControlPDU int
 	overheadpct    int
-	// computed and assigned below
-	linkbpsminus     int64
+	// computed and/or assigned
+	linkbpsorig      int64
 	maxratebucketval int64
 }
 
@@ -110,7 +110,7 @@ var configAIMD = ConfigAIMD{
 	sizeAddBits:     int64(configNetwork.sizeFrame*8) + int64(configNetwork.sizeControlPDU*8),
 	bwDiv:           2,
 	linkoverage:     2,
-	diskoverage:     16,
+	diskoverage:     4,
 }
 
 //
@@ -197,5 +197,6 @@ func init() {
 	configNetwork.linkbps = *linkbpsPtr
 
 	configNetwork.maxratebucketval = int64(configNetwork.sizeFrame*8) + int64(configNetwork.sizeControlPDU*8)
-	configNetwork.linkbpsminus = configNetwork.linkbps - configNetwork.linkbps*int64(configNetwork.overheadpct)/int64(100)
+	configNetwork.linkbpsorig = configNetwork.linkbps
+	configNetwork.linkbps = configNetwork.linkbps - configNetwork.linkbps*int64(configNetwork.overheadpct)/int64(100)
 }

@@ -21,12 +21,13 @@ import (
 //
 //===============================================================
 type FlowFactoryInterface interface {
-	newflow(target interface{}, repnum int) *Flow
+	newflow(target interface{}, args ...interface{}) *Flow
 }
 
 //===============================================================
 //
 // GatewayUch
+// FIXME: split (stats | unicast specific part)
 //
 //===============================================================
 type GatewayUch struct {
@@ -38,8 +39,8 @@ type GatewayUch struct {
 	txbytestats  int64
 	rxbytestats  int64
 	chunk        *Chunk
+	chunktargets []RunnerInterface
 	replica      *PutReplica
-	flowsto      *FlowDir
 	rb           RateBucketInterface
 	rptr         RunnerInterface // real object
 	putpipeline  *Pipeline
@@ -54,6 +55,9 @@ func NewGatewayUch(i int, p *Pipeline) *GatewayUch {
 
 	gwy.putpipeline = p
 	gwy.init(config.numServers)
+	gwy.initios()
+
+	gwy.chunktargets = make([]RunnerInterface, configStorage.numReplicas)
 
 	return gwy
 }
@@ -64,28 +68,46 @@ func (r *GatewayUch) realobject() RunnerInterface {
 	return r.rptr
 }
 
-// selectTarget randomly selects target server that is not yet talking to this
-// particular gateway.
-func (r *GatewayUch) selectTarget() RunnerInterface {
+// selectTargets randomly selects numReplicas targets for a new chunk
+func (r *GatewayUch) selectTargets() {
+	arr := make([]RunnerInterface, configStorage.numReplicas)
 	numPeers := cap(r.eps) - 1
-	assert(numPeers > 1)
-	id := rand.Intn(numPeers) + 1
+	idx := 0
 	cnt := 0
 	for {
-		peer := r.eps[id]
-		flow := r.flowsto.get(peer, false)
-		if flow == nil {
-			return peer
+		peeridx := rand.Intn(numPeers) + 1
+		peer := r.eps[peeridx]
+		found := false
+		for _, srv := range r.chunktargets {
+			if srv != nil && peer.GetID() == srv.GetID() {
+				found = true
+				break
+			}
 		}
-		id++
+		if found {
+			continue
+		}
+		for _, srv := range arr {
+			if srv != nil && peer.GetID() == srv.GetID() {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		arr[idx] = peer
+		idx++
+		if idx >= configStorage.numReplicas {
+			break
+		}
 		cnt++
-		if id >= numPeers {
-			id = 1
-		}
-		if cnt >= numPeers {
-			return nil
-		}
+		assert(cnt < numPeers*2, "failed to select targets")
 	}
+	for idx = range r.chunktargets {
+		r.chunktargets[idx] = arr[idx]
+	}
+	log(r.String(), " => ", fmt.Sprintf("%v", r.chunktargets))
 }
 
 //===
@@ -95,6 +117,7 @@ func (r *GatewayUch) startNewChunk() {
 	assert(r.chunk == nil)
 	r.chunk = NewChunk(r.realobject(), configStorage.sizeDataChunk*1024)
 	r.numreplicas = 0
+	r.selectTargets()
 	r.startNewReplica(1)
 }
 
@@ -104,36 +127,31 @@ func (r *GatewayUch) startNewChunk() {
 func (r *GatewayUch) startNewReplica(num int) {
 	r.replica = NewPutReplica(r.chunk, num)
 
-	tgt := r.selectTarget()
+	tgt := r.chunktargets[num-1]
 	assert(tgt != nil)
 
 	flow := r.ffi.newflow(tgt, num)
 
 	log("gwy-new-flow", flow.String())
 
-	ev := newUchReplicaPutRequestEvent(r.realobject(), tgt, r.replica, flow.tio)
+	ev := newReplicaPutRequestEvent(r.realobject(), tgt, r.replica, flow.tio)
 
 	flow.tio.next(ev)
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
 	flow.rb.use(int64(configNetwork.sizeControlPDU * 8))
-	flow.sendnexts = Now.Add(time.Duration(configNetwork.sizeControlPDU) * time.Second / time.Duration(configNetwork.linkbpsminus))
+	flow.sendnexts = Now.Add(time.Duration(configNetwork.sizeControlPDU) * time.Second / time.Duration(configNetwork.linkbps))
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 }
 
-// sendata sends data packets (frames) in the form of UchReplicaDataEvent,
+// sendata sends data packets (frames) in the form of ReplicaDataEvent,
 // each carrying configNetwork.sizeFrame bytes (9000 jumbo by default)
 // The sending is throttled both by the gateway's own egress link (r.rb)
 // and the end-to-end flow (flow,rb)
 func (r *GatewayUch) sendata() {
-	q := r.txqueue
-	for k := 0; k < len(q.fifo); k++ {
-		ev := q.fifo[k]
-		if r.Send(ev, SmethodDontWait) {
-			q.deleteEvent(k)
-			atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeFrame))
-		}
-	}
-	applyCallback := func(srv RunnerInterface, flow *Flow) {
+	for _, tio := range r.tios {
+		flow := tio.flow
+		srv := tio.target
+		assert(flow.to == srv)
 		if flow.tobandwidth == 0 || flow.offset >= r.chunk.sizeb {
 			return
 		}
@@ -155,36 +173,33 @@ func (r *GatewayUch) sendata() {
 			return
 		}
 		flow.offset += frsize
-		ev := newUchReplicaDataEvent(r.realobject(), srv, r.replica, flow, frsize, flow.tio)
-		// time for the bits to get fully transmitted given the current flow's bandwidth
+		ev := newReplicaDataEvent(r.realobject(), srv, r.replica, flow, frsize, flow.tio)
+
+		// transmit given the current flow's bandwidth
 		flow.sendnexts = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
-		if r.Send(ev, SmethodWait) {
-			atomic.AddInt64(&r.txbytestats, int64(frsize))
-			// starting next replica without waiting for the current one's completion
-			if flow.offset >= flow.totalbytes {
-				r.finishStartReplica(flow.to)
-			} else {
-				flow.rb.use(newbits)
-				flow.tobandwidth = flow.rb.getrate()
-				r.rb.use(newbits)
-			}
+		ok := r.Send(ev, SmethodWait)
+		assert(ok)
+		atomic.AddInt64(&r.txbytestats, int64(frsize))
+		// starting next replica without waiting for the current one's completion
+		if flow.offset >= flow.totalbytes {
+			r.finishStartReplica(flow)
 		} else {
-			q.insertEvent(ev)
-			assert(false, "async send not supported yet")
+			flow.rb.use(newbits)
+			flow.tobandwidth = flow.rb.getrate()
+			r.rb.use(newbits)
 		}
 	}
-	r.flowsto.apply(applyCallback)
 }
 
 // finishStartReplica finishes the replica or the entire chunk, the latter
 // when all the required configStorage.numReplicas copies are fully stored
-func (r *GatewayUch) finishStartReplica(srv RunnerInterface) {
-	flow := r.flowsto.get(srv, true)
-
+func (r *GatewayUch) finishStartReplica(flow *Flow) {
 	log("replica-fully-transmitted", flow.String(), r.replica.String())
 	flow.tobandwidth = 0
-	if flow.num < configStorage.numReplicas {
-		r.startNewReplica(flow.num + 1)
+	tio := flow.tio
+	assert(flow.repnum == tio.repnum)
+	if tio.repnum < configStorage.numReplicas {
+		r.startNewReplica(tio.repnum + 1)
 	}
 }
 
@@ -192,11 +207,13 @@ func (r *GatewayUch) finishStartReplica(srv RunnerInterface) {
 // ReplicaPutAck handler
 //
 func (r *GatewayUch) replicack(ev EventInterface) error {
-	tioevent := ev.(*UchReplicaPutAckEvent)
-	srv := tioevent.GetSource()
-	flow := r.flowsto.get(srv, true)
+	tioevent := ev.(*ReplicaPutAckEvent)
+	tio := tioevent.GetTio()
+	flow := tio.flow
 	assert(flow.cid == tioevent.cid)
-	assert(flow.num == tioevent.num)
+	assert(flow.cid == tio.cid)
+	assert(flow.repnum == tioevent.num)
+
 	log(LogV, "::replicack()", flow.String(), tioevent.String())
 	atomic.AddInt64(&r.replicastats, int64(1))
 
@@ -207,7 +224,6 @@ func (r *GatewayUch) replicack(ev EventInterface) error {
 		atomic.AddInt64(&r.chunkstats, int64(1))
 		r.chunk = nil
 	}
-	r.flowsto.deleteFlow(srv)
 	return nil
 }
 
@@ -224,11 +240,11 @@ func (r *GatewayUch) replicack(ev EventInterface) error {
 func (r *GatewayUch) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
 	if reset {
-		s["tio"] = atomic.SwapInt64(&r.tiostats, int64(0))
-		s["chunk"] = atomic.SwapInt64(&r.chunkstats, int64(0))
-		s["replica"] = atomic.SwapInt64(&r.replicastats, int64(0))
-		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, int64(0))
-		s["rxbytes"] = atomic.SwapInt64(&r.rxbytestats, int64(0))
+		s["tio"] = atomic.SwapInt64(&r.tiostats, 0)
+		s["chunk"] = atomic.SwapInt64(&r.chunkstats, 0)
+		s["replica"] = atomic.SwapInt64(&r.replicastats, 0)
+		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, 0)
+		s["rxbytes"] = atomic.SwapInt64(&r.rxbytestats, 0)
 	} else {
 		s["tio"] = atomic.LoadInt64(&r.tiostats)
 		s["chunk"] = atomic.LoadInt64(&r.chunkstats)
@@ -246,45 +262,21 @@ func (r *GatewayUch) GetStats(reset bool) NodeStats {
 //===============================================================
 type GatewayMcast struct {
 	GatewayUch
-	flowsto *FlowDirMcast
+	rzvgroup   *RzvGroup
+	expectacks int
 }
 
 func NewGatewayMcast(i int, p *Pipeline) *GatewayMcast {
 	gwy := NewGatewayUch(i, p)
-	return &GatewayMcast{*gwy, nil}
+	servers := make([]RunnerInterface, configStorage.numReplicas)
+	return &GatewayMcast{GatewayUch: *gwy, rzvgroup: &RzvGroup{0, servers, 0}}
 }
 
 //===
 // Tx
 //===
-func (r *GatewayMcast) startNewChunk() {
-	assert(r.chunk == nil)
-	r.chunk = NewChunk(r.realobject(), configStorage.sizeDataChunk*1024)
-	r.numreplicas = 0
-	r.startNewReplica(1)
-}
-
-// startNewReplica allocates new replica and tio to drive the former
-// through the pipeline. Flow peer-to-peer object is created as well
-// here, subject to the concrete modeled protocol
-func (r *GatewayMcast) startNewReplica(repnum int) {
-	r.replica = NewPutReplica(r.chunk, repnum)
-	ngid := r.selectNgtGroup()
-	ngobj := NewNgtGroup(ngid)
-	flow := r.ffi.newflow(ngobj, repnum)
-
-	log("gwy-new-flow", flow.String())
-
-	ev := newMcastReplicaPutRequestEvent(r.realobject(), ngobj, r.replica, flow.tio)
-
-	flow.tio.next(ev)
-	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
-	flow.rb.use(int64(configNetwork.sizeControlPDU * 8))
-	flow.sendnexts = Now.Add(time.Duration(configNetwork.sizeControlPDU) * time.Second / time.Duration(configNetwork.linkbpsminus))
-	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
-}
-
 // selectNgtGroup randomly selects target negotiating group and returns its ID
+// FIXME: make sure to select a different one for this gateway..
 func (r *GatewayMcast) selectNgtGroup() int {
 	numGroups := config.numServers / configReplicast.sizeNgtGroup
 	assert(numGroups > 1)
@@ -314,7 +306,6 @@ func NewServerUch(i int, p *Pipeline) *ServerUch {
 
 	srv.putpipeline = p
 	srv.init(config.numGateways)
-	srv.flowsfrom = NewFlowDir(srv, config.numGateways)
 	srv.disk = NewDisk(srv, configStorage.diskMBps)
 
 	return srv
@@ -325,7 +316,7 @@ func (r *ServerUch) realobject() RunnerInterface {
 }
 
 // receiveReplicaData is executed in the UCH server's receive data path for
-// each received event of the type (*UchReplicaPutAckEvent). The event itself
+// each received event of the type (*ReplicaPutAckEvent). The event itself
 // carries (or rather, is modeled to carry) a full or partial frame, that is,
 // up to configNetwork.sizeFrame bytes.  In addition
 // to taking care of the flow.offset and receive side statistics, the routine
@@ -335,13 +326,14 @@ func (r *ServerUch) realobject() RunnerInterface {
 // (putting a single replica is a single transaction that will typpically include
 // 3 or more IO stages)
 //
-func (r *ServerUch) receiveReplicaData(ev *UchReplicaDataEvent) {
+func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) {
 	gwy := ev.GetSource()
 	flow := r.flowsfrom.get(gwy, true)
+	group := ev.GetGroup()
 
 	log(LogV, "srv-recv-data", flow.String(), ev.String())
 	assert(flow.cid == ev.cid)
-	assert(flow.num == ev.num)
+	assert(group != nil || flow.repnum == ev.num)
 
 	x := ev.offset - flow.offset
 	assert(x <= configNetwork.sizeFrame, fmt.Sprintf("FATAL: out of order:%d:%s", ev.offset, flow.String()))
@@ -355,12 +347,16 @@ func (r *ServerUch) receiveReplicaData(ev *UchReplicaDataEvent) {
 		diskdoneintime := r.disk.scheduleWrite(flow.totalbytes)
 		r.disk.queue.insertTime(diskdoneintime)
 
-		putackev := newUchReplicaPutAckEvent(r.realobject(), gwy, flow.cid, flow.num, diskdoneintime)
-		ts := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
+		putackev := newReplicaPutAckEvent(r.realobject(), gwy, flow, tio, diskdoneintime)
+		if group != nil {
+			// pass the targetgroup back, to validate by the mcasting gwy
+			putackev.setOneArg(group)
+		}
+		donetodisktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
 		tio.next(putackev)
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 
-		log("srv-replica-done-and-gone", flow.String(), ts)
+		log("srv-replica-done-and-gone", flow.String(), donetodisktime)
 		r.flowsfrom.deleteFlow(gwy)
 	}
 }
@@ -378,8 +374,8 @@ func (r *ServerUch) receiveReplicaData(ev *UchReplicaDataEvent) {
 func (r *ServerUch) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
 	if reset {
-		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, int64(0))
-		s["rxbytes"] = atomic.SwapInt64(&r.rxbytestats, int64(0))
+		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, 0)
+		s["rxbytes"] = atomic.SwapInt64(&r.rxbytestats, 0)
 	} else {
 		s["txbytes"] = atomic.LoadInt64(&r.txbytestats)
 		s["rxbytes"] = atomic.LoadInt64(&r.rxbytestats)
@@ -397,8 +393,12 @@ type GroupInterface interface {
 	getID() int // CH, random selection
 	getID64() int64
 	getCount() int
+	hasmember(r RunnerInterface) bool
+	getmembers() []RunnerInterface
 
-	SendGroup(ev EventInterface, how SendMethodEnum) bool
+	// FIXME: not used
+	SendGroup(ev EventInterface, how SendMethodEnum, cloner EventClonerInterface) bool
+
 	String() string
 }
 
@@ -410,8 +410,9 @@ type NgtGroup struct {
 }
 
 func NewNgtGroup(id int) *NgtGroup {
+	assert(id > 0)
 	assert(id*configReplicast.sizeNgtGroup <= config.numServers)
-	return &NgtGroup{}
+	return &NgtGroup{id}
 }
 
 func (g *NgtGroup) getID() int {
@@ -426,11 +427,31 @@ func (g *NgtGroup) getCount() int {
 	return configReplicast.sizeNgtGroup
 }
 
-func (g *NgtGroup) SendGroup(ev EventInterface, how SendMethodEnum) bool {
+func (g *NgtGroup) hasmember(r RunnerInterface) bool {
+	firstidx := (g.id - 1) * configReplicast.sizeNgtGroup
+	for idx := 0; idx < configReplicast.sizeNgtGroup; idx++ {
+		srv := allServers[firstidx+idx]
+		if r == srv {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *NgtGroup) getmembers() []RunnerInterface {
+	firstidx := (g.id - 1) * configReplicast.sizeNgtGroup
+	return allServers[firstidx : firstidx+configReplicast.sizeNgtGroup]
+}
+
+func (g *NgtGroup) SendGroup(origev EventInterface, how SendMethodEnum, cloner EventClonerInterface) bool {
 	assert(how == SmethodDirectInsert)
 	firstidx := (g.id - 1) * configReplicast.sizeNgtGroup
 	for idx := 0; idx < configReplicast.sizeNgtGroup; idx++ {
 		srv := allServers[firstidx+idx]
+		ev := origev
+		if idx > 0 {
+			ev = cloner.clone(origev)
+		}
 		ev.setOneArg(srv)
 		srv.Send(ev, SmethodDirectInsert)
 	}
@@ -450,15 +471,26 @@ func (g *NgtGroup) String() string {
 type RzvGroup struct {
 	id      int64
 	servers []RunnerInterface
+	ngtid   int
 }
 
-func NewRzvGroup(srv []RunnerInterface) *RzvGroup {
-	id := int64(0)
-	for _, srv := range srv {
-		assert(srv.GetID() < 1000)
-		id = int64(1000)*id + int64(srv.GetID())
+func (g *RzvGroup) init(ngtid int, cleanup bool) {
+	if cleanup {
+		for idx := range g.servers {
+			g.servers[idx] = nil
+		}
+		return
 	}
-	return &RzvGroup{id, srv}
+	g.ngtid = ngtid
+	g.id = 0
+	for _, srv := range g.servers {
+		if srv == nil {
+			g.id = 0
+			return
+		}
+		assert(srv.GetID() < 1000)
+		g.id = int64(1000)*g.id + int64(srv.GetID())
+	}
 }
 
 func (g *RzvGroup) getID() int {
@@ -470,12 +502,34 @@ func (g *RzvGroup) getID64() int64 {
 }
 
 func (g *RzvGroup) getCount() int {
+	for _, srv := range g.servers {
+		if srv == nil {
+			return 0
+		}
+	}
 	return len(g.servers)
 }
 
-func (g *RzvGroup) SendGroup(ev EventInterface, how SendMethodEnum) bool {
-	assert(how == SmethodDirectInsert)
+func (g *RzvGroup) hasmember(r RunnerInterface) bool {
 	for _, srv := range g.servers {
+		if r == srv {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *RzvGroup) getmembers() []RunnerInterface {
+	return g.servers
+}
+
+func (g *RzvGroup) SendGroup(origev EventInterface, how SendMethodEnum, cloner EventClonerInterface) bool {
+	assert(how == SmethodDirectInsert)
+	for idx, srv := range g.servers {
+		ev := origev
+		if idx > 0 {
+			ev = cloner.clone(origev)
+		}
 		ev.setOneArg(srv)
 		srv.Send(ev, SmethodDirectInsert)
 	}
@@ -485,7 +539,11 @@ func (g *RzvGroup) SendGroup(ev EventInterface, how SendMethodEnum) bool {
 func (g *RzvGroup) String() string {
 	s := ""
 	for idx := range g.servers {
-		s += g.servers[idx].String()
+		if g.servers[idx] == nil {
+			s += "<nil>"
+		} else {
+			s += g.servers[idx].String()
+		}
 		if idx < len(g.servers)-1 {
 			s += ","
 		}

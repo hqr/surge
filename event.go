@@ -21,6 +21,16 @@ type EventInterface interface {
 }
 
 //
+// event processing and cloning callback types
+//
+type processEventCb func(ev EventInterface) bool
+type cloneEventCb func(src EventInterface) EventInterface
+
+type EventClonerInterface interface {
+	clone(ev EventInterface) EventInterface
+}
+
+//
 // generic event that must trigger at a certain time
 //
 type TimedAnyEvent struct {
@@ -28,21 +38,21 @@ type TimedAnyEvent struct {
 	source RunnerInterface
 	thtime time.Time
 	//
-	target RunnerInterface
-	tio    *Tio
-	group  GroupInterface
+	target      RunnerInterface
+	tio         *Tio
+	targetgroup GroupInterface
 }
 
 func newTimedAnyEvent(src RunnerInterface, when time.Duration, args ...interface{}) *TimedAnyEvent {
 	assert(when > 0)
 	triggertime := Now.Add(when)
 	ev := &TimedAnyEvent{
-		crtime: Now,
-		source: src,
-		thtime: triggertime,
-		target: nil,
-		tio:    nil,
-		group:  nil}
+		crtime:      Now,
+		source:      src,
+		thtime:      triggertime,
+		target:      nil,
+		tio:         nil,
+		targetgroup: nil}
 	ev.setArgs(args)
 	return ev
 }
@@ -60,7 +70,7 @@ func (e *TimedAnyEvent) setOneArg(a interface{}) {
 	case *Tio:
 		e.tio = a.(*Tio)
 	case GroupInterface:
-		e.group = a.(GroupInterface)
+		e.targetgroup = a.(GroupInterface)
 	default:
 		assert(false, fmt.Sprintf("unexpected type: %#v", a))
 	}
@@ -74,7 +84,7 @@ func (e *TimedAnyEvent) GetCreationTime() time.Time { return e.crtime }
 func (e *TimedAnyEvent) GetTriggerTime() time.Time  { return e.thtime }
 func (e *TimedAnyEvent) GetTarget() RunnerInterface { return e.target }
 func (e *TimedAnyEvent) GetTio() *Tio               { return e.tio }
-func (e *TimedAnyEvent) GetGroup() GroupInterface   { return e.group }
+func (e *TimedAnyEvent) GetGroup() GroupInterface   { return e.targetgroup }
 
 func (e *TimedAnyEvent) String() string {
 	dcreated := e.crtime.Sub(time.Time{})
@@ -87,147 +97,150 @@ func (e *TimedAnyEvent) String() string {
 // UCH* models
 //
 //=====================================================================
-type UchEvent struct {
+type zEvent struct {
 	TimedAnyEvent
 }
 
-type UchControlEvent struct {
-	UchEvent
+type zControlEvent struct {
+	zEvent
 	cid int64
 }
 
-type UchReplicaPutRequestEvent struct {
-	UchControlEvent
+type ReplicaPutRequestEvent struct {
+	zControlEvent
 	num   int // replica num
 	sizeb int // size in bytes
 }
 
-func newUchReplicaPutRequestEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, args ...interface{}) *UchReplicaPutRequestEvent {
+func newReplicaPutRequestEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, tio *Tio) *ReplicaPutRequestEvent {
 	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
-	timedev := newTimedAnyEvent(gwy, at, srv)
+	timedev := newTimedAnyEvent(gwy, at, srv, tio)
 
-	e := &UchReplicaPutRequestEvent{UchControlEvent{UchEvent{*timedev}, rep.chunk.cid}, rep.num, rep.chunk.sizeb}
-	e.setArgs(args)
-	return e
+	return &ReplicaPutRequestEvent{zControlEvent{zEvent{*timedev}, rep.chunk.cid}, rep.num, rep.chunk.sizeb}
 }
 
-func newMcastReplicaPutRequestEvent(gwy RunnerInterface, group GroupInterface, rep *PutReplica, args ...interface{}) *UchReplicaPutRequestEvent {
+type McastChunkPutRequestEvent struct {
+	zControlEvent
+	sizeb int // size in bytes
+}
+
+func newMcastChunkPutRequestEvent(gwy RunnerInterface, group GroupInterface, chunk *Chunk, srv RunnerInterface, tio *Tio) *McastChunkPutRequestEvent {
 	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
-	timedev := newTimedAnyEvent(gwy, at, group)
+	timedev := newTimedAnyEvent(gwy, at, group, srv, tio)
 
-	e := &UchReplicaPutRequestEvent{UchControlEvent{UchEvent{*timedev}, rep.chunk.cid}, rep.num, rep.chunk.sizeb}
-	e.setArgs(args)
-	return e
+	return &McastChunkPutRequestEvent{zControlEvent{zEvent{*timedev}, chunk.cid}, chunk.sizeb}
 }
 
-type UchReplicaPutRequestAckEvent struct {
-	UchControlEvent
-	num int // replica num
+func (e *McastChunkPutRequestEvent) String() string {
+	printid := uqrand(e.cid)
+	return fmt.Sprintf("[McastChunkPutRequestEvent src=%v,tgt=%v,chunk#%d,ngt-group=%s]", e.source.String(), e.target.String(), printid, e.targetgroup.String())
 }
 
-func newUchReplicaPutRequestAckEvent(srv RunnerInterface, gwy RunnerInterface, chunkid int64, repnum int) *UchReplicaPutRequestAckEvent {
+type McastChunkPutAcceptEvent struct {
+	zControlEvent
+	rzvgroup GroupInterface
+	sizeb    int // size in bytes
+}
+
+func newMcastChunkPutAcceptEvent(gwy RunnerInterface, ngtgroup GroupInterface, chunk *Chunk, rzvgroup GroupInterface, tio *Tio) *McastChunkPutAcceptEvent {
+	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
+	timedev := newTimedAnyEvent(gwy, at, ngtgroup, tio, tio.target)
+
+	return &McastChunkPutAcceptEvent{zControlEvent{zEvent{*timedev}, chunk.cid}, rzvgroup, chunk.sizeb}
+}
+
+func (e *McastChunkPutAcceptEvent) String() string {
+	printid := uqrand(e.cid)
+	return fmt.Sprintf("[McastChunkPutAcceptEvent src=%v,tgt=%v,chunk#%d,rzv-group=%s]", e.source.String(), e.target.String(), printid, e.rzvgroup.String())
+}
+
+type BidEvent struct {
+	zControlEvent
+	bid int // replica num
+}
+
+func (e *BidEvent) String() string {
+	printid := uqrand(e.cid)
+	return fmt.Sprintf("[McastBidEvent src=%v,tgt=%v,chunk#%d,bid=%d]", e.source.String(), e.target.String(), printid, e.bid)
+}
+
+func newBidEvent(srv RunnerInterface, gwy RunnerInterface, group GroupInterface, chunkid int64, bid int, tio *Tio) *BidEvent {
 	atnet := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
-	timedev := newTimedAnyEvent(srv, atnet, gwy)
-	return &UchReplicaPutRequestAckEvent{UchControlEvent{UchEvent{*timedev}, chunkid}, repnum}
+	timedev := newTimedAnyEvent(srv, atnet, gwy, group, tio)
+	return &BidEvent{zControlEvent{zEvent{*timedev}, chunkid}, bid}
 }
 
-type UchReplicaPutAckEvent struct {
-	UchControlEvent
+// acks ReplicaPut request, not to confuse with ReplicaPutAck
+type ReplicaPutRequestAckEvent struct {
+	zControlEvent
 	num int // replica num
 }
 
-func (e *UchReplicaPutAckEvent) String() string {
+func newReplicaPutRequestAckEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow, tio *Tio) *ReplicaPutRequestAckEvent {
+	atnet := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
+	timedev := newTimedAnyEvent(srv, atnet, gwy, tio)
+	assert(flow.cid == tio.cid)
+	assert(flow.repnum == tio.repnum)
+	return &ReplicaPutRequestAckEvent{zControlEvent{zEvent{*timedev}, flow.cid}, flow.repnum}
+}
+
+// acks receiving the entire replica data, not to confuse with PutRequestAck
+type ReplicaPutAckEvent struct {
+	zControlEvent
+	num int // replica num
+}
+
+func (e *ReplicaPutAckEvent) String() string {
 	printid := uqrand(e.cid)
 	return fmt.Sprintf("[PutAckEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
 }
 
-func newUchReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, chunkid int64, repnum int, atdisk time.Duration) *UchReplicaPutAckEvent {
+func newReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow, tio *Tio, atdisk time.Duration) *ReplicaPutAckEvent {
 	atnet := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
 	at := atnet + atdisk
-	timedev := newTimedAnyEvent(srv, at, gwy)
-	return &UchReplicaPutAckEvent{UchControlEvent{UchEvent{*timedev}, chunkid}, repnum}
+	timedev := newTimedAnyEvent(srv, at, gwy, tio)
+	assert(flow.cid == tio.cid)
+	assert(flow.repnum == tio.repnum)
+	return &ReplicaPutAckEvent{zControlEvent{zEvent{*timedev}, flow.cid}, flow.repnum}
 }
 
-type UchRateSetEvent struct {
-	UchControlEvent
-	tobandwidth int64 // bits/sec
-	num         int   // replica num
-}
-
-type UchRateInitEvent struct {
-	UchRateSetEvent
-}
-
-func (e *UchRateInitEvent) String() string {
-	printid := uqrand(e.cid)
-	return fmt.Sprintf("[RateInitEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
-}
-
-func newUchRateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, chunkid int64, repnum int, args ...interface{}) *UchRateSetEvent {
-	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
-	timedev := newTimedAnyEvent(srv, at, gwy)
-	// factor in the L2+L3+L4 headers overhead + ARP, etc.
-	rate -= rate * int64(configNetwork.overheadpct) / int64(100)
-
-	e := &UchRateSetEvent{UchControlEvent{UchEvent{*timedev}, chunkid}, rate, repnum}
-	e.setArgs(args)
-	return e
-}
-
-func (e *UchRateSetEvent) String() string {
-	printid := uqrand(e.cid)
-	return fmt.Sprintf("[RateSetEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
-}
-
-func newUchRateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, chunkid int64, repnum int) *UchRateInitEvent {
-	ev := newUchRateSetEvent(srv, gwy, rate, chunkid, repnum)
-	return &UchRateInitEvent{*ev}
-}
-
-type UchDingAimdEvent struct {
-	UchControlEvent
-	num int // replica num
-}
-
-func newUchDingAimdEvent(srv RunnerInterface, gwy RunnerInterface, chunkid int64, repnum int, args ...interface{}) *UchDingAimdEvent {
-	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
-	timedev := newTimedAnyEvent(srv, at, gwy)
-
-	e := &UchDingAimdEvent{UchControlEvent{UchEvent{*timedev}, chunkid}, repnum}
-	e.setArgs(args)
-	return e
-}
-
-func (e *UchDingAimdEvent) String() string {
-	printid := uqrand(e.cid)
-	return fmt.Sprintf("[DingAimdEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
-}
-
-type UchDataEvent struct {
-	UchEvent
+type zDataEvent struct {
+	zEvent
 	cid         int64
 	num         int
 	offset      int
 	tobandwidth int64
 }
 
-type UchReplicaDataEvent struct {
-	UchDataEvent
+type ReplicaDataEvent struct {
+	zDataEvent
 }
 
-func newUchReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, flow *Flow, frsize int, args ...interface{}) *UchReplicaDataEvent {
+func newReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, flow *Flow, frsize int, tio *Tio) *ReplicaDataEvent {
 	at := sizeToDuration(frsize, "B", flow.tobandwidth, "b") + config.timeClusterTrip
-	timedev := newTimedAnyEvent(gwy, at, srv)
-
-	e := &UchReplicaDataEvent{UchDataEvent{UchEvent{*timedev}, rep.chunk.cid, rep.num, flow.offset, flow.tobandwidth}}
-	e.setArgs(args)
-	return e
+	timedev := newTimedAnyEvent(gwy, at, srv, tio)
+	assert(flow.cid == tio.cid)
+	assert(flow.repnum == tio.repnum)
+	assert(tio.cid == rep.chunk.cid)
+	return &ReplicaDataEvent{zDataEvent{zEvent{*timedev}, rep.chunk.cid, rep.num, flow.offset, flow.tobandwidth}}
 }
 
-func (e *UchReplicaDataEvent) String() string {
+func (e *ReplicaDataEvent) String() string {
 	printid := uqrand(e.cid)
 	dcreated := e.crtime.Sub(time.Time{})
 	dtriggered := e.thtime.Sub(time.Time{})
-	return fmt.Sprintf("[ReplicaDataEvent src=%v,tgt=%v,chunk#%d,num=%d,offset=%d,(%11.10v,%11.10v)]",
-		e.source.String(), e.target.String(), printid, e.num, e.offset, dcreated, dtriggered)
+	if e.targetgroup == nil {
+		return fmt.Sprintf("[ReplicaDataEvent src=%v,tgt=%v,chunk#%d,num=%d,offset=%d,(%11.10v,%11.10v)]",
+			e.source.String(), e.target.String(), printid, e.num, e.offset, dcreated, dtriggered)
+	}
+	return fmt.Sprintf("[mcast-ReplicaDataEvent src=%v,tgt=%v,group=%v,chunk#%d,offset=%d,(%11.10v,%11.10v)]",
+		e.source.String(), e.target.String(), e.targetgroup.String(), printid, e.offset, dcreated, dtriggered)
+}
+
+// note: constructs ReplicaDataEvent with srv == nil and group != nil
+func newMcastChunkDataEvent(gwy RunnerInterface, rzvgroup GroupInterface, chunk *Chunk, flow *Flow, frsize int, tio *Tio) *ReplicaDataEvent {
+	at := sizeToDuration(frsize, "B", flow.tobandwidth, "b") + config.timeClusterTrip
+	timedev := newTimedAnyEvent(gwy, at, rzvgroup, tio, tio.target)
+
+	return &ReplicaDataEvent{zDataEvent{zEvent{*timedev}, chunk.cid, 0, flow.offset, flow.tobandwidth}}
 }

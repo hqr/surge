@@ -30,6 +30,7 @@
 package surge
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
 )
@@ -168,7 +169,8 @@ func (r *gatewayFive) rateset(tioevent *UchRateSetEvent) {
 	if tio.done {
 		return
 	}
-	flow := r.flowsto.get(tioevent.GetSource(), false)
+	assert(tio.cid == r.chunk.cid)
+	flow := tio.flow
 	assert(flow != nil, "FATAL: gwy-rateset on non-existing flow:"+tio.String()+":"+tioevent.String())
 
 	if flow.offset >= flow.totalbytes {
@@ -192,11 +194,15 @@ func (r *gatewayFive) rateset(tioevent *UchRateSetEvent) {
 //=========================
 func (r *gatewayFive) M5rateinit(ev EventInterface) error {
 	tioevent := ev.(*UchRateInitEvent)
+	tio := tioevent.GetTio()
+	assert(tio.source == r)
+	assert(tio.cid == r.chunk.cid)
+
 	log(LogV, r.String(), "::M5rateinit()", tioevent.String())
-	srv := tioevent.GetSource()
-	flow := r.flowsto.get(srv, true)
+	flow := tio.flow
 	assert(flow.cid == tioevent.cid)
-	assert(flow.num == tioevent.num)
+	assert(flow.repnum == tioevent.num)
+
 	if !flow.rateini {
 		flow.ratects = tioevent.GetCreationTime()
 		flow.raterts = Now
@@ -222,16 +228,18 @@ func (r *gatewayFive) M5replicack(ev EventInterface) error {
 //
 // flow factory interface impl - notice model-specific ratebucket
 //
-func (r *gatewayFive) newflow(t interface{}, repnum int) *Flow {
+func (r *gatewayFive) newflow(t interface{}, args ...interface{}) *Flow {
 	tgt := t.(RunnerInterface)
-	tio := r.putpipeline.NewTio(r)
+	repnum := args[0].(int)
+	assert(repnum == r.replica.num)
+
+	tio := r.putpipeline.NewTio(r, r.replica, tgt)
 	flow := NewFlow(r, tgt, r.chunk.cid, repnum, tio)
-	flow.tobandwidth = int64(0) // transmit upon further notice
+
+	flow.tobandwidth = 0 // transmit upon further notice
 	flow.totalbytes = r.chunk.sizeb
+	flow.rb = NewRateBucket(configNetwork.maxratebucketval, 0, configNetwork.maxratebucketval)
 
-	flow.rb = NewRateBucket(configNetwork.maxratebucketval, int64(0), configNetwork.maxratebucketval)
-
-	r.flowsto.insertFlow(tgt, flow)
 	return flow
 }
 
@@ -245,8 +253,8 @@ func (r *serverFive) Run() {
 
 	rxcallback := func(ev EventInterface) bool {
 		switch ev.(type) {
-		case *UchReplicaDataEvent:
-			tioevent := ev.(*UchReplicaDataEvent)
+		case *ReplicaDataEvent:
+			tioevent := ev.(*ReplicaDataEvent)
 			log(LogV, "SRV::rxcallback: replica data", tioevent.String())
 			r.receiveReplicaData(tioevent)
 		default:
@@ -294,7 +302,7 @@ func (r *serverFive) rerate() {
 		if flow.totalbytes-flow.offset <= configNetwork.sizeFrame+int(bytesinflight) {
 			return
 		}
-		ratesetev := newUchRateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num, flow.tio)
+		ratesetev := newUchRateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow, flow.tio)
 		flow.tobandwidth = ratesetev.tobandwidth
 		flow.ratects = Now
 		flow.raterts = Now.Add(config.timeClusterTrip * 2)
@@ -328,7 +336,7 @@ func (r *serverFive) rerateInverseProportional() {
 
 		newbwf := float64(configNetwork.linkbps) * (1.0 / float64(rem) / totalrem)
 		newbw := int64(newbwf)
-		ratesetev := newUchRateSetEvent(r, gwy, newbw, flow.cid, flow.num, flow.tio)
+		ratesetev := newUchRateSetEvent(r, gwy, newbw, flow, flow.tio)
 		flow.tobandwidth = newbw
 		flow.ratects = Now
 		flow.raterts = Now.Add(config.timeClusterTrip * 2)
@@ -342,10 +350,10 @@ func (r *serverFive) rerateInverseProportional() {
 func (r *serverFive) M5putrequest(ev EventInterface) error {
 	log(LogV, r.String(), "::M5putrequest()", ev.String())
 
-	tioevent := ev.(*UchReplicaPutRequestEvent)
+	tioevent := ev.(*ReplicaPutRequestEvent)
 	gwy := tioevent.GetSource()
 	f := r.flowsfrom.get(gwy, false)
-	assert(f == nil)
+	assert(f == nil, fmt.Sprintf("flow %s => %s already exists", gwy.String(), r.String()))
 
 	//new server's flow
 	tio := tioevent.GetTio()
@@ -354,11 +362,11 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 	flow.rateini = true
 	flow.ratects = Now
 	flow.raterts = Now.Add(config.timeClusterTrip * 2)
-	r.flowsfrom.insertFlow(gwy, flow)
+	r.flowsfrom.insertFlow(flow)
 
 	// respond to the put witn RateInit
 	nflows := r.flowsfrom.count()
-	rateinitev := newUchRateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow.cid, flow.num)
+	rateinitev := newUchRateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow, tio)
 	flow.tobandwidth = rateinitev.tobandwidth
 	log("srv-new-flow", flow.String(), rateinitev.String())
 
@@ -376,12 +384,11 @@ func (m *modelFive) NewGateway(i int) RunnerInterface {
 	gwy := NewGatewayUch(i, m5.putpipeline)
 	gwy.rb = NewRateBucket(
 		configNetwork.maxratebucketval, // maxval
-		configNetwork.linkbpsminus,     // rate
+		configNetwork.linkbps,          // rate
 		configNetwork.maxratebucketval) // value
 	rgwy := &gatewayFive{*gwy}
 	rgwy.rptr = rgwy
 	rgwy.ffi = rgwy
-	rgwy.flowsto = NewFlowDir(rgwy, config.numServers)
 	return rgwy
 }
 
@@ -389,9 +396,47 @@ func (m *modelFive) NewServer(i int) RunnerInterface {
 	srv := NewServerUch(i, m5.putpipeline)
 	rsrv := &serverFive{*srv}
 	rsrv.ServerUch.rptr = rsrv
+	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)
 	return rsrv
 }
 
 func (m *modelFive) Configure() {
 	configNetwork.sizeControlPDU = 100
+}
+
+//==================================================================
+//
+// model-specific events
+//
+//==================================================================
+type UchRateSetEvent struct {
+	zControlEvent
+	tobandwidth int64 // bits/sec
+	num         int   // replica num
+}
+
+type UchRateInitEvent struct {
+	UchRateSetEvent
+}
+
+func (e *UchRateInitEvent) String() string {
+	printid := uqrand(e.cid)
+	return fmt.Sprintf("[RateInitEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
+}
+
+func newUchRateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, flow *Flow, tio *Tio) *UchRateSetEvent {
+	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
+	timedev := newTimedAnyEvent(srv, at, gwy, tio)
+
+	return &UchRateSetEvent{zControlEvent{zEvent{*timedev}, flow.cid}, rate, flow.repnum}
+}
+
+func (e *UchRateSetEvent) String() string {
+	printid := uqrand(e.cid)
+	return fmt.Sprintf("[RateSetEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
+}
+
+func newUchRateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, flow *Flow, tio *Tio) *UchRateInitEvent {
+	ev := newUchRateSetEvent(srv, gwy, rate, flow, tio)
+	return &UchRateInitEvent{*ev}
 }

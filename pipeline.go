@@ -53,8 +53,8 @@ func (p *Pipeline) GetStage(idx int) *PipelineStage {
 	return &p.pslice[idx]
 }
 
-func (p *Pipeline) NewTio(src RunnerInterface) *Tio {
-	return NewTio(src, p)
+func (p *Pipeline) NewTio(src RunnerInterface, args ...interface{}) *Tio {
+	return newTio(src, p, args)
 }
 
 func (p *Pipeline) String() string {
