@@ -26,11 +26,11 @@ type FlowFactoryInterface interface {
 
 //===============================================================
 //
-// GatewayUch
-// FIXME: split (stats | unicast specific part)
+// GatewayCommon
+// common for (inherited by) both unicast and multicast gateway types
 //
 //===============================================================
-type GatewayUch struct {
+type GatewayCommon struct {
 	RunnerBase
 	ffi          FlowFactoryInterface
 	tiostats     int64
@@ -39,33 +39,95 @@ type GatewayUch struct {
 	txbytestats  int64
 	rxbytestats  int64
 	chunk        *Chunk
-	chunktargets []RunnerInterface
-	replica      *PutReplica
 	rb           RateBucketInterface
 	rptr         RunnerInterface // real object
 	putpipeline  *Pipeline
 	numreplicas  int
 }
 
-// NewGatewayUch constructs GatewayUch. The latter embeds RunnerBase and must in turn
-// be embedded by a concrete and ultimate modeled gateway.
-func NewGatewayUch(i int, p *Pipeline) *GatewayUch {
+func NewGatewayCommon(i int, p *Pipeline) *GatewayCommon {
 	rbase := RunnerBase{id: i, strtype: "GWY"}
-	gwy := &GatewayUch{RunnerBase: rbase}
+	gwy := &GatewayCommon{RunnerBase: rbase}
 
 	gwy.putpipeline = p
 	gwy.init(config.numServers)
 	gwy.initios()
-
-	gwy.chunktargets = make([]RunnerInterface, configStorage.numReplicas)
 
 	return gwy
 }
 
 // realobject stores to pointer the the gateway's instance that embeds this
 // instance of GatewayUch
-func (r *GatewayUch) realobject() RunnerInterface {
+func (r *GatewayCommon) realobject() RunnerInterface {
 	return r.rptr
+}
+
+func (r *GatewayCommon) replicackCommon(tioevent *ReplicaPutAckEvent) error {
+	tio := tioevent.GetTio()
+	flow := tio.flow
+
+	log(LogV, "::replicack()", flow.String(), tioevent.String())
+	atomic.AddInt64(&r.replicastats, int64(1))
+
+	r.numreplicas++
+	log("replica-acked", flow.String(), "num-acked", r.numreplicas)
+	if r.numreplicas < configStorage.numReplicas {
+		return nil
+	}
+	log("chunk-done", r.chunk.String())
+	atomic.AddInt64(&r.chunkstats, int64(1))
+	r.chunk = nil
+	return nil
+}
+
+//
+// stats
+//
+// GetStats implements the corresponding RunnerInterface method for the
+// GatewayUch common counters. Some of them are inc-ed inside this module,
+// others - elsewhere, for instance in the concrete gateway's instance
+// that embeds this GatewayUch
+// The caller (such as, e.g., stats.go) will typically collect all the
+// atomic counters and reset them to zeros to collect new values with the
+// next iteration..
+func (r *GatewayCommon) GetStats(reset bool) NodeStats {
+	s := r.RunnerBase.GetStats(true)
+	if reset {
+		s["tio"] = atomic.SwapInt64(&r.tiostats, 0)
+		s["chunk"] = atomic.SwapInt64(&r.chunkstats, 0)
+		s["replica"] = atomic.SwapInt64(&r.replicastats, 0)
+		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, 0)
+		s["rxbytes"] = atomic.SwapInt64(&r.rxbytestats, 0)
+	} else {
+		s["tio"] = atomic.LoadInt64(&r.tiostats)
+		s["chunk"] = atomic.LoadInt64(&r.chunkstats)
+		s["replica"] = atomic.LoadInt64(&r.replicastats)
+		s["txbytes"] = atomic.LoadInt64(&r.txbytestats)
+		s["rxbytes"] = atomic.LoadInt64(&r.rxbytestats)
+	}
+	return s
+}
+
+//===============================================================
+//
+// GatewayUch
+// generic unicast CH gateway providing common Tx, ACK and server selection
+// to specific unicast "flavors"
+//
+//===============================================================
+type GatewayUch struct {
+	GatewayCommon
+	chunktargets []RunnerInterface
+	replica      *PutReplica
+}
+
+// NewGatewayUch constructs GatewayUch. The latter embeds RunnerBase and must in turn
+// be embedded by a concrete and ultimate modeled gateway.
+func NewGatewayUch(i int, p *Pipeline) *GatewayUch {
+	g := NewGatewayCommon(i, p)
+	gwy := &GatewayUch{GatewayCommon: *g}
+	gwy.chunktargets = make([]RunnerInterface, configStorage.numReplicas)
+	return gwy
 }
 
 // selectTargets randomly selects numReplicas targets for a new chunk
@@ -214,45 +276,7 @@ func (r *GatewayUch) replicack(ev EventInterface) error {
 	assert(flow.cid == tio.cid)
 	assert(flow.repnum == tioevent.num)
 
-	log(LogV, "::replicack()", flow.String(), tioevent.String())
-	atomic.AddInt64(&r.replicastats, int64(1))
-
-	log("replica-acked-flow-gone", flow.String())
-	r.numreplicas++
-	if r.numreplicas == configStorage.numReplicas {
-		log("chunk-done", r.chunk.String())
-		atomic.AddInt64(&r.chunkstats, int64(1))
-		r.chunk = nil
-	}
-	return nil
-}
-
-//
-// stats
-//
-// GetStats implements the corresponding RunnerInterface method for the
-// GatewayUch common counters. Some of them are inc-ed inside this module,
-// others - elsewhere, for instance in the concrete gateway's instance
-// that embeds this GatewayUch
-// The caller (such as, e.g., stats.go) will typically collect all the
-// atomic counters and reset them to zeros to collect new values with the
-// next iteration..
-func (r *GatewayUch) GetStats(reset bool) NodeStats {
-	s := r.RunnerBase.GetStats(true)
-	if reset {
-		s["tio"] = atomic.SwapInt64(&r.tiostats, 0)
-		s["chunk"] = atomic.SwapInt64(&r.chunkstats, 0)
-		s["replica"] = atomic.SwapInt64(&r.replicastats, 0)
-		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, 0)
-		s["rxbytes"] = atomic.SwapInt64(&r.rxbytestats, 0)
-	} else {
-		s["tio"] = atomic.LoadInt64(&r.tiostats)
-		s["chunk"] = atomic.LoadInt64(&r.chunkstats)
-		s["replica"] = atomic.LoadInt64(&r.replicastats)
-		s["txbytes"] = atomic.LoadInt64(&r.txbytestats)
-		s["rxbytes"] = atomic.LoadInt64(&r.rxbytestats)
-	}
-	return s
+	return r.replicackCommon(tioevent)
 }
 
 //===============================================================
@@ -261,15 +285,15 @@ func (r *GatewayUch) GetStats(reset bool) NodeStats {
 //
 //===============================================================
 type GatewayMcast struct {
-	GatewayUch
+	GatewayCommon
 	rzvgroup   *RzvGroup
 	expectacks int
 }
 
 func NewGatewayMcast(i int, p *Pipeline) *GatewayMcast {
-	gwy := NewGatewayUch(i, p)
+	gwy := NewGatewayCommon(i, p)
 	servers := make([]RunnerInterface, configStorage.numReplicas)
-	return &GatewayMcast{GatewayUch: *gwy, rzvgroup: &RzvGroup{0, servers, 0}}
+	return &GatewayMcast{GatewayCommon: *gwy, rzvgroup: &RzvGroup{0, servers, 0}}
 }
 
 //===

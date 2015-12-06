@@ -186,7 +186,7 @@ func (r *gatewaySix) newflow(t interface{}, args ...interface{}) *Flow {
 	assert(repnum == r.replica.num)
 
 	tio := r.putpipeline.NewTio(r, r.replica, tgt)
-	flow := NewFlow(r, tgt, r.chunk.cid, repnum, tio)
+	flow := NewFlow(r, r.chunk.cid, tgt, repnum, tio)
 
 	flow.tobandwidth = 0 // transmit upon further notice
 	flow.totalbytes = r.chunk.sizeb
@@ -279,7 +279,7 @@ func (r *serverSix) aimdCheckRxQueueFuture() {
 			gwy = ev.GetSource()
 			flow := r.flowsfrom.get(gwy, true)
 			r.dingOne(gwy)
-			flow.prevoffset = flow.offset + frsize
+			flow.extension = flow.offset + frsize // prevoffset
 			continue
 		}
 		t := ev.GetTriggerTime()
@@ -300,9 +300,10 @@ func (r *serverSix) aimdCheckRxQueueFuture() {
 	}
 	if linkoverage >= configAIMD.linkoverage {
 		flow := r.flowsfrom.get(gwy, true)
-		if flow.offset+3*frsize < flow.totalbytes && flow.prevoffset+frsize < flow.offset {
+		prevoffset := flow.extension.(int)
+		if flow.offset+3*frsize < flow.totalbytes && prevoffset+frsize < flow.offset {
 			r.dingOne(gwy)
-			flow.prevoffset = flow.offset + frsize
+			flow.extension = flow.offset + frsize // prevoffset
 		}
 	}
 }
@@ -325,7 +326,7 @@ func (r *serverSix) aimdCheckTotalBandwidth() {
 		}
 		if dingall {
 			r.dingOne(gwy)
-			flow.prevoffset = flow.offset + frsize
+			flow.extension = flow.offset + frsize // prevoffset
 			continue
 		}
 		totalcurbw += flow.tobandwidth
@@ -344,9 +345,10 @@ func (r *serverSix) aimdCheckTotalBandwidth() {
 		if flow.totalbytes-flow.offset < 2*configNetwork.sizeFrame {
 			continue
 		}
-		if flow.offset+3*frsize < flow.totalbytes && flow.prevoffset+frsize < flow.offset {
+		prevoffset := flow.extension.(int)
+		if flow.offset+3*frsize < flow.totalbytes && prevoffset+frsize < flow.offset {
 			r.dingOne(gwy)
-			flow.prevoffset = flow.offset + frsize
+			flow.extension = flow.offset + frsize // prevoffset
 			totalfutbw -= flow.tobandwidth / int64(configAIMD.bwDiv)
 			if totalfutbw <= configNetwork.linkbps {
 				break
@@ -374,7 +376,8 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 
 	//new server's flow
 	tio := tioevent.GetTio()
-	flow := NewFlow(gwy, r, tioevent.cid, tioevent.num, tio)
+	flow := NewFlow(gwy, tioevent.cid, r, tioevent.num, tio)
+	flow.extension = int(0) // prevoffset
 	flow.totalbytes = tioevent.sizeb
 	r.flowsfrom.insertFlow(flow)
 

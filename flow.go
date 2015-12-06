@@ -9,7 +9,7 @@ type applyCallback func(gwy RunnerInterface, flow *Flow)
 
 //========================================================================
 //
-// FIXME: FAT
+// type Flow
 //
 //========================================================================
 type Flow struct {
@@ -22,13 +22,10 @@ type Flow struct {
 	rb          RateBucketInterface // refill at the tobandwidth rate
 	tobandwidth int64               // bits/sec
 	sendnexts   time.Time           // earliest can send the next frame
-	ratects     time.Time           // rateset creation time
-	raterts     time.Time           // rateset effective time
-	rateini     bool                // rateset inited
+	extension   interface{}         // protocol-specific flow extension
 	repnum      int                 // replica num
 	offset      int
 	totalbytes  int
-	prevoffset  int
 }
 
 // (container) unidirectional unicast flows between this node and multiple other nodes
@@ -40,23 +37,36 @@ type FlowDir struct {
 //========================================================================
 // c-tors and helpers
 //========================================================================
-func NewFlow(f RunnerInterface, t RunnerInterface, chunkid int64, num int, io *Tio) *Flow {
+func NewFlow(f RunnerInterface, chunkid int64, args ...interface{}) *Flow {
 	printid := uqrand(chunkid)
 	flow := &Flow{
-		from:    f,
-		to:      t,
-		cid:     chunkid,
-		sid:     printid,
-		tio:     io,
-		rb:      nil,
-		rateini: false,
-		repnum:  num}
+		from: f,
+		cid:  chunkid,
+		sid:  printid}
 
-	// must be flow-initiating tio
+	for i := 0; i < len(args); i++ {
+		flow.setOneArg(args[i])
+	}
+	// must be the flow initiating tio
 	if flow.tio.flow == nil {
 		flow.tio.flow = flow
 	}
 	return flow
+}
+
+func (flow *Flow) setOneArg(a interface{}) {
+	switch a.(type) {
+	case int:
+		flow.repnum = a.(int)
+	case *Tio:
+		flow.tio = a.(*Tio)
+	case RunnerInterface:
+		flow.to = a.(RunnerInterface)
+	case GroupInterface:
+		flow.togroup = a.(GroupInterface)
+	default:
+		assert(false, fmt.Sprintf("unexpected type: %#v", a))
+	}
 }
 
 func (flow *Flow) unicast() bool {
@@ -66,12 +76,18 @@ func (flow *Flow) unicast() bool {
 func (flow *Flow) String() string {
 	f := flow.from.String()
 	bwstr := fmt.Sprintf("%.2f", float64(flow.tobandwidth)/1000.0/1000.0/1000.0)
+	var cstr string
+	if flow.repnum != 0 {
+		cstr = fmt.Sprintf("chunk#%d(%d)", flow.sid, flow.repnum)
+	} else {
+		cstr = fmt.Sprintf("chunk#%d", flow.sid)
+	}
 	if flow.unicast() {
 		t := flow.to.String()
-		return fmt.Sprintf("[flow %s=>%s[chunk#%d(%d)],offset=%d,bw=%sGbps]", f, t, flow.sid, flow.repnum, flow.offset, bwstr)
+		return fmt.Sprintf("[flow %s=>%s[%s],offset=%d,bw=%sGbps]", f, t, cstr, flow.offset, bwstr)
 	}
 	t := flow.togroup.String()
-	return fmt.Sprintf("[flow %s=>%s[chunk#%d(%d)],offset=%d,bw=%sGbps]", f, t, flow.sid, flow.repnum, flow.offset, bwstr)
+	return fmt.Sprintf("[flow %s=>%s[%s],offset=%d,bw=%sGbps]", f, t, cstr, flow.offset, bwstr)
 }
 
 //

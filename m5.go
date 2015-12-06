@@ -171,16 +171,17 @@ func (r *gatewayFive) rateset(tioevent *UchRateSetEvent) {
 	}
 	assert(tio.cid == r.chunk.cid)
 	flow := tio.flow
+	flex := flow.extension.(*m5FlowExtension)
 	assert(flow != nil, "FATAL: gwy-rateset on non-existing flow:"+tio.String()+":"+tioevent.String())
 
 	if flow.offset >= flow.totalbytes {
 		return
 	}
 	assert(flow.tio == tio, flow.String()+":"+tio.String())
-	if !flow.rateini || flow.ratects.Before(tioevent.GetCreationTime()) {
-		flow.ratects = tioevent.GetCreationTime()
-		flow.raterts = Now
-		flow.rateini = true
+	if !flex.rateini || flex.ratects.Before(tioevent.GetCreationTime()) {
+		flex.ratects = tioevent.GetCreationTime()
+		flex.raterts = Now
+		flex.rateini = true
 
 		flow.tobandwidth = tioevent.tobandwidth
 		flow.rb.setrate(flow.tobandwidth)
@@ -200,13 +201,14 @@ func (r *gatewayFive) M5rateinit(ev EventInterface) error {
 
 	log(LogV, r.String(), "::M5rateinit()", tioevent.String())
 	flow := tio.flow
+	flex := flow.extension.(*m5FlowExtension)
 	assert(flow.cid == tioevent.cid)
 	assert(flow.repnum == tioevent.num)
 
-	if !flow.rateini {
-		flow.ratects = tioevent.GetCreationTime()
-		flow.raterts = Now
-		flow.rateini = true
+	if !flex.rateini {
+		flex.ratects = tioevent.GetCreationTime()
+		flex.raterts = Now
+		flex.rateini = true
 
 		flow.tobandwidth = tioevent.tobandwidth
 		flow.rb.setrate(flow.tobandwidth)
@@ -234,7 +236,8 @@ func (r *gatewayFive) newflow(t interface{}, args ...interface{}) *Flow {
 	assert(repnum == r.replica.num)
 
 	tio := r.putpipeline.NewTio(r, r.replica, tgt)
-	flow := NewFlow(r, tgt, r.chunk.cid, repnum, tio)
+	flow := NewFlow(r, r.chunk.cid, tgt, repnum, tio)
+	flow.extension = &m5FlowExtension{false, time.Time{}, time.Time{}}
 
 	flow.tobandwidth = 0 // transmit upon further notice
 	flow.totalbytes = r.chunk.sizeb
@@ -298,14 +301,15 @@ func (r *serverFive) rerate() {
 		return
 	}
 	applyCallback := func(gwy RunnerInterface, flow *Flow) {
+		flex := flow.extension.(*m5FlowExtension)
 		bytesinflight := int64(flow.tobandwidth) * int64(config.timeClusterTrip) / int64(time.Second) / 8
 		if flow.totalbytes-flow.offset <= configNetwork.sizeFrame+int(bytesinflight) {
 			return
 		}
 		ratesetev := newUchRateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow, flow.tio)
 		flow.tobandwidth = ratesetev.tobandwidth
-		flow.ratects = Now
-		flow.raterts = Now.Add(config.timeClusterTrip * 2)
+		flex.ratects = Now
+		flex.raterts = Now.Add(config.timeClusterTrip * 2)
 
 		log(LogV, "srv-send-rateset", flow.String())
 		r.Send(ratesetev, SmethodWait)
@@ -329,6 +333,7 @@ func (r *serverFive) rerateInverseProportional() {
 		totalrem += 1.0 / float64(rem)
 	}
 	for gwy, flow := range fdir.flows {
+		flex := flow.extension.(*m5FlowExtension)
 		rem := flow.totalbytes - flow.offset
 		if rem <= configNetwork.sizeFrame {
 			continue
@@ -338,8 +343,8 @@ func (r *serverFive) rerateInverseProportional() {
 		newbw := int64(newbwf)
 		ratesetev := newUchRateSetEvent(r, gwy, newbw, flow, flow.tio)
 		flow.tobandwidth = newbw
-		flow.ratects = Now
-		flow.raterts = Now.Add(config.timeClusterTrip * 2)
+		flex.ratects = Now
+		flex.raterts = Now.Add(config.timeClusterTrip * 2)
 
 		log(LogV, "srv-send-rateset-proportional", flow.String())
 		r.Send(ratesetev, SmethodWait)
@@ -357,11 +362,9 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 
 	//new server's flow
 	tio := tioevent.GetTio()
-	flow := NewFlow(gwy, r, tioevent.cid, tioevent.num, tio)
+	flow := NewFlow(gwy, tioevent.cid, r, tioevent.num, tio)
+	flow.extension = &m5FlowExtension{true, Now, Now.Add(config.timeClusterTrip * 2)}
 	flow.totalbytes = tioevent.sizeb
-	flow.rateini = true
-	flow.ratects = Now
-	flow.raterts = Now.Add(config.timeClusterTrip * 2)
 	r.flowsfrom.insertFlow(flow)
 
 	// respond to the put witn RateInit
@@ -439,4 +442,15 @@ func (e *UchRateSetEvent) String() string {
 func newUchRateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, flow *Flow, tio *Tio) *UchRateInitEvent {
 	ev := newUchRateSetEvent(srv, gwy, rate, flow, tio)
 	return &UchRateInitEvent{*ev}
+}
+
+//==================================================================
+//
+// Flow extension
+//
+//==================================================================
+type m5FlowExtension struct {
+	rateini bool      // rateset inited
+	ratects time.Time // rateset creation time
+	raterts time.Time // rateset effective time
 }

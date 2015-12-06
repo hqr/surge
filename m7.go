@@ -212,8 +212,7 @@ func (r *gatewaySeven) startNewChunk() {
 	assert(len(targets) == configReplicast.sizeNgtGroup)
 
 	tioparent := r.putpipeline.NewTio(r, r.chunk)
-	flow := NewFlow(r, nil, r.chunk.cid, 0, tioparent)
-	flow.togroup = ngobj // FIXME
+	flow := NewFlow(r, r.chunk.cid, tioparent, ngobj)
 
 	// children tios
 	for _, srv := range targets {
@@ -338,7 +337,7 @@ func (r *serverSeven) M7acceptng(ev EventInterface) error {
 		log(r.String(), "has been ACCEPTED")
 		//new server's flow
 		tio := tioevent.GetTio()
-		flow := NewFlow(gwy, r, tioevent.cid, 0, tio)
+		flow := NewFlow(gwy, tioevent.cid, r, tio)
 		flow.totalbytes = tioevent.sizeb
 		r.flowsfrom.insertFlow(flow)
 	}

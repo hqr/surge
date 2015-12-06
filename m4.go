@@ -87,7 +87,7 @@ func (r *gatewayFour) Run() {
 				tgt := r.selectRandomPeer(0)
 				assert(tgt != nil)
 
-				tio := m4.pipeline.NewTio(r)
+				tio := m4.pipeline.NewTio(r, tgt)
 				outstanding++
 				at := clusterTripPlusRandom()
 				tio.nextAnon(at, tgt)
@@ -197,6 +197,7 @@ func (r *serverFour) M4putxfer(ev EventInterface) error {
 func (m *modelFour) NewGateway(i int) RunnerInterface {
 	gwy := &gatewayFour{RunnerBase{id: i, strtype: "GWY"}, 0}
 	gwy.init(config.numServers)
+	gwy.initios()
 	return gwy
 }
 
