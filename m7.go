@@ -145,8 +145,6 @@ func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
 	}
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 
-	time.Sleep(time.Microsecond) // FIXME
-
 	for _, srv := range targets {
 		// FIXME: terminate child tios that weren't accepted
 		if !r.rzvgroup.hasmember(srv) {
@@ -162,37 +160,22 @@ func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
 
 //
 // ReplicaPutAck handler
-// FIXME: partial copy-paste
 //
 func (r *gatewaySeven) M7replicack(ev EventInterface) error {
 	tioevent := ev.(*ReplicaPutAckEvent)
-	tiochild := ev.GetTio()
-	tioparent := tiochild.parent
-	assert(tioparent.haschild(tiochild))
+	tio := ev.GetTio()
+	tioparent := tio.parent
+	assert(tioparent.haschild(tio))
 	group := tioevent.GetGroup()
-	flow := tiochild.flow
+	flow := tio.flow
 	assert(flow.cid == tioevent.cid)
 	assert(group == r.rzvgroup)
 
-	// FIXME
-	assert(r.chunk != nil, "ERROR: acking chunk nil,"+tioevent.String()+","+r.rzvgroup.String())
-	assert(r.rzvgroup.getCount() == configStorage.numReplicas, "ERROR: acks on incomplete group,"+r.String()+","+r.rzvgroup.String())
+	assert(r.chunk != nil, "chunk nil,"+tioevent.String()+","+r.rzvgroup.String())
+	assert(r.rzvgroup.getCount() == configStorage.numReplicas, "incomplete group,"+r.String()+","+r.rzvgroup.String()+","+tioevent.String())
 
-	log(LogV, "::replicack()", flow.String(), tioevent.String())
-	atomic.AddInt64(&r.replicastats, int64(1))
+	r.replicackCommon(tioevent)
 
-	r.numreplicas++
-	log("replica-acked", flow.String(), "num-acked", r.numreplicas)
-	if r.numreplicas < configStorage.numReplicas {
-		return nil
-	}
-
-	log("chunk-done", r.String(), r.chunk.String())
-	atomic.AddInt64(&r.chunkstats, int64(1))
-	r.chunk = nil
-	r.numreplicas = 0
-
-	r.rzvgroup.init(0, true) // cleanup
 	return nil
 }
 
@@ -202,6 +185,9 @@ func (r *gatewaySeven) M7replicack(ev EventInterface) error {
 func (r *gatewaySeven) startNewChunk() {
 	assert(r.chunk == nil)
 	r.chunk = NewChunk(r, configStorage.sizeDataChunk*1024)
+
+	r.numreplicas = 0
+	r.rzvgroup.init(0, true) // cleanup
 
 	ngid := r.selectNgtGroup()
 	ngobj := NewNgtGroup(ngid)

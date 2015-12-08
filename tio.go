@@ -130,9 +130,9 @@ func (tio *Tio) next(newev EventInterface) {
 	tio.event = newev
 	tio.index++
 
-	log(LogV, "stage-next", tio.String())
-
+	log(LogV, "stage-next-send", src.String(), tio.String())
 	src.Send(newev, SmethodWait) // blocking
+	log(LogVV, "stage-next-sent", src.String(), tio.String())
 }
 
 func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
@@ -149,8 +149,10 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 	methodValue := reflect.ValueOf(r).MethodByName(stage.handler)
 	rcValue := methodValue.Call([]reflect.Value{reflect.ValueOf(tioevent)})
 
-	if tio.index == tio.pipeline.Count()-1 {
+	// tio's own sources finalizes
+	if r == tio.source && tio.index == tio.pipeline.Count()-1 {
 		tio.fintime = Now
+		log(LogV, "dostage-tio-done", r.String(), tio.String())
 		tio.done = true
 		if tio.parent == nil {
 			tio.source.RemoveTio(tio)
