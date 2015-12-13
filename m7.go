@@ -2,7 +2,6 @@ package surge
 
 import (
 	"fmt"
-	"math/rand"
 	"os"
 	"sync/atomic"
 	"time"
@@ -17,10 +16,12 @@ type modelSeven struct {
 //========================================================================
 type gatewaySeven struct {
 	GatewayMcast
+	bids *GatewayBidQueue
 }
 
 type serverSeven struct {
 	ServerUch
+	bids *ServerBidQueue
 }
 
 //
@@ -47,7 +48,7 @@ func init() {
 	d.Register("disk-queue-depth", StatsKindSampleCount, StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
-	props["description"] = "Simplified Replicast with random bid selection"
+	props["description"] = "Basic Replicast(tm)"
 	RegisterModel("7", &m7, props)
 }
 
@@ -67,9 +68,7 @@ func init() {
 func (r *gatewaySeven) Run() {
 	r.state = RstateRunning
 
-	rxcallback := func(ev EventInterface) bool {
-		atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
-
+	rxcallback := func(ev EventInterface) int {
 		tio := ev.GetTio()
 		log(LogV, "GWY::rxcallback", tio.String())
 		tio.doStage(r, ev)
@@ -77,7 +76,7 @@ func (r *gatewaySeven) Run() {
 			log(LogV, "tio-done", tio.String())
 			atomic.AddInt64(&r.tiostats, int64(1))
 		}
-		return true
+		return ev.GetSize()
 	}
 
 	go func() {
@@ -112,16 +111,18 @@ func (r *gatewaySeven) M7bid(ev EventInterface) error {
 	group := tioevent.GetGroup()
 	ngobj, ok := group.(*NgtGroup)
 	assert(ok)
-
 	assert(ngobj.hasmember(srv))
-	assert(r.expectacks > 0)
 
-	r.expectacks--
-	if r.expectacks < configStorage.numReplicas {
-		r.rzvgroup.servers[r.expectacks] = srv // FIXME
-	}
-	if r.expectacks > 0 {
+	n := r.bids.receiveBid(tiochild, tioevent.bid)
+	if n < configReplicast.sizeNgtGroup {
 		return nil
+	}
+	ok = r.bids.filterBestBids()
+	assert(ok)
+	for k := 0; k < configStorage.numReplicas; k++ { // FIXME
+		bid := r.bids.pending[k]
+		assert(ngobj.hasmember(bid.tio.target))
+		r.rzvgroup.servers[k] = bid.tio.target
 	}
 
 	r.rzvgroup.init(ngobj.getID(), false)
@@ -153,7 +154,7 @@ func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
 	}
 	assert(len(tioparent.children) == r.rzvgroup.getCount())
 
-	flow.tobandwidth = configNetwork.linkbps >> 1 // FIXME FIXME
+	flow.tobandwidth = configNetwork.linkbps
 	flow.totalbytes = r.chunk.sizeb
 
 }
@@ -176,6 +177,8 @@ func (r *gatewaySeven) M7replicack(ev EventInterface) error {
 
 	r.replicackCommon(tioevent)
 
+	r.bids.cleanup()
+
 	return nil
 }
 
@@ -191,7 +194,6 @@ func (r *gatewaySeven) startNewChunk() {
 
 	ngid := r.selectNgtGroup()
 	ngobj := NewNgtGroup(ngid)
-	r.expectacks = ngobj.getCount()
 
 	// create flow and tios
 	targets := ngobj.getmembers()
@@ -220,7 +222,8 @@ func (r *gatewaySeven) startNewChunk() {
 	}
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
 	flow.rb.use(int64(configNetwork.sizeControlPDU * 8))
-	flow.sendnexts = Now.Add(time.Duration(configNetwork.sizeControlPDU) * time.Second / time.Duration(configNetwork.linkbps))
+	flow.timeTxDone = Now.Add(configNetwork.durationControlPDU) // FIXME: assuming 10GE
+
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 }
 
@@ -228,15 +231,22 @@ func (r *gatewaySeven) sendata() {
 	frsize := configNetwork.sizeFrame
 	for _, tioparent := range r.tios {
 		flow := tioparent.flow
-		if flow.sendnexts.After(Now) {
-			return
+		if flow.timeTxDone.After(Now) {
+			continue
 		}
 		if flow.tobandwidth == 0 || flow.offset >= r.chunk.sizeb {
-			return
+			continue
+		}
+		_, bid := r.bids.findBid(bidFindChunk, flow.cid)
+		assert(bid != nil, flow.String()+","+tioparent.String())
+		if Now.Before(bid.win.left) {
+			assert(flow.offset == 0)
+			continue
 		}
 		if flow.offset+frsize > r.chunk.sizeb {
 			frsize = r.chunk.sizeb - flow.offset
 		}
+
 		flow.offset += frsize
 		newbits := int64(frsize * 8)
 
@@ -248,7 +258,7 @@ func (r *gatewaySeven) sendata() {
 		}
 
 		// time for the bits to get fully transmitted given the current flow's bandwidth
-		flow.sendnexts = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
+		flow.timeTxDone = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
 		atomic.AddInt64(&r.txbytestats, int64(frsize))
 	}
 }
@@ -264,20 +274,23 @@ func (r *gatewaySeven) sendata() {
 func (r *serverSeven) Run() {
 	r.state = RstateRunning
 
-	rxcallback := func(ev EventInterface) bool {
+	rxcallback := func(ev EventInterface) int {
 		switch ev.(type) {
 		case *ReplicaDataEvent:
 			tioevent := ev.(*ReplicaDataEvent)
-			log(LogV, "SRV::rxcallback: chunk data", tioevent.String())
+			_, bid := r.bids.findBid(bidFindChunk, tioevent.cid)
+			assert(bid != nil)
+			assert(!Now.Before(bid.win.left), bid.String())
+			assert(!Now.After(bid.win.right), bid.String())
+			log(LogV, "SRV::rxcallback: chunk data", tioevent.String(), bid.String())
 			r.receiveReplicaData(tioevent)
 		default:
-			atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
 			tio := ev.GetTio()
 			log(LogV, "SRV::rxcallback", ev.String(), r.String())
 			tio.doStage(r, ev)
 		}
 
-		return true
+		return ev.GetSize()
 	}
 
 	go func() {
@@ -303,8 +316,9 @@ func (r *serverSeven) M7requestng(ev EventInterface) error {
 	assert(ngobj.hasmember(r))
 
 	// respond to the put-request with a bid
-	bidev := newBidEvent(r, gwy, ngobj, tioevent.cid, rand.Intn(configReplicast.sizeNgtGroup), tio)
-	log("srv-bid", bidev.String())
+	bid := r.bids.createBid(tio, 0) // FIXME
+	bidev := newBidEvent(r, gwy, ngobj, tioevent.cid, bid, tio)
+	log("srv-bid", bid.String(), bidev.String())
 
 	tio.next(bidev)
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
@@ -317,15 +331,21 @@ func (r *serverSeven) M7acceptng(ev EventInterface) error {
 	gwy := tioevent.GetSource()
 	ngobj := tioevent.GetGroup()
 	assert(ngobj.hasmember(r))
+	tio := tioevent.GetTio()
 
 	rzvgroup := tioevent.rzvgroup
 	if rzvgroup.hasmember(r) {
-		log(r.String(), "has been ACCEPTED")
+		bid := r.bids.reply2Bid(tio, bidStateAccepted)
+		assert(bid != nil)
+		log(bid.String())
 		//new server's flow
-		tio := tioevent.GetTio()
 		flow := NewFlow(gwy, tioevent.cid, r, tio)
 		flow.totalbytes = tioevent.sizeb
 		r.flowsfrom.insertFlow(flow)
+	} else {
+		bid := r.bids.reply2Bid(tio, bidStateCanceled)
+		assert(bid != nil)
+		log(bid.String())
 	}
 
 	return nil
@@ -342,21 +362,25 @@ func (m *modelSeven) NewGateway(i int) RunnerInterface {
 		configNetwork.maxratebucketval, // maxval
 		configNetwork.linkbps,          // rate
 		configNetwork.maxratebucketval) // value
-	rgwy := &gatewaySeven{*gwy}
+
+	rgwy := &gatewaySeven{GatewayMcast: *gwy}
 	rgwy.rptr = rgwy
+	bids := NewGatewayBidQueue(rgwy)
+	rgwy.bids = bids
 	return rgwy
 }
 
 func (m *modelSeven) NewServer(i int) RunnerInterface {
 	srv := NewServerUch(i, m5.putpipeline)
-	rsrv := &serverSeven{*srv}
+	rsrv := &serverSeven{ServerUch: *srv}
 	rsrv.ServerUch.rptr = rsrv
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)
+	bids := NewServerBidQueue(rsrv, 0)
+	rsrv.bids = bids
 	return rsrv
 }
 
 func (m *modelSeven) Configure() {
-	configNetwork.sizeControlPDU = 100
 	rem := config.numServers % configReplicast.sizeNgtGroup
 	if rem > 0 {
 		// FIXME: model.go to support late numServers setting

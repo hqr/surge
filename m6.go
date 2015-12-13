@@ -94,9 +94,7 @@ func init() {
 func (r *gatewaySix) Run() {
 	r.state = RstateRunning
 
-	rxcallback := func(ev EventInterface) bool {
-		atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
-
+	rxcallback := func(ev EventInterface) int {
 		switch ev.(type) {
 		case *UchDingAimdEvent:
 			dingev := ev.(*UchDingAimdEvent)
@@ -111,7 +109,7 @@ func (r *gatewaySix) Run() {
 				atomic.AddInt64(&r.tiostats, int64(1))
 			}
 		}
-		return true
+		return ev.GetSize()
 	}
 
 	go func() {
@@ -215,7 +213,7 @@ func (r *gatewaySix) newflow(t interface{}, args ...interface{}) *Flow {
 func (r *serverSix) Run() {
 	r.state = RstateRunning
 
-	rxcallback := func(ev EventInterface) bool {
+	rxcallback := func(ev EventInterface) int {
 		switch ev.(type) {
 		case *ReplicaDataEvent:
 			dataev := ev.(*ReplicaDataEvent)
@@ -225,13 +223,12 @@ func (r *serverSix) Run() {
 			flow.tobandwidth = dataev.tobandwidth
 			r.receiveReplicaData(dataev)
 		default:
-			atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
 			tio := ev.GetTio()
 			log(LogV, "SRV::rxcallback", tio.String())
 			tio.doStage(r)
 		}
 
-		return true
+		return ev.GetSize()
 	}
 
 	go func() {
@@ -363,7 +360,6 @@ func (r *serverSix) dingOne(gwy RunnerInterface) {
 
 	log("srv-send-ding", flow.String())
 	r.Send(dingev, SmethodWait)
-	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 }
 
 func (r *serverSix) M6putrequest(ev EventInterface) error {
@@ -386,7 +382,6 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 	log("srv-new-flow", flow.String(), putreqackev.String())
 
 	tio.next(putreqackev)
-	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	return nil
 }
 
@@ -417,6 +412,7 @@ func (m *modelSix) NewServer(i int) RunnerInterface {
 
 func (m *modelSix) Configure() {
 	configNetwork.sizeControlPDU = 100
+	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
 }
 
 //==================================================================
@@ -430,8 +426,8 @@ type UchDingAimdEvent struct {
 }
 
 func newUchDingAimdEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow, tio *Tio) *UchDingAimdEvent {
-	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
-	timedev := newTimedAnyEvent(srv, at, gwy, tio)
+	at := configNetwork.durationControlPDU + config.timeClusterTrip
+	timedev := newTimedAnyEvent(srv, at, gwy, tio, configNetwork.sizeControlPDU)
 
 	return &UchDingAimdEvent{zControlEvent{zEvent{*timedev}, flow.cid}, flow.repnum}
 }

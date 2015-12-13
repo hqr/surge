@@ -32,6 +32,7 @@ func init() {
 	d := NewStatsDescriptors("1.1")
 	d.Register("event", StatsKindCount, StatsScopeServer)
 	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer)
+	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "unidirectional storm of random events, with partially random selection"
@@ -81,10 +82,10 @@ func (r *serverOneDotOne) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
-	rxcallback := func(ev EventInterface) bool {
+	rxcallback := func(ev EventInterface) int {
 		assert(r == ev.GetTarget())
 		log(LogVV, "proc-ed", ev.String())
-		return true
+		return 0
 	}
 
 	go func() {

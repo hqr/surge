@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"sync/atomic"
 )
 
 type RunnerStateEnum int
@@ -61,17 +62,19 @@ type RunnerInterface interface {
 const initialTioCnt int = 4
 
 type RunnerBase struct {
-	id      int
-	state   RunnerStateEnum
-	txchans []chan EventInterface
-	rxchans []chan EventInterface
-	eps     []RunnerInterface
-	cases   []reflect.SelectCase
-	tios    map[int64]*Tio
-	rxqueue *RxQueueSorted
-	txqueue *TxQueue
-	strtype string // log
-	rxcount int    // num live Rx connections
+	id          int
+	state       RunnerStateEnum
+	txchans     []chan EventInterface
+	rxchans     []chan EventInterface
+	eps         []RunnerInterface
+	cases       []reflect.SelectCase
+	tios        map[int64]*Tio
+	rxqueue     *RxQueueSorted
+	txqueue     *TxQueue
+	strtype     string // log
+	txbytestats int64
+	rxbytestats int64
+	rxcount     int // num live Rx connections
 }
 
 //==================================================================
@@ -115,7 +118,15 @@ func (r *RunnerBase) GetState() RunnerStateEnum { return r.state }
 func (r *RunnerBase) GetID() int                { return r.id }
 
 func (r *RunnerBase) GetStats(reset bool) NodeStats {
-	return r.rxqueue.GetStats(reset)
+	s := r.rxqueue.GetStats(reset)
+	if reset {
+		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, 0)
+		s["rxbytes"] = atomic.SwapInt64(&r.rxbytestats, 0)
+	} else {
+		s["txbytes"] = atomic.LoadInt64(&r.txbytestats)
+		s["rxbytes"] = atomic.LoadInt64(&r.rxbytestats)
+	}
+	return s
 }
 
 func (r *RunnerBase) String() string { return fmt.Sprintf("[%s#%v]", r.strtype, r.id) }
@@ -130,19 +141,22 @@ func (r *RunnerBase) Send(ev EventInterface, how SendMethodEnum) bool {
 			r.rxqueue.insertEvent(ev)
 			r.rxqueue.unlock()
 		}
+		atomic.AddInt64(&r.txbytestats, int64(ev.GetSize()))
 		return true
 	}
 
 	txch, _ := r.getChannels(peer)
 	if how == SmethodWait {
 		txch <- ev
+		atomic.AddInt64(&r.txbytestats, int64(ev.GetSize()))
 		return true
 	}
 
 	assert(how == SmethodDontWait)
 	select {
 	case txch <- ev:
-		// all good, do nothing
+		// sent
+		atomic.AddInt64(&r.txbytestats, int64(ev.GetSize()))
 	default:
 		log("WARNING: channel full", r.String(), peer.String())
 		return false
@@ -236,6 +250,7 @@ func (r *RunnerBase) receiveEnqueue() (bool, error) {
 				locked = true
 			}
 			r.rxqueue.insertEvent(ev)
+			atomic.AddInt64(&r.rxbytestats, int64(ev.GetSize()))
 			newcnt++
 			if newcnt < 2 { // TODO: experiment with more
 				continue
@@ -274,8 +289,8 @@ func (r *RunnerBase) NumPendingEvents(exact bool) int64 {
 	return r.rxqueue.NumPendingEvents(exact)
 }
 
-func (r *RunnerBase) processPendingEvents(rxcallback processEventCb) {
-	r.rxqueue.processPendingEvents(rxcallback)
+func (r *RunnerBase) processPendingEvents(rxcallback processEventCb) int {
+	return r.rxqueue.processPendingEvents(rxcallback)
 }
 
 func (r *RunnerBase) NowIsDone() bool {

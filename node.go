@@ -36,8 +36,6 @@ type GatewayCommon struct {
 	tiostats     int64
 	chunkstats   int64
 	replicastats int64
-	txbytestats  int64
-	rxbytestats  int64
 	chunk        *Chunk
 	rb           RateBucketInterface
 	rptr         RunnerInterface // real object
@@ -96,14 +94,10 @@ func (r *GatewayCommon) GetStats(reset bool) NodeStats {
 		s["tio"] = atomic.SwapInt64(&r.tiostats, 0)
 		s["chunk"] = atomic.SwapInt64(&r.chunkstats, 0)
 		s["replica"] = atomic.SwapInt64(&r.replicastats, 0)
-		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, 0)
-		s["rxbytes"] = atomic.SwapInt64(&r.rxbytestats, 0)
 	} else {
 		s["tio"] = atomic.LoadInt64(&r.tiostats)
 		s["chunk"] = atomic.LoadInt64(&r.chunkstats)
 		s["replica"] = atomic.LoadInt64(&r.replicastats)
-		s["txbytes"] = atomic.LoadInt64(&r.txbytestats)
-		s["rxbytes"] = atomic.LoadInt64(&r.rxbytestats)
 	}
 	return s
 }
@@ -201,8 +195,7 @@ func (r *GatewayUch) startNewReplica(num int) {
 	flow.tio.next(ev)
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
 	flow.rb.use(int64(configNetwork.sizeControlPDU * 8))
-	flow.sendnexts = Now.Add(time.Duration(configNetwork.sizeControlPDU) * time.Second / time.Duration(configNetwork.linkbps))
-	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
+	flow.timeTxDone = Now.Add(configNetwork.durationControlPDU) // FIXME: assuming 10GE
 }
 
 // sendata sends data packets (frames) in the form of ReplicaDataEvent,
@@ -227,7 +220,7 @@ func (r *GatewayUch) sendata() {
 			return
 		}
 		// must ensure previous send is fully done
-		if flow.sendnexts.After(Now) {
+		if flow.timeTxDone.After(Now) {
 			return
 		}
 		// check with the flow's own ratebucket
@@ -238,10 +231,10 @@ func (r *GatewayUch) sendata() {
 		ev := newReplicaDataEvent(r.realobject(), srv, r.replica, flow, frsize, flow.tio)
 
 		// transmit given the current flow's bandwidth
-		flow.sendnexts = Now.Add(time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth))
+		d := time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth)
+		flow.timeTxDone = Now.Add(d)
 		ok := r.Send(ev, SmethodWait)
 		assert(ok)
-		atomic.AddInt64(&r.txbytestats, int64(frsize))
 		// starting next replica without waiting for the current one's completion
 		if flow.offset >= flow.totalbytes {
 			r.finishStartReplica(flow)
@@ -286,14 +279,13 @@ func (r *GatewayUch) replicack(ev EventInterface) error {
 //===============================================================
 type GatewayMcast struct {
 	GatewayCommon
-	rzvgroup   *RzvGroup
-	expectacks int
+	rzvgroup *RzvGroup
 }
 
 func NewGatewayMcast(i int, p *Pipeline) *GatewayMcast {
 	gwy := NewGatewayCommon(i, p)
-	servers := make([]RunnerInterface, configStorage.numReplicas)
-	return &GatewayMcast{GatewayCommon: *gwy, rzvgroup: &RzvGroup{0, servers, 0}}
+	srvrs := make([]RunnerInterface, configStorage.numReplicas)
+	return &GatewayMcast{GatewayCommon: *gwy, rzvgroup: &RzvGroup{servers: srvrs}}
 }
 
 //===
@@ -314,12 +306,11 @@ func (r *GatewayMcast) selectNgtGroup() int {
 //===============================================================
 type ServerUch struct {
 	RunnerBase
-	txbytestats int64
-	rxbytestats int64
 	flowsfrom   *FlowDir
 	disk        *Disk
 	rptr        RunnerInterface // real object
-	putpipeline *Pipeline
+	putpipeline *Pipeline       // tio pipeline
+	timeRxDone  time.Time       // time the last byte of the current packet is received
 }
 
 // NewServerUch constructs ServerUch. The latter embeds RunnerBase and must in turn
@@ -331,6 +322,7 @@ func NewServerUch(i int, p *Pipeline) *ServerUch {
 	srv.putpipeline = p
 	srv.init(config.numGateways)
 	srv.disk = NewDisk(srv, configStorage.diskMBps)
+	srv.timeRxDone = time.Time{}
 
 	return srv
 }
@@ -361,7 +353,6 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) {
 
 	x := ev.offset - flow.offset
 	assert(x <= configNetwork.sizeFrame, fmt.Sprintf("FATAL: out of order:%d:%s", ev.offset, flow.String()))
-	atomic.AddInt64(&r.rxbytestats, int64(x))
 
 	flow.offset = ev.offset
 	tio := ev.GetTio()
@@ -378,7 +369,6 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) {
 		}
 		donetodisktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
 		tio.next(putackev)
-		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 
 		log("srv-replica-done-and-gone", flow.String(), donetodisktime)
 		r.flowsfrom.deleteFlow(gwy)
@@ -397,13 +387,6 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) {
 // next iteration..
 func (r *ServerUch) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
-	if reset {
-		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, 0)
-		s["rxbytes"] = atomic.SwapInt64(&r.rxbytestats, 0)
-	} else {
-		s["txbytes"] = atomic.LoadInt64(&r.txbytestats)
-		s["rxbytes"] = atomic.LoadInt64(&r.rxbytestats)
-	}
 	s["disk-queue-depth"] = r.disk.queue.NumPending()
 	return s
 }

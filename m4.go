@@ -46,6 +46,8 @@ func init() {
 	d := NewStatsDescriptors("4")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("rxbusy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
+	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
+	d.Register("rxbytes", StatsKindByteCount, StatsScopeServer|StatsScopeGateway)
 	d.Register("tio", StatsKindCount, StatsScopeGateway)
 
 	props := make(map[string]interface{}, 1)
@@ -62,7 +64,7 @@ func (r *gatewayFour) Run() {
 	r.state = RstateRunning
 	outstanding := 0
 
-	rxcallback := func(ev EventInterface) bool {
+	rxcallback := func(ev EventInterface) int {
 		tioevent := ev.(*TimedAnyEvent)
 		tio := tioevent.GetTio()
 		log(LogVV, "GWY rxcallback", tio.String())
@@ -73,7 +75,7 @@ func (r *gatewayFour) Run() {
 			outstanding--
 		}
 
-		return true
+		return 0
 	}
 
 	go func() {
@@ -142,14 +144,14 @@ func (r *gatewayFour) GetStats(reset bool) NodeStats {
 func (r *serverFour) Run() {
 	r.state = RstateRunning
 
-	rxcallback := func(ev EventInterface) bool {
+	rxcallback := func(ev EventInterface) int {
 		tioevent := ev.(*TimedAnyEvent)
 		tio := tioevent.GetTio()
 		log(LogVV, "SRV rxcallback", tio.String())
 
 		tio.doStage(r)
 
-		return true
+		return 0
 	}
 
 	go func() {

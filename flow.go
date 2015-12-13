@@ -21,7 +21,7 @@ type Flow struct {
 	tio         *Tio
 	rb          RateBucketInterface // refill at the tobandwidth rate
 	tobandwidth int64               // bits/sec
-	sendnexts   time.Time           // earliest can send the next frame
+	timeTxDone  time.Time           // time the last byte of the current packet is sent
 	extension   interface{}         // protocol-specific flow extension
 	repnum      int                 // replica num
 	offset      int

@@ -169,6 +169,8 @@ func clusterTripPlusRandom() time.Duration {
 func sizeToDuration(size int, sizeunits string, bw int64, bwunits string) time.Duration {
 	var sizebits, bwbitss int64
 	switch {
+	case strings.HasPrefix(sizeunits, "b"):
+		sizebits = int64(size)
 	case strings.HasPrefix(sizeunits, "B"):
 		sizebits = int64(size) * int64(8)
 	case strings.HasPrefix(sizeunits, "k") || strings.HasPrefix(sizeunits, "K"):

@@ -34,6 +34,8 @@ func init() {
 	d := NewStatsDescriptors("2")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("rxbusy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
+	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
+	d.Register("rxbytes", StatsKindByteCount, StatsScopeServer|StatsScopeGateway)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "identical clustered nodes exchanging random events"
@@ -49,9 +51,9 @@ func (r *gatewayTwo) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
-	rxcallback := func(ev EventInterface) bool {
+	rxcallback := func(ev EventInterface) int {
 		log(LogV, "GWY rxcallback", r.String(), ev.String())
-		return true
+		return 0
 	}
 
 	go m2.run(&r.RunnerBase, rxcallback)
@@ -66,10 +68,10 @@ func (r *serverTwo) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
-	rxcallback := func(ev EventInterface) bool {
+	rxcallback := func(ev EventInterface) int {
 		assert(r == ev.GetTarget())
 		log(LogV, "SRV rxcallback", r.String(), ev.String())
-		return true
+		return 0
 	}
 
 	go m2.run(&r.RunnerBase, rxcallback)

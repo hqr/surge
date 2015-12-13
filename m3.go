@@ -51,6 +51,8 @@ func init() {
 	d := NewStatsDescriptors("3")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("rxbusy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
+	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
+	d.Register("rxbytes", StatsKindByteCount, StatsScopeServer|StatsScopeGateway)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "ping-pong with a random target selection"
@@ -69,7 +71,7 @@ func (r *gatewayThree) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
-	rxcallback := func(ev EventInterface) bool {
+	rxcallback := func(ev EventInterface) int {
 		log(LogV, "GWY rxcallback", r.String(), ev.String())
 
 		// validate that we got response from the right target
@@ -82,7 +84,7 @@ func (r *gatewayThree) Run() {
 
 		// response (nop-) handled, now can talk to target.id == id again..
 		r.waitingResponse[id] = 0
-		return true
+		return 0
 	}
 
 	go func() {
@@ -141,7 +143,7 @@ func (r *serverThree) Run() {
 	r.state = RstateRunning
 
 	// event handling is a NOP in this model
-	rxcallback := func(ev EventInterface) bool {
+	rxcallback := func(ev EventInterface) int {
 		assert(r == ev.GetTarget())
 		log(LogV, "SRV rxcallback", r.String(), ev.String())
 
@@ -153,7 +155,7 @@ func (r *serverThree) Run() {
 		at := clusterTripPlusRandom()
 		evresponse := newTimedUniqueEvent(r, at, gwysrc, realevent.id)
 		r.Send(evresponse, SmethodWait)
-		return true
+		return 0
 	}
 
 	go func() {

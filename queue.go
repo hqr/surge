@@ -125,8 +125,10 @@ func (q *TxQueue) insertEvent(ev EventInterface) {
 }
 
 func (q *TxQueue) deleteEvent(k int) {
-	copy(q.fifo[k:], q.fifo[k+1:])
 	l := len(q.fifo)
+	if k < l-1 {
+		copy(q.fifo[k:], q.fifo[k+1:])
+	}
 	q.fifo[l-1] = nil
 	q.fifo = q.fifo[:l-1]
 }
@@ -217,8 +219,10 @@ func (q *RxQueue) insertEvent(ev EventInterface) {
 
 // caller takes lock
 func (q *RxQueue) deleteEvent(k int) {
-	copy(q.pending[k:], q.pending[k+1:])
 	l := len(q.pending)
+	if k < l-1 {
+		copy(q.pending[k:], q.pending[k+1:])
+	}
 	q.pending[l-1] = nil
 	q.pending = q.pending[:l-1]
 
@@ -228,7 +232,8 @@ func (q *RxQueue) deleteEvent(k int) {
 //
 // handle those that are AT or BEFORE the current time
 //
-func (q *RxQueue) processPendingEvents(rxcallback processEventCb) {
+func (q *RxQueue) processPendingEvents(rxcallback processEventCb) int {
+	totalsize := 0
 	q.lock()
 	defer q.unlock()
 	for k := 0; k < len(q.pending); {
@@ -247,8 +252,10 @@ func (q *RxQueue) processPendingEvents(rxcallback processEventCb) {
 			k++
 			continue
 		}
-		if rxcallback(ev) {
+		size := rxcallback(ev)
+		if size >= 0 {
 			q.deleteEvent(k)
+			totalsize += size
 		} else {
 			k++
 		}
@@ -264,6 +271,7 @@ func (q *RxQueue) processPendingEvents(rxcallback processEventCb) {
 			}
 		}
 	}
+	return totalsize
 }
 
 func (q *RxQueue) cleanup() {
@@ -365,7 +373,8 @@ func (q *RxQueueSorted) insertEvent(ev EventInterface) {
 	q.pending[k] = ev
 }
 
-func (q *RxQueueSorted) processPendingEvents(rxcallback processEventCb) {
+func (q *RxQueueSorted) processPendingEvents(rxcallback processEventCb) int {
+	totalsize := 0
 	q.lock()
 	defer q.unlock()
 
@@ -375,7 +384,7 @@ func (q *RxQueueSorted) processPendingEvents(rxcallback processEventCb) {
 		if t.After(Now) {
 			diff := t.Sub(Now)
 			if diff > config.timeIncStep {
-				return // is sorted by trigger time
+				return totalsize // is sorted by trigger time
 			}
 			// otherwise consider (approx) on time
 		}
@@ -384,8 +393,10 @@ func (q *RxQueueSorted) processPendingEvents(rxcallback processEventCb) {
 			k++
 			continue
 		}
-		if rxcallback(ev) {
+		size := rxcallback(ev)
+		if size >= 0 {
 			q.deleteEvent(k)
+			totalsize += size
 		} else {
 			k++
 		}
@@ -401,4 +412,5 @@ func (q *RxQueueSorted) processPendingEvents(rxcallback processEventCb) {
 			}
 		}
 	}
+	return totalsize
 }

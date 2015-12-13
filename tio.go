@@ -105,7 +105,8 @@ func (tio *Tio) GetStage() (string, int) {
 	return stage.name, tio.index
 }
 
-// advance the stage, generate and send anonymous tio event to the next stage's target
+// advance the stage, generate and send anonymous tio sizeof()-size event
+// to the next stage's target
 func (tio *Tio) nextAnon(when time.Duration, tgt RunnerInterface) {
 	var ev *TimedAnyEvent
 	if tio.index == -1 {

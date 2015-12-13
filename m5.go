@@ -104,9 +104,7 @@ func init() {
 func (r *gatewayFive) Run() {
 	r.state = RstateRunning
 
-	rxcallback := func(ev EventInterface) bool {
-		atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
-
+	rxcallback := func(ev EventInterface) int {
 		switch ev.(type) {
 		case *UchRateSetEvent:
 			ratesetev := ev.(*UchRateSetEvent)
@@ -121,7 +119,7 @@ func (r *gatewayFive) Run() {
 				atomic.AddInt64(&r.tiostats, int64(1))
 			}
 		}
-		return true
+		return ev.GetSize()
 	}
 
 	go func() {
@@ -254,38 +252,41 @@ func (r *gatewayFive) newflow(t interface{}, args ...interface{}) *Flow {
 func (r *serverFive) Run() {
 	r.state = RstateRunning
 
-	rxcallback := func(ev EventInterface) bool {
+	rxcallback := func(ev EventInterface) int {
 		switch ev.(type) {
 		case *ReplicaDataEvent:
 			tioevent := ev.(*ReplicaDataEvent)
 			log(LogV, "SRV::rxcallback: replica data", tioevent.String())
 			r.receiveReplicaData(tioevent)
 		default:
-			atomic.AddInt64(&r.rxbytestats, int64(configNetwork.sizeControlPDU))
 			tio := ev.GetTio()
 			log(LogV, "SRV::rxcallback", tio.String())
 			tio.doStage(r)
 		}
 
-		return true
+		return ev.GetSize()
 	}
 
 	go func() {
 		numflows := r.flowsfrom.count()
 		for r.state == RstateRunning {
 			r.receiveEnqueue()
-			r.processPendingEvents(rxcallback)
+			bytesreceived := r.processPendingEvents(rxcallback)
+			d := sizeToDuration(bytesreceived, "B", configNetwork.linkbps, "b")
+			newRxDone := r.timeRxDone.Add(d)
 
 			// two alternative CCPi-implementing methods below,
 			// one simply dividing the server's bandwidth equally between
 			// all incoming flows, another - trying the weighted approach,
 			// with weights inverse proportional to the remaining bytes
 			// to send..
-			if numflows != r.flowsfrom.count() {
-				r.rerate()
+			nflows := r.flowsfrom.count()
+			if numflows != nflows && nflows > 0 {
+				r.rerate(nflows)
 				// r.rerateInverseProportional()
-				numflows = r.flowsfrom.count()
 			}
+			numflows = nflows
+			r.timeRxDone = newRxDone
 		}
 
 		r.closeTxChannels()
@@ -295,11 +296,7 @@ func (r *serverFive) Run() {
 //
 // note: two possible implementations: rerate() and rerateInverseProportional()
 //
-func (r *serverFive) rerate() {
-	nflows := r.flowsfrom.count()
-	if nflows == 0 {
-		return
-	}
+func (r *serverFive) rerate(nflows int) {
 	applyCallback := func(gwy RunnerInterface, flow *Flow) {
 		flex := flow.extension.(*m5FlowExtension)
 		bytesinflight := int64(flow.tobandwidth) * int64(config.timeClusterTrip) / int64(time.Second) / 8
@@ -313,7 +310,6 @@ func (r *serverFive) rerate() {
 
 		log(LogV, "srv-send-rateset", flow.String())
 		r.Send(ratesetev, SmethodWait)
-		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	}
 	r.flowsfrom.apply(applyCallback)
 }
@@ -348,7 +344,6 @@ func (r *serverFive) rerateInverseProportional() {
 
 		log(LogV, "srv-send-rateset-proportional", flow.String())
 		r.Send(ratesetev, SmethodWait)
-		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	}
 }
 
@@ -374,7 +369,6 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 	log("srv-new-flow", flow.String(), rateinitev.String())
 
 	tio.next(rateinitev)
-	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	return nil
 }
 
@@ -405,6 +399,7 @@ func (m *modelFive) NewServer(i int) RunnerInterface {
 
 func (m *modelFive) Configure() {
 	configNetwork.sizeControlPDU = 100
+	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
 }
 
 //==================================================================
@@ -428,8 +423,8 @@ func (e *UchRateInitEvent) String() string {
 }
 
 func newUchRateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, flow *Flow, tio *Tio) *UchRateSetEvent {
-	at := sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b") + config.timeClusterTrip
-	timedev := newTimedAnyEvent(srv, at, gwy, tio)
+	at := configNetwork.durationControlPDU + config.timeClusterTrip
+	timedev := newTimedAnyEvent(srv, at, gwy, tio, configNetwork.sizeControlPDU)
 
 	return &UchRateSetEvent{zControlEvent{zEvent{*timedev}, flow.cid}, rate, flow.repnum}
 }
