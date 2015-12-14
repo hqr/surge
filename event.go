@@ -17,6 +17,7 @@ type EventInterface interface {
 	GetTio() *Tio
 	GetGroup() GroupInterface
 	GetSize() int // size in  bytes
+	IsMcast() bool
 
 	String() string
 
@@ -62,7 +63,7 @@ func newTimedAnyEvent(src RunnerInterface, when time.Duration, args ...interface
 		mcast:       false}
 	ev.setArgs(args)
 
-	if ev.sizeb == 0 && !ev.mcast {
+	if ev.sizeb == 0 {
 		ev.sizeb = int(unsafe.Sizeof(*ev))
 	}
 	return ev
@@ -101,6 +102,7 @@ func (e *TimedAnyEvent) GetTarget() RunnerInterface { return e.target }
 func (e *TimedAnyEvent) GetTio() *Tio               { return e.tio }
 func (e *TimedAnyEvent) GetGroup() GroupInterface   { return e.targetgroup }
 func (e *TimedAnyEvent) GetSize() int               { return e.sizeb }
+func (e *TimedAnyEvent) IsMcast() bool              { return e.mcast }
 
 func (e *TimedAnyEvent) String() string {
 	dcreated := e.crtime.Sub(time.Time{})
@@ -146,7 +148,7 @@ type McastChunkPutRequestEvent struct {
 
 func newMcastChunkPutRequestEvent(gwy RunnerInterface, group GroupInterface, chunk *Chunk, srv RunnerInterface, tio *Tio) *McastChunkPutRequestEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
-	timedev := newTimedAnyEvent(gwy, at, group, srv, tio, true)
+	timedev := newTimedAnyEvent(gwy, at, group, srv, tio, true, configNetwork.sizeControlPDU)
 
 	return &McastChunkPutRequestEvent{zControlEvent{zEvent{*timedev}, chunk.cid}, chunk.sizeb}
 }
@@ -164,7 +166,7 @@ type McastChunkPutAcceptEvent struct {
 
 func newMcastChunkPutAcceptEvent(gwy RunnerInterface, ngtgroup GroupInterface, chunk *Chunk, rzvgroup GroupInterface, tio *Tio) *McastChunkPutAcceptEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
-	timedev := newTimedAnyEvent(gwy, at, ngtgroup, tio, tio.target, true)
+	timedev := newTimedAnyEvent(gwy, at, ngtgroup, tio, tio.target, true, configNetwork.sizeControlPDU)
 
 	return &McastChunkPutAcceptEvent{zControlEvent{zEvent{*timedev}, chunk.cid}, rzvgroup, chunk.sizeb}
 }
@@ -260,7 +262,7 @@ func (e *ReplicaDataEvent) String() string {
 // note: constructs ReplicaDataEvent with srv == nil and group != nil
 func newMcastChunkDataEvent(gwy RunnerInterface, rzvgroup GroupInterface, chunk *Chunk, flow *Flow, frsize int, tio *Tio) *ReplicaDataEvent {
 	at := sizeToDuration(frsize, "B", flow.tobandwidth, "b") + config.timeClusterTrip
-	timedev := newTimedAnyEvent(gwy, at, rzvgroup, tio, tio.target, true)
+	timedev := newTimedAnyEvent(gwy, at, rzvgroup, tio, tio.target, true, frsize)
 
 	return &ReplicaDataEvent{zDataEvent{zEvent{*timedev}, chunk.cid, 0, flow.offset, flow.tobandwidth}}
 }

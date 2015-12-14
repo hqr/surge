@@ -141,14 +141,14 @@ func (r *RunnerBase) Send(ev EventInterface, how SendMethodEnum) bool {
 			r.rxqueue.insertEvent(ev)
 			r.rxqueue.unlock()
 		}
-		atomic.AddInt64(&r.txbytestats, int64(ev.GetSize()))
+		r.updateTxBytes(ev)
 		return true
 	}
 
 	txch, _ := r.getChannels(peer)
 	if how == SmethodWait {
 		txch <- ev
-		atomic.AddInt64(&r.txbytestats, int64(ev.GetSize()))
+		r.updateTxBytes(ev)
 		return true
 	}
 
@@ -156,12 +156,19 @@ func (r *RunnerBase) Send(ev EventInterface, how SendMethodEnum) bool {
 	select {
 	case txch <- ev:
 		// sent
-		atomic.AddInt64(&r.txbytestats, int64(ev.GetSize()))
+		r.updateTxBytes(ev)
 	default:
 		log("WARNING: channel full", r.String(), peer.String())
 		return false
 	}
 	return true
+}
+
+func (r *RunnerBase) updateTxBytes(ev EventInterface) {
+	// actual mcast transmitters do the accounting instead
+	if !ev.IsMcast() {
+		atomic.AddInt64(&r.txbytestats, int64(ev.GetSize()))
+	}
 }
 
 //==================================================================
