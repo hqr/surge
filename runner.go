@@ -139,6 +139,7 @@ func (r *RunnerBase) Send(ev EventInterface, how SendMethodEnum) bool {
 		} else {
 			r.rxqueue.lock()
 			r.rxqueue.insertEvent(ev)
+			atomic.AddInt64(&r.rxbytestats, int64(ev.GetSize()))
 			r.rxqueue.unlock()
 		}
 		r.updateTxBytes(ev)

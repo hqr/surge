@@ -126,7 +126,7 @@ func (bid *PutBid) String() string {
 	if bid.tio.target != nil {
 		tgt = bid.tio.target.String()
 	}
-	return fmt.Sprintf("[Bid %s:srv=%v,(%11.10v,%11.10v),gwy=%v]", s, tgt, left, right, bid.tio.source.String())
+	return fmt.Sprintf("[Bid %s(chunk#%d):srv=%v,(%11.10v,%11.10v),gwy=%v]", s, bid.tio.chunksid, tgt, left, right, bid.tio.source.String())
 }
 
 //
@@ -219,16 +219,27 @@ func NewServerBidQueue(ri RunnerInterface, size int) *ServerBidQueue {
 func (q *ServerBidQueue) createBid(tio *Tio, gapinbytes int) *PutBid {
 	q.expire()
 
-	if q.canceled > 0 {
-		_, bid := q.findBid(bidFindState, bidStateCanceled)
-		q.canceled--
-		bid.state = bidStateTentative
-		log("un-canceling", bid.String())
-		return bid
-	}
 	newleft := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip)
-
 	l := len(q.pending)
+	if q.canceled > 0 {
+		assert(l > 0)
+		for k := 0; k < l; k++ {
+			if q.pending[k].state != bidStateCanceled {
+				continue
+			}
+			bid := q.pending[k]
+			// FIXME: maybe too strict
+			if newleft.After(bid.win.left) {
+				continue
+			}
+			q.canceled--
+			log("un-canceling", bid.String(), "from", bid.tio.String(), "to", tio.String())
+			bid.state = bidStateTentative
+			bid.tio = tio
+			return bid
+		}
+	}
+
 	if l > 0 {
 		lastbidright := q.pending[l-1].win.right
 		assert(lastbidright.After(Now))
@@ -260,7 +271,7 @@ func (q *ServerBidQueue) reply2Bid(replytio *Tio, state bidStateEnum) *PutBid {
 	assert(state == bidStateCanceled || state == bidStateAccepted)
 	bid.state = state
 	if bid.state == bidStateCanceled {
-		log("bid canceled", bid.String())
+		log(bid.String())
 		q.canceled++
 	}
 	return bid
@@ -359,18 +370,23 @@ func (q *GatewayBidQueue) filterBestBids() *PutBid {
 	}
 	l = len(q.pending)
 	assert(l == configStorage.numReplicas)
-	log("found best bids", q.r.String())
+	log(LogV, "gwy-best-bids")
 	for k = 0; k < l; k++ {
 		bid := q.pending[k]
 		log(LogV, bid.String())
 	}
+	tioparent := q.pending[0].tio.parent
+	assert(tioparent.cid == q.pending[0].tio.cid)
 	computedbid := &PutBid{
 		crtime: Now,
 		win:    TimWin{begin, end},
-		tio:    q.pending[0].tio.parent,
+		tio:    tioparent,
 		state:  bidStateAccepted,
 	}
-	log("computed-bid", computedbid.String())
+	left := begin.Sub(time.Time{})
+	right := end.Sub(time.Time{})
+	s := fmt.Sprintf("[computed-bid (chunk#%d):(%11.10v,%11.10v),gwy=%v]", tioparent.chunksid, left, right, q.r.String())
+	log(s)
 	return computedbid
 }
 

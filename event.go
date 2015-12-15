@@ -183,7 +183,7 @@ type BidEvent struct {
 
 func (e *BidEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[McastBidEvent src=%v,tgt=%v,chunk#%d,bid=%s]", e.source.String(), e.target.String(), printid, e.bid.String())
+	return fmt.Sprintf("[McastBidEvent src=%v,tgt=%v,chunk#%d]", e.source.String(), e.target.String(), printid)
 }
 
 func newBidEvent(srv RunnerInterface, gwy RunnerInterface, group GroupInterface, chunkid int64, bid *PutBid, tio *Tio) *BidEvent {
