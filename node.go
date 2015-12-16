@@ -359,18 +359,23 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) {
 
 	if flow.offset >= flow.totalbytes {
 		// postpone the ack until after the replica (chunk.sizeb) is written to disk
-		diskdoneintime := r.disk.scheduleWrite(flow.totalbytes)
-		r.disk.queue.insertTime(diskdoneintime)
+		atdisk := r.disk.scheduleWrite(flow.totalbytes)
 
-		putackev := newReplicaPutAckEvent(r.realobject(), gwy, flow, tio, diskdoneintime)
+		putackev := newReplicaPutAckEvent(r.realobject(), gwy, flow, tio, atdisk)
 		if group != nil {
 			// pass the targetgroup back, to validate by the mcasting gwy
 			putackev.setOneArg(group)
 		}
-		donetodisktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
+		gwyacktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
 		tio.next(putackev)
 
-		log("srv-replica-done-and-gone", flow.String(), donetodisktime)
+		cstr := ""
+		if flow.repnum != 0 {
+			cstr = fmt.Sprintf("chunk#%d(%d)", flow.sid, flow.repnum)
+		} else {
+			cstr = fmt.Sprintf("chunk#%d", flow.sid)
+		}
+		log("srv-replica-received", cstr, "replica-ack-scheduled", gwyacktime)
 		r.flowsfrom.deleteFlow(gwy)
 	}
 }
@@ -519,7 +524,7 @@ func (g *RzvGroup) getCount() int {
 
 func (g *RzvGroup) hasmember(r RunnerInterface) bool {
 	for _, srv := range g.servers {
-		if r == srv {
+		if srv != nil && r == srv {
 			return true
 		}
 	}

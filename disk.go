@@ -36,9 +36,11 @@ func (d *Disk) scheduleWrite(sizebytes int) time.Duration {
 	if w > 0 && Now.Before(d.lastIOdone) {
 		d.lastIOdone = d.lastIOdone.Add(at)
 		at1 := d.lastIOdone.Sub(Now)
+		d.queue.insertTime(at1)
 		return at1
 	}
 
 	d.lastIOdone = Now.Add(at)
+	d.queue.insertTime(at)
 	return at
 }

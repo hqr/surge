@@ -106,7 +106,7 @@ func (r *gatewaySeven) M7bid(ev EventInterface) error {
 	tiochild := tioevent.GetTio()
 	tioparent := tiochild.parent
 	assert(tioparent.haschild(tiochild))
-	log(r.String(), "::M7bid()", tioevent.String())
+	log(LogVV, r.String(), "::M7bid()", tioevent.String())
 	srv := tioevent.GetSource()
 	group := tioevent.GetGroup()
 	ngobj, ok := group.(*NgtGroup)
@@ -117,8 +117,21 @@ func (r *gatewaySeven) M7bid(ev EventInterface) error {
 	if n < configReplicast.sizeNgtGroup {
 		return nil
 	}
-	computedbid := r.bids.filterBestBids()
-	assert(computedbid != nil) // FIXME: retry
+	computedbid := r.bids.filterBestBids(r.chunk)
+
+	// not enough overlap between available reservations
+	// aka "tentative" bids from the servers:
+	// cancel all server bids and cleanup -
+	// note that rzvgroup is nil-inited at this point
+	if computedbid == nil {
+		r.accept(ngobj, tioparent)
+
+		r.bids.cleanup()
+		tioparent.abort()
+		log("abort", r.chunk.String())
+		r.chunk = nil
+		return nil
+	}
 
 	flow := tioparent.flow
 	flow.extension = computedbid
@@ -133,15 +146,15 @@ func (r *gatewaySeven) M7bid(ev EventInterface) error {
 	assert(r.rzvgroup.getCount() == configStorage.numReplicas)
 
 	r.accept(ngobj, tioparent)
+	time.Sleep(time.Microsecond) // FIXME prior to sending data
+	flow.tobandwidth = configNetwork.linkbps
 	return nil
 }
 
 // accept-ng control/stage
 func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
-	assert(r.rzvgroup.getCount() == configStorage.numReplicas)
 	assert(len(tioparent.children) == ngobj.getCount())
 
-	flow := tioparent.flow
 	targets := ngobj.getmembers()
 	for _, srv := range targets {
 		tio := tioparent.children[srv]
@@ -157,9 +170,6 @@ func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
 		}
 	}
 	assert(len(tioparent.children) == r.rzvgroup.getCount())
-
-	flow.tobandwidth = configNetwork.linkbps
-	time.Sleep(time.Microsecond) // FIXME prior to sending data
 }
 
 //
@@ -286,7 +296,15 @@ func (r *serverSeven) Run() {
 			_, bid := r.bids.findBid(bidFindChunk, tioevent.cid)
 			assert(bid != nil)
 			assert(!Now.Before(bid.win.left), bid.String())
-			assert(!Now.After(bid.win.right), bid.String())
+			if Now.After(bid.win.right) {
+				diff := Now.Sub(bid.win.right)
+				if diff > config.timeIncStep && diff > time.Nanosecond*10 {
+					s := fmt.Sprintf("receiving data past bid deadline,%v,%s", diff, bid.String())
+					log(LogBoth, s)
+					assert(false, s)
+				}
+			}
+
 			log(LogV, "SRV::rxcallback: chunk data", tioevent.String(), bid.String())
 			r.receiveReplicaData(tioevent)
 		default:
@@ -322,7 +340,7 @@ func (r *serverSeven) M7requestng(ev EventInterface) error {
 	assert(ngobj.hasmember(r))
 
 	// respond to the put-request with a bid
-	bid := r.bids.createBid(tio, 0)
+	bid := r.bids.createBid(tio, r.disk.lastIOdone)
 	bidev := newBidEvent(r, gwy, ngobj, tioevent.cid, bid, tio)
 	log("srv-bid", bidev.String())
 
@@ -343,7 +361,15 @@ func (r *serverSeven) M7acceptng(ev EventInterface) error {
 	if rzvgroup.hasmember(r) {
 		bid := r.bids.reply2Bid(tio, bidStateAccepted)
 		assert(bid != nil, tioevent.String())
-		log("new-srv-flow-for", bid.String())
+		assert(bid.tio == tio)
+		gwyflow := tio.flow
+		computedbid := gwyflow.extension.(*PutBid)
+		assert(!bid.win.left.After(computedbid.win.left))
+		assert(!bid.win.right.Before(computedbid.win.right))
+
+		bid.win.right = computedbid.win.right
+		log("bid-trim", bid.String())
+
 		//new server's flow
 		flow := NewFlow(gwy, tioevent.cid, r, tio)
 		flow.totalbytes = tioevent.sizeb
@@ -351,7 +377,7 @@ func (r *serverSeven) M7acceptng(ev EventInterface) error {
 	} else {
 		bid := r.bids.reply2Bid(tio, bidStateCanceled)
 		assert(bid != nil, tioevent.String())
-		log(bid.String())
+		assert(bid.tio == tio)
 	}
 
 	return nil

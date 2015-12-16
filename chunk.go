@@ -126,7 +126,7 @@ func (bid *PutBid) String() string {
 	if bid.tio.target != nil {
 		tgt = bid.tio.target.String()
 	}
-	return fmt.Sprintf("[Bid %s(chunk#%d):srv=%v,(%11.10v,%11.10v),gwy=%v]", s, bid.tio.chunksid, tgt, left, right, bid.tio.source.String())
+	return fmt.Sprintf("[%s(chunk#%d):srv=%v,(%11.10v,%11.10v),gwy=%v]", s, bid.tio.chunksid, tgt, left, right, bid.tio.source.String())
 }
 
 //
@@ -216,12 +216,20 @@ func NewServerBidQueue(ri RunnerInterface, size int) *ServerBidQueue {
 	return &ServerBidQueue{*q, 0}
 }
 
-func (q *ServerBidQueue) createBid(tio *Tio, gapinbytes int) *PutBid {
+// FIXME: very approximate "numChunks" heuristics
+//
+func (q *ServerBidQueue) createBid(tio *Tio, diskIOlast time.Time) *PutBid {
 	q.expire()
+
+	var numChunks time.Duration = 0
+	if diskIOlast.After(Now) {
+		diff := diskIOlast.Sub(Now)
+		numChunks = diff / configStorage.durationDataChunk
+	}
 
 	newleft := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip)
 	l := len(q.pending)
-	if q.canceled > 0 {
+	if q.canceled > 0 && numChunks < 2 {
 		assert(l > 0)
 		for k := 0; k < l; k++ {
 			if q.pending[k].state != bidStateCanceled {
@@ -243,10 +251,13 @@ func (q *ServerBidQueue) createBid(tio *Tio, gapinbytes int) *PutBid {
 	if l > 0 {
 		lastbidright := q.pending[l-1].win.right
 		assert(lastbidright.After(Now))
-		if gapinbytes == 0 {
-			gapinbytes = configReplicast.bidGapBytes
+
+		// adjust with respect to disk queue
+		gap := configReplicast.bidGapBytes
+		if numChunks > 1 {
+			gap = configStorage.sizeDataChunk * 1024
 		}
-		atnet := sizeToDuration(gapinbytes+configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b")
+		atnet := sizeToDuration(gap+configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b")
 		atnet += config.timeClusterTrip
 		newleft = lastbidright.Add(atnet)
 	}
@@ -270,8 +281,8 @@ func (q *ServerBidQueue) reply2Bid(replytio *Tio, state bidStateEnum) *PutBid {
 	assert(bid.state == bidStateTentative)
 	assert(state == bidStateCanceled || state == bidStateAccepted)
 	bid.state = state
+	log(bid.String())
 	if bid.state == bidStateCanceled {
-		log(bid.String())
 		q.canceled++
 	}
 	return bid
@@ -291,8 +302,9 @@ func (q *ServerBidQueue) expire() {
 		if bid.state == bidStateCanceled && earliestGwyNotify.After(bid.win.left) {
 			q.deleteBid(0)
 		} else if bid.state == bidStateTentative && earliestEndReceive.After(bid.win.right) {
-			log(LogBoth, "timeout waiting for accept/cancel", bid.String())
-			assert(false, "timeout waiting for accept/cancel: "+bid.String())
+			s := fmt.Sprintf("timeout waiting for accept/cancel,%s", bid.String())
+			log(s)
+			assert(false, s)
 			q.deleteBid(0)
 		} else if Now.After(bid.win.right) {
 			q.deleteBid(0)
@@ -328,8 +340,20 @@ func (q *GatewayBidQueue) receiveBid(tio *Tio, bid *PutBid) int {
 	return len(q.pending)
 }
 
+func (q *GatewayBidQueue) StringBids() string {
+	l := len(q.pending)
+	s := ""
+	for k := 0; k < l; k++ {
+		bid := q.pending[k]
+		left := bid.win.left.Sub(time.Time{})
+		right := bid.win.right.Sub(time.Time{})
+		s += fmt.Sprintf("(%11.10v,%11.10v)", left, right)
+	}
+	return s
+}
+
 // select the best configStorage.numReplicas bids
-func (q *GatewayBidQueue) filterBestBids() *PutBid {
+func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 	l := len(q.pending)
 	assert(l == configReplicast.sizeNgtGroup)
 	found := false
@@ -355,11 +379,7 @@ func (q *GatewayBidQueue) filterBestBids() *PutBid {
 		break
 	}
 	if !found {
-		log(LogBoth, "CRITICAL: negotiation failed - no (or not enough) usable bids", q.r.String())
-		for k = 0; k < l; k++ {
-			bid := q.pending[k]
-			log(bid.String())
-		}
+		log("ERROR: insufficient bid overlap", q.r.String(), chunk.String(), q.StringBids())
 		return nil
 	}
 	// delete the rest bids from the local queue
@@ -370,11 +390,8 @@ func (q *GatewayBidQueue) filterBestBids() *PutBid {
 	}
 	l = len(q.pending)
 	assert(l == configStorage.numReplicas)
-	log(LogV, "gwy-best-bids")
-	for k = 0; k < l; k++ {
-		bid := q.pending[k]
-		log(LogV, bid.String())
-	}
+	log(LogV, "gwy-best-bids", q.r.String(), chunk.String(), q.StringBids())
+
 	tioparent := q.pending[0].tio.parent
 	assert(tioparent.cid == q.pending[0].tio.cid)
 	computedbid := &PutBid{

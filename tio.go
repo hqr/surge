@@ -178,6 +178,18 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 	return tio.err
 }
 
+func (tio *Tio) abort() {
+	log("abort", tio.String())
+	if tio.parent == nil {
+		tio.children = nil
+		tio.source.RemoveTio(tio)
+	} else {
+		if tio.parent.children != nil {
+			delete(tio.parent.children, tio.target)
+		}
+	}
+}
+
 func (tio *Tio) String() string {
 	tioidstr := fmt.Sprintf("%d", tio.sid)
 	if tio.repnum != 0 {
