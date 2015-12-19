@@ -18,7 +18,6 @@ type Config struct {
 	mprefix                              string
 	timeIncStep                          time.Duration
 	timeClusterTrip                      time.Duration
-	timeTripMax                          time.Duration // TODO: randomize trip times
 	timeStatsIval                        time.Duration
 	timeTrackIval                        time.Duration
 	timeToRun                            time.Duration
@@ -39,7 +38,6 @@ var config = Config{
 
 	timeIncStep:     time.Nanosecond, // the Tick
 	timeClusterTrip: time.Microsecond,
-	timeTripMax:     time.Microsecond * 2, // TODO: must be F(busy%, timeClusterTrip)
 
 	timeStatsIval: time.Millisecond / 100,
 	timeTrackIval: time.Millisecond / 10,
@@ -62,7 +60,7 @@ type ConfigStorage struct {
 	sizeDataChunk, sizeMetaChunk int
 	diskMBps                     int
 	chunksInFlight               int // TODO: UCH-* models to start next chunk without waiting for ACK..
-	// computed and/or assigned
+	// derived from other config, for convenience
 	dskdurationDataChunk time.Duration
 }
 
@@ -82,7 +80,7 @@ type ConfigNetwork struct {
 	sizeFrame      int
 	sizeControlPDU int
 	overheadpct    int
-	// computed and/or assigned
+	// derived from other config, for convenience
 	linkbpsorig          int64
 	maxratebucketval     int64
 	durationControlPDU   time.Duration
@@ -128,6 +126,8 @@ type ConfigReplicast struct {
 	bidGapBytes      int
 	solicitedLinkPct int
 	maxDiskQueue     int
+	// derived from other config, for convenience
+	durationBidGap time.Duration
 }
 
 var configReplicast = ConfigReplicast{
@@ -223,4 +223,5 @@ func init() {
 	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbps)
 
 	configStorage.dskdurationDataChunk = sizeToDuration(configStorage.sizeDataChunk, "KB", int64(configStorage.diskMBps), "MB")
+	configReplicast.durationBidGap = sizeToDuration(configReplicast.bidGapBytes, "B", configNetwork.linkbpsData, "b")
 }

@@ -235,13 +235,13 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskIOlast time.Time) *PutBid {
 		assert(l > 0)
 		for k := l - 1; k >= 0; k-- {
 			bid := q.pending[k]
+			if bid.state == bidStateAccepted {
+				break
+			}
 			if bid.state != bidStateCanceled {
 				continue
 			}
 			if earliestnotify.After(bid.win.left) {
-				break
-			}
-			if k < l-1 && q.pending[l-1].state == bidStateAccepted {
 				break
 			}
 			q.canceled--
@@ -258,10 +258,7 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskIOlast time.Time) *PutBid {
 		assert(lastbidright.After(Now))
 
 		// adjust with respect to disk queue
-		gap := configReplicast.bidGapBytes
-		atnet := sizeToDuration(gap, "B", configNetwork.linkbpsData, "b")
-		atnet += config.timeClusterTrip * 2
-		newleft = lastbidright.Add(atnet)
+		newleft = lastbidright.Add(configReplicast.durationBidGap + config.timeClusterTrip*2)
 		if newleft.Before(earliestnotify) {
 			newleft = earliestnotify
 		}
@@ -312,7 +309,8 @@ func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 		prevbid := q.pending[k-1]
 		if prevbid.state == bidStateCanceled {
 			d := computedbid.win.left.Sub(prevbid.win.right)
-			prevbid.win.right = computedbid.win.left
+			assert(d > 0)
+			prevbid.win.right = computedbid.win.left.Add(-config.timeIncStep)
 			log("prev-bid-grow-by", prevbid.String(), d)
 		}
 	}
@@ -321,7 +319,8 @@ func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 		nextbid := q.pending[k+1]
 		if nextbid.state == bidStateCanceled {
 			d := nextbid.win.left.Sub(computedbid.win.right)
-			nextbid.win.left = computedbid.win.right
+			assert(d > 0)
+			nextbid.win.left = computedbid.win.right.Add(-config.timeIncStep)
 			log("next-bid-grow-by", nextbid.String(), d)
 		}
 	}
@@ -412,8 +411,8 @@ func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 			begin = Now
 		}
 		end = q.pending[k].win.right
-		// assert(!begin.Before(q.pending[k].win.left))
-		// assert(!end.After(q.pending[k+configStorage.numReplicas-1].win.right))
+		assert(!begin.Before(q.pending[k].win.left))
+		assert(!end.After(q.pending[k+configStorage.numReplicas-1].win.right))
 		if begin.After(end) {
 			continue
 		}
