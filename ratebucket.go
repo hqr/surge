@@ -7,6 +7,7 @@ package surge
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -109,6 +110,55 @@ func (rb *RateBucket) below(units int64) bool {
 
 func (rb *RateBucket) String() string {
 	return fmt.Sprintf("%+v", *rb)
+}
+
+//=====================================================================
+// RateBucketProtected
+//=====================================================================
+type RateBucketProtected struct {
+	RateBucket
+	rw *sync.RWMutex
+}
+
+func NewRateBucketProtected(m int64, r int64, v int64) *RateBucketProtected {
+	rb := NewRateBucket(m, r, v)
+	return &RateBucketProtected{*rb, &sync.RWMutex{}}
+}
+
+func (rb *RateBucketProtected) use(units int64) bool {
+	rb.rw.Lock()
+	defer rb.rw.Unlock()
+	return rb.RateBucket.use(units)
+}
+
+func (rb *RateBucketProtected) setrate(newrate int64) {
+	rb.rw.Lock()
+	defer rb.rw.Unlock()
+	rb.RateBucket.setrate(newrate)
+}
+
+func (rb *RateBucketProtected) getrate() int64 {
+	rb.rw.RLock()
+	defer rb.rw.RUnlock()
+	return rb.RateBucket.getrate()
+}
+
+func (rb *RateBucketProtected) above(units int64) bool {
+	rb.rw.RLock()
+	defer rb.rw.RUnlock()
+	return rb.RateBucket.above(units)
+}
+
+func (rb *RateBucketProtected) below(units int64) bool {
+	rb.rw.RLock()
+	defer rb.rw.RUnlock()
+	return rb.RateBucket.below(units)
+}
+
+func (rb *RateBucketProtected) String() string {
+	rb.rw.RLock()
+	defer rb.rw.RUnlock()
+	return "rbp:" + rb.RateBucket.String()
 }
 
 //=====================================================================

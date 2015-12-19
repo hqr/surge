@@ -42,6 +42,7 @@ type RunnerInterface interface {
 	GetState() RunnerStateEnum
 	GetID() int
 	GetStats(reset bool) NodeStats
+	GetRateBucket() RateBucketInterface
 
 	AddTio(tio *Tio)
 	RemoveTio(tio *Tio)
@@ -127,6 +128,10 @@ func (r *RunnerBase) GetStats(reset bool) NodeStats {
 		s["rxbytes"] = atomic.LoadInt64(&r.rxbytestats)
 	}
 	return s
+}
+
+func (r *RunnerBase) GetRateBucket() RateBucketInterface {
+	return nil
 }
 
 func (r *RunnerBase) String() string { return fmt.Sprintf("[%s#%02d]", r.strtype, r.id) }

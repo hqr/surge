@@ -208,7 +208,7 @@ func (r *GatewayUch) sendata() {
 		srv := tio.target
 		assert(flow.to == srv)
 		if flow.tobandwidth == 0 || flow.offset >= r.chunk.sizeb {
-			return
+			continue
 		}
 		frsize := configNetwork.sizeFrame
 		if flow.offset+frsize > r.chunk.sizeb {
@@ -217,16 +217,26 @@ func (r *GatewayUch) sendata() {
 		newbits := int64(frsize * 8)
 		// check with the gateway's egress link implemented as ratebucket
 		if r.rb.below(newbits) {
-			return
+			continue
 		}
 		// must ensure previous send is fully done
 		if flow.timeTxDone.After(Now) {
-			return
+			continue
 		}
 		// check with the flow's own ratebucket
 		if flow.rb.below(newbits) {
-			return
+			continue
 		}
+
+		// check with the receiver's ratebucket
+		rb := srv.GetRateBucket()
+		if rb != nil {
+			rbprotected := rb.(*RateBucketProtected)
+			if !rbprotected.use(newbits) {
+				continue
+			}
+		}
+
 		flow.offset += frsize
 		ev := newReplicaDataEvent(r.realobject(), srv, r.replica, flow, frsize, flow.tio)
 
@@ -312,6 +322,7 @@ type ServerUch struct {
 	putpipeline    *Pipeline       // tio pipeline
 	busyduration   int64           // time.Duration receive-link busy (alternative)
 	timeResetStats time.Time
+	rb             RateBucketInterface
 }
 
 // NewServerUch constructs ServerUch. The latter embeds RunnerBase and must in turn
@@ -330,6 +341,10 @@ func NewServerUch(i int, p *Pipeline) *ServerUch {
 
 func (r *ServerUch) realobject() RunnerInterface {
 	return r.rptr
+}
+
+func (r *ServerUch) GetRateBucket() RateBucketInterface {
+	return r.rb
 }
 
 // receiveReplicaData is executed in the UCH server's receive data path for

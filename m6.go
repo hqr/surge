@@ -404,6 +404,13 @@ func (m *modelSix) NewGateway(i int) RunnerInterface {
 
 func (m *modelSix) NewServer(i int) RunnerInterface {
 	srv := NewServerUch(i, m6.putpipeline)
+
+	// receive side ratebucket use()-d directly by remote senders
+	srv.rb = NewRateBucketProtected(
+		configNetwork.maxratebucketval, // maxval
+		configNetwork.linkbps,          // rate
+		configNetwork.maxratebucketval) // value
+
 	rsrv := &serverSix{*srv}
 	rsrv.ServerUch.rptr = rsrv
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)

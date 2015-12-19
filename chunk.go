@@ -412,7 +412,7 @@ func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 		}
 		end = q.pending[k].win.right
 		assert(!begin.Before(q.pending[k].win.left))
-		assert(!end.After(q.pending[k+configStorage.numReplicas-1].win.right))
+		// assert(!end.After(q.pending[k+configStorage.numReplicas-1].win.right))
 		if begin.After(end) {
 			continue
 		}
