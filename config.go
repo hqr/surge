@@ -63,7 +63,7 @@ type ConfigStorage struct {
 	diskMBps                     int
 	chunksInFlight               int // TODO: UCH-* models to start next chunk without waiting for ACK..
 	// computed and/or assigned
-	durationDataChunk time.Duration
+	dskdurationDataChunk time.Duration
 }
 
 var configStorage = ConfigStorage{
@@ -83,10 +83,12 @@ type ConfigNetwork struct {
 	sizeControlPDU int
 	overheadpct    int
 	// computed and/or assigned
-	linkbpsorig        int64
-	maxratebucketval   int64
-	durationFrame      time.Duration
-	durationControlPDU time.Duration
+	linkbpsorig          int64
+	maxratebucketval     int64
+	durationControlPDU   time.Duration
+	linkbpsControl       int64
+	linkbpsData          int64
+	netdurationDataChunk time.Duration
 }
 
 var configNetwork = ConfigNetwork{
@@ -121,15 +123,19 @@ var configAIMD = ConfigAIMD{
 // Replicast
 //
 type ConfigReplicast struct {
-	sizeNgtGroup  int
-	bidMultiplier time.Duration
-	bidGapBytes   int
+	sizeNgtGroup     int
+	bidMultiplier    time.Duration
+	bidGapBytes      int
+	solicitedLinkPct int
+	maxDiskQueue     int
 }
 
 var configReplicast = ConfigReplicast{
-	sizeNgtGroup:  9,
-	bidMultiplier: 2,
-	bidGapBytes:   configNetwork.sizeFrame * 2,
+	sizeNgtGroup:     9,
+	bidMultiplier:    2,
+	bidGapBytes:      configNetwork.sizeFrame * 2,
+	solicitedLinkPct: 90,
+	maxDiskQueue:     4,
 }
 
 //===============================================================
@@ -210,10 +216,11 @@ func init() {
 	configNetwork.maxratebucketval = int64(configNetwork.sizeFrame*8) + int64(configNetwork.sizeControlPDU*8)
 	configNetwork.linkbpsorig = configNetwork.linkbps
 	configNetwork.linkbps = configNetwork.linkbps - configNetwork.linkbps*int64(configNetwork.overheadpct)/int64(100)
-	// based on the full linkbps bw
+	// the 4 confvars defaults below are based on the full linkbps bw
 	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
-	configNetwork.durationFrame = time.Duration(configNetwork.sizeFrame*8) * time.Second / time.Duration(configNetwork.linkbps)
-	configStorage.durationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbps)
+	configNetwork.linkbpsControl = configNetwork.linkbps
+	configNetwork.linkbpsData = configNetwork.linkbps
+	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbps)
 
-	assert(configNetwork.durationControlPDU == sizeToDuration(configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b"))
+	configStorage.dskdurationDataChunk = sizeToDuration(configStorage.sizeDataChunk, "KB", int64(configStorage.diskMBps), "MB")
 }

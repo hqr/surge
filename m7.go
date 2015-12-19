@@ -40,7 +40,7 @@ func init() {
 
 	d := NewStatsDescriptors("7")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
-	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer)
+	d.Register("rxidle", StatsKindPercentage, StatsScopeServer)
 	d.Register("chunk", StatsKindCount, StatsScopeGateway)
 	d.Register("replica", StatsKindCount, StatsScopeGateway)
 	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
@@ -147,7 +147,7 @@ func (r *gatewaySeven) M7bid(ev EventInterface) error {
 
 	r.accept(ngobj, tioparent)
 	time.Sleep(time.Microsecond) // FIXME prior to sending data
-	flow.tobandwidth = configNetwork.linkbps
+	flow.tobandwidth = configNetwork.linkbpsData
 	return nil
 }
 
@@ -235,7 +235,7 @@ func (r *gatewaySeven) startNewChunk() {
 	}
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
 	flow.rb.use(int64(configNetwork.sizeControlPDU * 8))
-	flow.timeTxDone = Now.Add(configNetwork.durationControlPDU) // FIXME: assuming 10GE
+	flow.timeTxDone = Now.Add(configNetwork.durationControlPDU)
 
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 }
@@ -250,7 +250,7 @@ func (r *gatewaySeven) sendata() {
 		if flow.offset >= r.chunk.sizeb {
 			continue
 		}
-		assert(flow.tobandwidth == configNetwork.linkbps)
+		assert(flow.tobandwidth == configNetwork.linkbpsData)
 
 		computedbid := flow.extension.(*PutBid)
 		if computedbid == nil {
@@ -298,10 +298,9 @@ func (r *serverSeven) Run() {
 			assert(!Now.Before(bid.win.left), bid.String())
 			if Now.After(bid.win.right) {
 				diff := Now.Sub(bid.win.right)
-				if diff > config.timeIncStep && diff > time.Nanosecond*10 {
+				if diff > config.timeClusterTrip {
 					s := fmt.Sprintf("receiving data past bid deadline,%v,%s", diff, bid.String())
 					log(LogBoth, s)
-					assert(false, s)
 				}
 			}
 
@@ -358,27 +357,19 @@ func (r *serverSeven) M7acceptng(ev EventInterface) error {
 	tio := tioevent.GetTio()
 
 	rzvgroup := tioevent.rzvgroup
-	if rzvgroup.hasmember(r) {
-		bid := r.bids.reply2Bid(tio, bidStateAccepted)
-		assert(bid != nil, tioevent.String())
-		assert(bid.tio == tio)
-		gwyflow := tio.flow
-		computedbid := gwyflow.extension.(*PutBid)
-		assert(!bid.win.left.After(computedbid.win.left))
-		assert(!bid.win.right.Before(computedbid.win.right))
-
-		bid.win.right = computedbid.win.right
-		log("bid-trim", bid.String())
-
-		//new server's flow
-		flow := NewFlow(gwy, tioevent.cid, r, tio)
-		flow.totalbytes = tioevent.sizeb
-		r.flowsfrom.insertFlow(flow)
-	} else {
-		bid := r.bids.reply2Bid(tio, bidStateCanceled)
-		assert(bid != nil, tioevent.String())
-		assert(bid.tio == tio)
+	if !rzvgroup.hasmember(r) {
+		r.bids.cancelBid(tio)
+		return nil
 	}
+	gwyflow := tio.flow
+	computedbid := gwyflow.extension.(*PutBid)
+	r.bids.acceptBid(tio, computedbid)
+
+	//new server's flow
+	flow := NewFlow(gwy, tioevent.cid, r, tio)
+	flow.totalbytes = tioevent.sizeb
+	flow.tobandwidth = configNetwork.linkbpsData
+	r.flowsfrom.insertFlow(flow)
 
 	return nil
 }
@@ -390,10 +381,7 @@ func (r *serverSeven) M7acceptng(ev EventInterface) error {
 //==================================================================
 func (m *modelSeven) NewGateway(i int) RunnerInterface {
 	gwy := NewGatewayMcast(i, m7.putpipeline)
-	gwy.rb = NewRateBucket(
-		configNetwork.maxratebucketval, // maxval
-		configNetwork.linkbps,          // rate
-		configNetwork.maxratebucketval) // value
+	gwy.rb = &DummyRateBucket{}
 
 	rgwy := &gatewaySeven{GatewayMcast: *gwy}
 	rgwy.rptr = rgwy
@@ -423,4 +411,14 @@ func (m *modelSeven) Configure() {
 		}
 		log(LogBoth, "NOTE: adjusting the number of servers down, to divide by size of the negotiating group:", config.numServers)
 	}
+
+	// only for this model:
+	// recompute some of the network config defaults
+	// based on the replicast solicited/unsolicited percentage
+	//
+	configNetwork.linkbpsData = configNetwork.linkbps * int64(configReplicast.solicitedLinkPct) / int64(100)
+	configNetwork.linkbpsControl = configNetwork.linkbps - configNetwork.linkbpsData
+
+	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbpsControl)
+	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbpsData)
 }

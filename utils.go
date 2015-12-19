@@ -61,6 +61,15 @@ func configLog() {
 	log(fmt.Sprintf("{numGateways:%d numServers:%d}", config.numGateways, config.numServers))
 	log(fmt.Sprintf("{timeIncStep:%v timeClusterTrip:%v timeStatsIval:%v timeTrackIval:%v timeToRun:%v}",
 		config.timeIncStep, config.timeClusterTrip, config.timeStatsIval, config.timeTrackIval, config.timeToRun))
+	gigb := float64(1000000000)
+	log(fmt.Sprintf("{linkbps:%.1fGbps linkbpsControl:%.1fGbps linkbpsData:%.1fGbps}",
+		float64(configNetwork.linkbps)/gigb,
+		float64(configNetwork.linkbpsControl)/gigb,
+		float64(configNetwork.linkbpsData)/gigb))
+	log(fmt.Sprintf("{durationControlPDU:%v netdurationDataChunk:%v}", configNetwork.durationControlPDU, configNetwork.netdurationDataChunk))
+	log(fmt.Sprintf("{dskdurationDataChunk:%v}", configStorage.dskdurationDataChunk))
+
+	log("detailed raw config:")
 	log(fmt.Sprintf("%+v", configStorage))
 	log(fmt.Sprintf("%+v", configNetwork))
 	timestampLog(true)

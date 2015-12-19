@@ -159,6 +159,8 @@ func RunAllModels() {
 
 	// shallow copy global config, restore prior to each model-run
 	configCopy := config
+	configNetworkCopy := configNetwork
+	configStorageCopy := configStorage
 
 	for _, sname := range allNamesSorted {
 		if !strings.HasPrefix(sname, config.mprefix) {
@@ -189,6 +191,8 @@ func RunAllModels() {
 
 		eventsPastDeadline = 0
 		config = configCopy
+		configNetwork = configNetworkCopy
+		configStorage = configStorageCopy
 		model.Configure() // the model's custom config
 
 		//

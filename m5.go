@@ -74,7 +74,7 @@ func init() {
 
 	d := NewStatsDescriptors("5")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
-	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer)
+	d.Register("rxidle", StatsKindPercentage, StatsScopeServer)
 	d.Register("tio", StatsKindCount, StatsScopeGateway)
 	d.Register("chunk", StatsKindCount, StatsScopeGateway)
 	d.Register("replica", StatsKindCount, StatsScopeGateway)
@@ -271,9 +271,7 @@ func (r *serverFive) Run() {
 		numflows := r.flowsfrom.count()
 		for r.state == RstateRunning {
 			r.receiveEnqueue()
-			bytesreceived := r.processPendingEvents(rxcallback)
-			d := sizeToDuration(bytesreceived, "B", configNetwork.linkbps, "b")
-			newRxDone := r.timeRxDone.Add(d)
+			r.processPendingEvents(rxcallback)
 
 			// two alternative CCPi-implementing methods below,
 			// one simply dividing the server's bandwidth equally between
@@ -286,7 +284,6 @@ func (r *serverFive) Run() {
 				// r.rerateInverseProportional()
 			}
 			numflows = nflows
-			r.timeRxDone = newRxDone
 		}
 
 		r.closeTxChannels()

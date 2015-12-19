@@ -306,11 +306,12 @@ func (r *GatewayMcast) selectNgtGroup() int {
 //===============================================================
 type ServerUch struct {
 	RunnerBase
-	flowsfrom   *FlowDir
-	disk        *Disk
-	rptr        RunnerInterface // real object
-	putpipeline *Pipeline       // tio pipeline
-	timeRxDone  time.Time       // time the last byte of the current packet is received
+	flowsfrom      *FlowDir
+	disk           *Disk
+	rptr           RunnerInterface // real object
+	putpipeline    *Pipeline       // tio pipeline
+	busyduration   int64           // time.Duration receive-link busy (alternative)
+	timeResetStats time.Time
 }
 
 // NewServerUch constructs ServerUch. The latter embeds RunnerBase and must in turn
@@ -322,7 +323,7 @@ func NewServerUch(i int, p *Pipeline) *ServerUch {
 	srv.putpipeline = p
 	srv.init(config.numGateways)
 	srv.disk = NewDisk(srv, configStorage.diskMBps)
-	srv.timeRxDone = time.Time{}
+	srv.timeResetStats = Now
 
 	return srv
 }
@@ -350,6 +351,8 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) {
 	log(LogV, "srv-recv-data", flow.String(), ev.String())
 	assert(flow.cid == ev.cid)
 	assert(group != nil || flow.repnum == ev.num)
+
+	r.addBusyDuration(ev.GetSize(), flow.tobandwidth)
 
 	x := ev.offset - flow.offset
 	assert(x <= configNetwork.sizeFrame, fmt.Sprintf("FATAL: out of order:%d:%s", ev.offset, flow.String()))
@@ -393,7 +396,32 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) {
 func (r *ServerUch) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
 	s["disk-queue-depth"] = r.disk.queue.NumPending()
+
+	var d int64
+	if reset {
+		d = atomic.SwapInt64(&r.busyduration, 0)
+	} else {
+		d = atomic.LoadInt64(&r.busyduration)
+	}
+	elapsed := int64(Now.Sub(r.timeResetStats))
+	if d >= elapsed {
+		s["rxidle"] = 0
+	} else {
+		s["rxidle"] = (elapsed - d) * 100 / elapsed
+	}
+	if reset {
+		r.timeResetStats = Now
+	}
+
 	return s
+}
+
+// link busy time based on the link's full bandwidth
+// e.g., when a 10GE link is constantly used to send/receive at 5Gpbs,
+// the link's busy percentage will compute as 50%
+func (r *ServerUch) addBusyDuration(sizeb int, bandwidth int64) {
+	d := time.Duration(sizeb*8) * time.Second / time.Duration(configNetwork.linkbps)
+	atomic.AddInt64(&r.busyduration, int64(d))
 }
 
 //===============================================================

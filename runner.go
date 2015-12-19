@@ -129,7 +129,7 @@ func (r *RunnerBase) GetStats(reset bool) NodeStats {
 	return s
 }
 
-func (r *RunnerBase) String() string { return fmt.Sprintf("[%s#%v]", r.strtype, r.id) }
+func (r *RunnerBase) String() string { return fmt.Sprintf("[%s#%02d]", r.strtype, r.id) }
 
 func (r *RunnerBase) Send(ev EventInterface, how SendMethodEnum) bool {
 	peer := ev.GetTarget()

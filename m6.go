@@ -62,7 +62,7 @@ func init() {
 
 	d := NewStatsDescriptors("6")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
-	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer)
+	d.Register("rxidle", StatsKindPercentage, StatsScopeServer)
 	d.Register("tio", StatsKindCount, StatsScopeGateway)
 	d.Register("chunk", StatsKindCount, StatsScopeGateway)
 	d.Register("replica", StatsKindCount, StatsScopeGateway)

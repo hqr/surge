@@ -142,7 +142,7 @@ type RxQueue struct {
 	pending          []EventInterface
 	pendingMutex     *sync.RWMutex
 	eventstats       int64
-	busycnt          int64 // busy
+	busycnt          int64 // busy tick counter
 	idlecnt          int64
 	busyidletick     time.Time
 	realpendingdepth int64

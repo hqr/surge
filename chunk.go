@@ -85,8 +85,8 @@ type PutBid struct {
 }
 
 func NewPutBid(io *Tio, begin time.Time, args ...interface{}) *PutBid {
-	// FIXME: too wide, for two full chunks
-	d := configStorage.durationDataChunk + config.timeClusterTrip
+	// wide enough for two full chunks
+	d := configNetwork.netdurationDataChunk + config.timeClusterTrip
 	d *= configReplicast.bidMultiplier
 	end := begin.Add(d)
 	bid := &PutBid{
@@ -216,83 +216,127 @@ func NewServerBidQueue(ri RunnerInterface, size int) *ServerBidQueue {
 	return &ServerBidQueue{*q, 0}
 }
 
-// FIXME: very approximate "numChunks" heuristics
-//
 func (q *ServerBidQueue) createBid(tio *Tio, diskIOlast time.Time) *PutBid {
 	q.expire()
 
-	var numChunks time.Duration = 0
+	var numDiskQueueChunks int
 	if diskIOlast.After(Now) {
 		diff := diskIOlast.Sub(Now)
-		numChunks = diff / configStorage.durationDataChunk
+		numDiskQueueChunks := int(diff / configStorage.dskdurationDataChunk)
+		if numDiskQueueChunks > configReplicast.maxDiskQueue {
+			log("WARNING: exceded-max-disk-queue", q.r.String(), configReplicast.maxDiskQueue)
+			return NewPutBid(tio, Now.Add(time.Hour))
+		}
 	}
 
-	newleft := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip)
+	earliestnotify := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip*2)
 	l := len(q.pending)
-	if q.canceled > 0 && numChunks < 2 {
+	if q.canceled > 0 {
 		assert(l > 0)
-		for k := 0; k < l; k++ {
-			if q.pending[k].state != bidStateCanceled {
+		for k := l - 1; k >= 0; k-- {
+			bid := q.pending[k]
+			if bid.state != bidStateCanceled {
 				continue
 			}
-			bid := q.pending[k]
-			// FIXME: maybe too strict
-			if newleft.After(bid.win.left) {
-				continue
+			if earliestnotify.After(bid.win.left) {
+				break
+			}
+			if k < l-1 && q.pending[l-1].state == bidStateAccepted {
+				break
 			}
 			q.canceled--
-			log("un-canceling", bid.String(), "from", bid.tio.String(), "to", tio.String())
+			s := fmt.Sprintf("(%d/%d/%d)", k, l-1, numDiskQueueChunks)
+			log("un-canceling", bid.String(), s, "from", bid.tio.String(), "to", tio.String())
 			bid.state = bidStateTentative
 			bid.tio = tio
 			return bid
 		}
 	}
-
+	var newleft time.Time
 	if l > 0 {
 		lastbidright := q.pending[l-1].win.right
 		assert(lastbidright.After(Now))
 
 		// adjust with respect to disk queue
 		gap := configReplicast.bidGapBytes
-		if numChunks > 1 {
-			gap = configStorage.sizeDataChunk * 1024
-		}
-		atnet := sizeToDuration(gap+configNetwork.sizeControlPDU, "B", configNetwork.linkbps, "b")
-		atnet += config.timeClusterTrip
+		atnet := sizeToDuration(gap, "B", configNetwork.linkbpsData, "b")
+		atnet += config.timeClusterTrip * 2
 		newleft = lastbidright.Add(atnet)
+		if newleft.Before(earliestnotify) {
+			newleft = earliestnotify
+		}
+	} else {
+		newleft = earliestnotify
 	}
 
 	bid := NewPutBid(tio, newleft)
 	if l == cap(q.pending) {
-		log(LogV, "growing bidqueue", q.r.String(), cap(q.pending))
+		log(LogVV, "growing bidqueue", q.r.String(), cap(q.pending))
 	}
 	q.pending = append(q.pending, nil)
 	q.pending[l] = bid
 	return bid
 }
 
-func (q *ServerBidQueue) reply2Bid(replytio *Tio, state bidStateEnum) *PutBid {
+func (q *ServerBidQueue) cancelBid(replytio *Tio) {
 	cid := replytio.cid
 	_, bid := q.findBid(bidFindChunk, cid)
-	if bid == nil { // FIXME: LogBoth here and elsewhere
-		log(LogBoth, "failed to find bid - expired?", q.r.String(), replytio.String(), state)
-		return nil
-	}
+	assert(bid != nil)
+	assert(bid.tio == replytio)
+	// log(LogBoth, "failed to find bid - expired?", q.r.String(), replytio.String(), state)
+
 	assert(bid.state == bidStateTentative)
-	assert(state == bidStateCanceled || state == bidStateAccepted)
-	bid.state = state
+	bid.state = bidStateCanceled
 	log(bid.String())
-	if bid.state == bidStateCanceled {
-		q.canceled++
+	q.canceled++
+}
+
+func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
+	cid := replytio.cid
+	k, bid := q.findBid(bidFindChunk, cid)
+	assert(bid != nil)
+	// log(LogBoth, "failed to find bid - expired?", q.r.String(), replytio.String(), state)
+
+	assert(bid.state == bidStateTentative)
+	assert(bid.tio == replytio)
+	assert(!bid.win.left.After(computedbid.win.left))
+	assert(!bid.win.right.Before(computedbid.win.right))
+
+	bid.state = bidStateAccepted
+	log("bid-accept-trim", bid.String())
+
+	//
+	// adjust adjacent canceled bids if any
+	//
+	if k > 0 {
+		prevbid := q.pending[k-1]
+		if prevbid.state == bidStateCanceled {
+			d := computedbid.win.left.Sub(prevbid.win.right)
+			prevbid.win.right = computedbid.win.left
+			log("prev-bid-grow-by", prevbid.String(), d)
+		}
 	}
-	return bid
+	l := len(q.pending)
+	if k < l-1 {
+		nextbid := q.pending[k+1]
+		if nextbid.state == bidStateCanceled {
+			d := nextbid.win.left.Sub(computedbid.win.right)
+			nextbid.win.left = computedbid.win.right
+			log("next-bid-grow-by", nextbid.String(), d)
+		}
+	}
+	//
+	// trim the accepted bid
+	//
+	bid.win.left = computedbid.win.left
+	bid.win.right = computedbid.win.right
 }
 
 func (q *ServerBidQueue) expire() {
 	atnet := configNetwork.durationControlPDU + config.timeClusterTrip + (config.timeClusterTrip >> 1)
 	earliestGwyNotify := Now.Add(atnet)
 
-	earliestEndReceive := Now.Add(configStorage.durationDataChunk)
+	earliestEndReceive := Now.Add(configNetwork.netdurationDataChunk)
 
 	for {
 		if len(q.pending) == 0 {
@@ -368,11 +412,13 @@ func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 			begin = Now
 		}
 		end = q.pending[k].win.right
+		// assert(!begin.Before(q.pending[k].win.left))
+		// assert(!end.After(q.pending[k+configStorage.numReplicas-1].win.right))
 		if begin.After(end) {
 			continue
 		}
 		d := end.Sub(begin)
-		if d < configStorage.durationDataChunk+config.timeClusterTrip {
+		if d < configNetwork.netdurationDataChunk+config.timeClusterTrip {
 			continue
 		}
 		found = true
