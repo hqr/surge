@@ -410,7 +410,7 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) {
 // next iteration..
 func (r *ServerUch) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
-	s["disk-queue-depth"] = r.disk.queue.NumPending()
+	s["disk-queue-depth"] = int64(r.disk.queueDepth(DqdBuffers))
 
 	var d int64
 	if reset {

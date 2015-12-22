@@ -260,7 +260,8 @@ func (r *serverSix) aimdCheckRxQueueFuture() {
 	linkoverage := 0
 	dingall := false
 	frsize := configNetwork.sizeFrame
-	if r.disk.queue.NumPending() > int64(configAIMD.diskoverage) {
+	num := r.disk.queueDepth(DqdChunks)
+	if num >= configStorage.maxDiskQueueChunks {
 		dingall = true
 		log("srv-dingall", r.String())
 	}
@@ -312,7 +313,8 @@ func (r *serverSix) aimdCheckTotalBandwidth() {
 	dingall := false
 	frsize := configNetwork.sizeFrame
 
-	if r.disk.queue.NumPending() > int64(configAIMD.diskoverage) {
+	num := r.disk.queueDepth(DqdChunks)
+	if num >= configStorage.maxDiskQueueChunks {
 		dingall = true
 		log("srv-dingall", r.String())
 	}
@@ -363,10 +365,16 @@ func (r *serverSix) dingOne(gwy RunnerInterface) {
 }
 
 func (r *serverSix) M6putrequest(ev EventInterface) error {
-	log(LogV, r.String(), "::M6putrequest()", ev.String())
-
 	tioevent := ev.(*ReplicaPutRequestEvent)
+	log(LogV, r.String(), "::M6putrequest()", tioevent.String())
+
 	gwy := tioevent.GetSource()
+
+	var diskdelay time.Duration
+	num := r.disk.queueDepth(DqdChunks)
+	if num >= configStorage.maxDiskQueueChunks {
+		diskdelay = configStorage.dskdurationDataChunk*time.Duration(num) - configNetwork.netdurationDataChunk - config.timeClusterTrip
+	}
 	f := r.flowsfrom.get(gwy, false)
 	assert(f == nil)
 
@@ -378,8 +386,12 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 	r.flowsfrom.insertFlow(flow)
 
 	// respond to the put-request
-	putreqackev := newReplicaPutRequestAckEvent(r, gwy, flow, tio)
-	log("srv-new-flow", flow.String(), putreqackev.String())
+	putreqackev := newReplicaPutRequestAckEvent(r, gwy, flow, tio, diskdelay)
+	if diskdelay > 0 {
+		log("srv-new-delayed-flow", flow.String(), putreqackev.String(), diskdelay)
+	} else {
+		log("srv-new-flow", flow.String(), putreqackev.String())
+	}
 
 	tio.next(putreqackev)
 	return nil

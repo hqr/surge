@@ -223,8 +223,8 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskIOlast time.Time) *PutBid {
 	if diskIOlast.After(Now) {
 		diff := diskIOlast.Sub(Now)
 		numDiskQueueChunks := int(diff / configStorage.dskdurationDataChunk)
-		if numDiskQueueChunks > configReplicast.maxDiskQueue {
-			log("WARNING: exceded-max-disk-queue", q.r.String(), configReplicast.maxDiskQueue)
+		if numDiskQueueChunks > configStorage.maxDiskQueueChunks {
+			log("WARNING: exceded-disk-queue", q.r.String(), configStorage.maxDiskQueueChunks)
 			return NewPutBid(tio, Now.Add(time.Hour))
 		}
 	}
@@ -297,7 +297,7 @@ func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 	assert(bid.state == bidStateTentative)
 	assert(bid.tio == replytio)
 	assert(!bid.win.left.After(computedbid.win.left))
-	assert(!bid.win.right.Before(computedbid.win.right))
+	// assert(!bid.win.right.Before(computedbid.win.right))
 
 	bid.state = bidStateAccepted
 	log("bid-accept-trim", bid.String())

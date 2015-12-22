@@ -176,14 +176,13 @@ func (r *gatewayFive) rateset(tioevent *UchRateSetEvent) {
 		return
 	}
 	assert(flow.tio == tio, flow.String()+":"+tio.String())
-	if !flex.rateini || flex.ratects.Before(tioevent.GetCreationTime()) {
-		flex.ratects = tioevent.GetCreationTime()
-		flex.raterts = Now
-		flex.rateini = true
-
+	if !flex.rateini {
+		assert(flow.tobandwidth == 0)
+		flex.tobandwidth = tioevent.tobandwidth
+		log("gwy-rateset-delayed", tioevent.String())
+	} else {
 		flow.tobandwidth = tioevent.tobandwidth
 		flow.rb.setrate(flow.tobandwidth)
-
 		log(LogV, "gwy-rateset", flow.String())
 	}
 }
@@ -193,30 +192,29 @@ func (r *gatewayFive) rateset(tioevent *UchRateSetEvent) {
 //=========================
 func (r *gatewayFive) M5rateinit(ev EventInterface) error {
 	tioevent := ev.(*UchRateInitEvent)
+	log(LogV, r.String(), "::M5rateinit()", tioevent.String())
+
 	tio := tioevent.GetTio()
+	flow := tio.flow
 	assert(tio.source == r)
 	assert(tio.cid == r.chunk.cid)
-
-	log(LogV, r.String(), "::M5rateinit()", tioevent.String())
-	flow := tio.flow
-	flex := flow.extension.(*m5FlowExtension)
 	assert(flow.cid == tioevent.cid)
 	assert(flow.repnum == tioevent.num)
+	assert(flow.tobandwidth == 0)
 
-	if !flex.rateini {
-		flex.ratects = tioevent.GetCreationTime()
-		flex.raterts = Now
-		flex.rateini = true
+	flex := flow.extension.(*m5FlowExtension)
+	assert(!flex.rateini)
+	flex.rateini = true
 
-		flow.tobandwidth = tioevent.tobandwidth
-		flow.rb.setrate(flow.tobandwidth)
-
-		log(LogV, "gwy-rateinit", flow.String(), r.replica.String())
+	flow.tobandwidth = tioevent.tobandwidth
+	if flex.tobandwidth > 0 {
+		flow.tobandwidth = flex.tobandwidth
+		t := tioevent.GetTriggerTime().Sub(time.Time{})
+		log("gwy-rateinit-delayed", t, flow.String(), r.replica.String())
 	} else {
-		log(LogV, "gwy-rate-already-set", flow.String())
+		log(LogV, "gwy-rateinit", flow.String(), r.replica.String())
 	}
-
-	log(LogV, "gwy-rateinit", flow.String(), r.replica.String())
+	flow.rb.setrate(flow.tobandwidth)
 
 	return nil
 }
@@ -235,7 +233,7 @@ func (r *gatewayFive) newflow(t interface{}, args ...interface{}) *Flow {
 
 	tio := r.putpipeline.NewTio(r, r.replica, tgt)
 	flow := NewFlow(r, r.chunk.cid, tgt, repnum, tio)
-	flow.extension = &m5FlowExtension{false, time.Time{}, time.Time{}}
+	flow.extension = &m5FlowExtension{false, 0}
 
 	flow.tobandwidth = 0 // transmit upon further notice
 	flow.totalbytes = r.chunk.sizeb
@@ -295,15 +293,12 @@ func (r *serverFive) Run() {
 //
 func (r *serverFive) rerate(nflows int) {
 	applyCallback := func(gwy RunnerInterface, flow *Flow) {
-		flex := flow.extension.(*m5FlowExtension)
 		bytesinflight := int64(flow.tobandwidth) * int64(config.timeClusterTrip) / int64(time.Second) / 8
 		if flow.totalbytes-flow.offset <= configNetwork.sizeFrame+int(bytesinflight) {
 			return
 		}
 		ratesetev := newUchRateSetEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow, flow.tio)
 		flow.tobandwidth = ratesetev.tobandwidth
-		flex.ratects = Now
-		flex.raterts = Now.Add(config.timeClusterTrip * 2)
 
 		log(LogV, "srv-send-rateset", flow.String())
 		r.Send(ratesetev, SmethodWait)
@@ -326,7 +321,6 @@ func (r *serverFive) rerateInverseProportional() {
 		totalrem += 1.0 / float64(rem)
 	}
 	for gwy, flow := range fdir.flows {
-		flex := flow.extension.(*m5FlowExtension)
 		rem := flow.totalbytes - flow.offset
 		if rem <= configNetwork.sizeFrame {
 			continue
@@ -336,8 +330,6 @@ func (r *serverFive) rerateInverseProportional() {
 		newbw := int64(newbwf)
 		ratesetev := newUchRateSetEvent(r, gwy, newbw, flow, flow.tio)
 		flow.tobandwidth = newbw
-		flex.ratects = Now
-		flex.raterts = Now.Add(config.timeClusterTrip * 2)
 
 		log(LogV, "srv-send-rateset-proportional", flow.String())
 		r.Send(ratesetev, SmethodWait)
@@ -345,25 +337,35 @@ func (r *serverFive) rerateInverseProportional() {
 }
 
 func (r *serverFive) M5putrequest(ev EventInterface) error {
-	log(LogV, r.String(), "::M5putrequest()", ev.String())
-
 	tioevent := ev.(*ReplicaPutRequestEvent)
+	log(LogV, r.String(), "::M5putrequest()", tioevent.String())
+
+	tio := tioevent.GetTio()
 	gwy := tioevent.GetSource()
+	var diskdelay time.Duration
+	num := r.disk.queueDepth(DqdChunks)
+	if num >= configStorage.maxDiskQueueChunks {
+		diskdelay = configStorage.dskdurationDataChunk*time.Duration(num) - configNetwork.netdurationDataChunk - config.timeClusterTrip
+	}
+
 	f := r.flowsfrom.get(gwy, false)
 	assert(f == nil, fmt.Sprintf("flow %s => %s already exists", gwy.String(), r.String()))
 
 	//new server's flow
-	tio := tioevent.GetTio()
 	flow := NewFlow(gwy, tioevent.cid, r, tioevent.num, tio)
-	flow.extension = &m5FlowExtension{true, Now, Now.Add(config.timeClusterTrip * 2)}
+	flow.extension = &m5FlowExtension{true, 0}
 	flow.totalbytes = tioevent.sizeb
 	r.flowsfrom.insertFlow(flow)
 
 	// respond to the put witn RateInit
 	nflows := r.flowsfrom.count()
-	rateinitev := newUchRateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow, tio)
+	rateinitev := newUchRateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow, tio, diskdelay)
 	flow.tobandwidth = rateinitev.tobandwidth
-	log("srv-new-flow", flow.String(), rateinitev.String())
+	if diskdelay > 0 {
+		log("srv-new-delayed-flow", flow.String(), rateinitev.String(), diskdelay)
+	} else {
+		log("srv-new-flow", flow.String(), rateinitev.String())
+	}
 
 	tio.next(rateinitev)
 	return nil
@@ -417,17 +419,12 @@ type UchRateSetEvent struct {
 	num         int   // replica num
 }
 
-type UchRateInitEvent struct {
-	UchRateSetEvent
-}
-
-func (e *UchRateInitEvent) String() string {
-	printid := uqrand(e.cid)
-	return fmt.Sprintf("[RateInitEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
-}
-
-func newUchRateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, flow *Flow, tio *Tio) *UchRateSetEvent {
-	at := configNetwork.durationControlPDU + config.timeClusterTrip
+func newUchRateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, flow *Flow, tio *Tio, args ...interface{}) *UchRateSetEvent {
+	var diskdelay time.Duration
+	if len(args) > 0 {
+		diskdelay = args[0].(time.Duration)
+	}
+	at := configNetwork.durationControlPDU + config.timeClusterTrip + diskdelay
 	timedev := newTimedAnyEvent(srv, at, gwy, tio, configNetwork.sizeControlPDU)
 
 	return &UchRateSetEvent{zControlEvent{zEvent{*timedev}, flow.cid}, rate, flow.repnum}
@@ -435,12 +432,23 @@ func newUchRateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, fl
 
 func (e *UchRateSetEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[RateSetEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
+	bwstr := fmt.Sprintf("%.2fGbps", float64(e.tobandwidth)/1000.0/1000.0/1000.0)
+	return fmt.Sprintf("[RateSetEvent src=%v,tgt=%v,chunk#%d(%d),%s]", e.source.String(), e.target.String(), printid, e.num, bwstr)
 }
 
-func newUchRateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, flow *Flow, tio *Tio) *UchRateInitEvent {
-	ev := newUchRateSetEvent(srv, gwy, rate, flow, tio)
+type UchRateInitEvent struct {
+	UchRateSetEvent
+}
+
+func newUchRateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, flow *Flow, tio *Tio, diskdelay time.Duration) *UchRateInitEvent {
+	ev := newUchRateSetEvent(srv, gwy, rate, flow, tio, diskdelay)
 	return &UchRateInitEvent{*ev}
+}
+
+func (e *UchRateInitEvent) String() string {
+	printid := uqrand(e.cid)
+	dtriggered := e.thtime.Sub(time.Time{})
+	return fmt.Sprintf("[RateInitEvent src=%v,tgt=%v,chunk#%d(%d),at=%11.10v]", e.source.String(), e.target.String(), printid, e.num, dtriggered)
 }
 
 //==================================================================
@@ -449,7 +457,6 @@ func newUchRateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, f
 //
 //==================================================================
 type m5FlowExtension struct {
-	rateini bool      // rateset inited
-	ratects time.Time // rateset creation time
-	raterts time.Time // rateset effective time
+	rateini     bool // rateset inited
+	tobandwidth int64
 }

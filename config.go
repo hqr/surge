@@ -59,17 +59,20 @@ type ConfigStorage struct {
 	numReplicas                  int
 	sizeDataChunk, sizeMetaChunk int
 	diskMBps                     int
+	maxDiskQueueChunks           int
 	chunksInFlight               int // TODO: UCH-* models to start next chunk without waiting for ACK..
 	// derived from other config, for convenience
 	dskdurationDataChunk time.Duration
+	dskdurationFrame     time.Duration
 }
 
 var configStorage = ConfigStorage{
-	numReplicas:    3,
-	sizeDataChunk:  128, // KB
-	sizeMetaChunk:  1,   // KB
-	diskMBps:       400, // MB/sec
-	chunksInFlight: 1,   // TODO: limits total in-flight for a given gateway
+	numReplicas:        3,
+	sizeDataChunk:      128, // KB
+	sizeMetaChunk:      1,   // KB
+	diskMBps:           400, // MB/sec
+	maxDiskQueueChunks: 2,
+	chunksInFlight:     1, // TODO: limits total in-flight for a given gateway
 }
 
 //
@@ -106,7 +109,6 @@ type ConfigAIMD struct {
 	sizeAddBits     int64 // (client) number of bits to transmit without dings prior to += bwAdd
 	bwDiv           int   // (client) multiplicative decrease
 	linkoverage     int   // (target) ding when the network queue gets too deep
-	diskoverage     int   // (target) ding when the disk queue gets too deep
 }
 
 var configAIMD = ConfigAIMD{
@@ -114,7 +116,6 @@ var configAIMD = ConfigAIMD{
 	sizeAddBits:     int64(configNetwork.sizeFrame*8) + int64(configNetwork.sizeControlPDU*8),
 	bwDiv:           2,
 	linkoverage:     2,
-	diskoverage:     4,
 }
 
 //
@@ -125,7 +126,6 @@ type ConfigReplicast struct {
 	bidMultiplier    time.Duration
 	bidGapBytes      int
 	solicitedLinkPct int
-	maxDiskQueue     int
 	// derived from other config, for convenience
 	durationBidGap time.Duration
 }
@@ -135,7 +135,6 @@ var configReplicast = ConfigReplicast{
 	bidMultiplier:    2,
 	bidGapBytes:      configNetwork.sizeFrame * 2,
 	solicitedLinkPct: 90,
-	maxDiskQueue:     4,
 }
 
 //===============================================================
@@ -223,5 +222,7 @@ func init() {
 	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbps)
 
 	configStorage.dskdurationDataChunk = sizeToDuration(configStorage.sizeDataChunk, "KB", int64(configStorage.diskMBps), "MB")
+	configStorage.dskdurationFrame = sizeToDuration(configNetwork.sizeFrame, "B", int64(configStorage.diskMBps), "MB")
+
 	configReplicast.durationBidGap = sizeToDuration(configReplicast.bidGapBytes, "B", configNetwork.linkbpsData, "b")
 }

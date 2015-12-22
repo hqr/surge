@@ -198,8 +198,8 @@ type ReplicaPutRequestAckEvent struct {
 	num int // replica num
 }
 
-func newReplicaPutRequestAckEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow, tio *Tio) *ReplicaPutRequestAckEvent {
-	atnet := configNetwork.durationControlPDU + config.timeClusterTrip
+func newReplicaPutRequestAckEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow, tio *Tio, diskdelay time.Duration) *ReplicaPutRequestAckEvent {
+	atnet := configNetwork.durationControlPDU + config.timeClusterTrip + diskdelay
 	timedev := newTimedAnyEvent(srv, atnet, gwy, tio, configNetwork.sizeControlPDU)
 	assert(flow.cid == tio.cid)
 	assert(flow.repnum == tio.repnum)
@@ -214,7 +214,8 @@ type ReplicaPutAckEvent struct {
 
 func (e *ReplicaPutAckEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[PutAckEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
+	dtriggered := e.thtime.Sub(time.Time{})
+	return fmt.Sprintf("[PutAckEvent src=%v,tgt=%v,chunk#%d(%d),at=%11.10v]", e.source.String(), e.target.String(), printid, e.num, dtriggered)
 }
 
 func newReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow, tio *Tio, atdisk time.Duration) *ReplicaPutAckEvent {
