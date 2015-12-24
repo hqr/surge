@@ -216,22 +216,12 @@ func NewServerBidQueue(ri RunnerInterface, size int) *ServerBidQueue {
 	return &ServerBidQueue{*q, 0}
 }
 
-func (q *ServerBidQueue) createBid(tio *Tio, diskIOlast time.Time) *PutBid {
+func (q *ServerBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 	q.expire()
 
-	var numDiskQueueChunks int
-	if diskIOlast.After(Now) {
-		diff := diskIOlast.Sub(Now)
-		numDiskQueueChunks := int(diff / configStorage.dskdurationDataChunk)
-		if numDiskQueueChunks > configStorage.maxDiskQueueChunks {
-			log("WARNING: exceded-disk-queue", q.r.String(), configStorage.maxDiskQueueChunks)
-			return NewPutBid(tio, Now.Add(time.Hour))
-		}
-	}
-
-	earliestnotify := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip*2)
+	earliestnotify := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip)
 	l := len(q.pending)
-	if q.canceled > 0 {
+	if diskdelay == 0 && q.canceled > 0 {
 		assert(l > 0)
 		for k := l - 1; k >= 0; k-- {
 			bid := q.pending[k]
@@ -245,7 +235,7 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskIOlast time.Time) *PutBid {
 				break
 			}
 			q.canceled--
-			s := fmt.Sprintf("(%d/%d/%d)", k, l-1, numDiskQueueChunks)
+			s := fmt.Sprintf("(%d/%d)", k, l-1)
 			log("un-canceling", bid.String(), s, "from", bid.tio.String(), "to", tio.String())
 			bid.state = bidStateTentative
 			bid.tio = tio
@@ -255,10 +245,8 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskIOlast time.Time) *PutBid {
 	var newleft time.Time
 	if l > 0 {
 		lastbidright := q.pending[l-1].win.right
-		assert(lastbidright.After(Now))
-
-		// adjust with respect to disk queue
-		newleft = lastbidright.Add(configReplicast.durationBidGap + config.timeClusterTrip*2)
+		assert(!lastbidright.Before(Now))
+		newleft = lastbidright.Add(configReplicast.durationBidGap + config.timeClusterTrip)
 		if newleft.Before(earliestnotify) {
 			newleft = earliestnotify
 		}
@@ -266,26 +254,42 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskIOlast time.Time) *PutBid {
 		newleft = earliestnotify
 	}
 
+	if diskdelay > 0 {
+		earliestdiskdelay := Now.Add(diskdelay)
+		if earliestdiskdelay.After(newleft) {
+			newleft = earliestdiskdelay
+		}
+	}
+
 	bid := NewPutBid(tio, newleft)
+	q.insertBid(bid)
+	return bid
+}
+
+func (q *ServerBidQueue) insertBid(bid *PutBid) {
+	l := len(q.pending)
 	if l == cap(q.pending) {
 		log(LogVV, "growing bidqueue", q.r.String(), cap(q.pending))
 	}
 	q.pending = append(q.pending, nil)
 	q.pending[l] = bid
-	return bid
 }
 
 func (q *ServerBidQueue) cancelBid(replytio *Tio) {
 	cid := replytio.cid
 	_, bid := q.findBid(bidFindChunk, cid)
-	assert(bid != nil)
+	if bid == nil {
+		log("WARNING: failed to find (expired) bid", q.r.String(), replytio.String())
+		return
+	}
 	assert(bid.tio == replytio)
-	// log(LogBoth, "failed to find bid - expired?", q.r.String(), replytio.String(), state)
 
 	assert(bid.state == bidStateTentative)
 	bid.state = bidStateCanceled
 	log(bid.String())
 	q.canceled++
+
+	q.expire()
 }
 
 func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
@@ -296,32 +300,24 @@ func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 
 	assert(bid.state == bidStateTentative)
 	assert(bid.tio == replytio)
-	assert(!bid.win.left.After(computedbid.win.left))
-	// assert(!bid.win.right.Before(computedbid.win.right))
+	assert(!bid.win.left.After(computedbid.win.left), computedbid.String()+","+bid.String())
+	assert(!bid.win.right.Before(computedbid.win.right), computedbid.String()+","+bid.String())
 
 	bid.state = bidStateAccepted
 	log("bid-accept-trim", bid.String())
 
 	//
-	// adjust adjacent canceled bids if any
+	// extend the next canceled bids if exists
 	//
-	if k > 0 {
-		prevbid := q.pending[k-1]
-		if prevbid.state == bidStateCanceled {
-			d := computedbid.win.left.Sub(prevbid.win.right)
-			assert(d > 0)
-			prevbid.win.right = computedbid.win.left.Add(-config.timeIncStep)
-			log("prev-bid-grow-by", prevbid.String(), d)
-		}
-	}
 	l := len(q.pending)
 	if k < l-1 {
 		nextbid := q.pending[k+1]
+		assert(nextbid.win.left.After(bid.win.right), bid.String()+","+nextbid.String())
 		if nextbid.state == bidStateCanceled {
 			d := nextbid.win.left.Sub(computedbid.win.right)
-			assert(d > 0)
-			nextbid.win.left = computedbid.win.right.Add(-config.timeIncStep)
-			log("next-bid-grow-by", nextbid.String(), d)
+			assert(d > 0, computedbid.String()+","+bid.String()+","+nextbid.String())
+			nextbid.win.left = computedbid.win.right.Add(config.timeIncStep)
+			log("next-canceled-bid-earlier-by", nextbid.String(), d)
 		}
 	}
 	//
@@ -329,34 +325,41 @@ func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 	//
 	bid.win.left = computedbid.win.left
 	bid.win.right = computedbid.win.right
+
+	q.expire()
 }
 
 func (q *ServerBidQueue) expire() {
-	atnet := configNetwork.durationControlPDU + config.timeClusterTrip + (config.timeClusterTrip >> 1)
-	earliestGwyNotify := Now.Add(atnet)
-
+	earliestnotify := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip)
 	earliestEndReceive := Now.Add(configNetwork.netdurationDataChunk)
 
-	for {
+	keepwalking := true
+	for keepwalking {
+		keepwalking = false
 		if len(q.pending) == 0 {
 			return
 		}
-		bid := q.pending[0]
-		if bid.state == bidStateCanceled && earliestGwyNotify.After(bid.win.left) {
-			q.deleteBid(0)
-		} else if bid.state == bidStateTentative && earliestEndReceive.After(bid.win.right) {
-			s := fmt.Sprintf("timeout waiting for accept/cancel,%s", bid.String())
-			log(s)
-			assert(false, s)
-			q.deleteBid(0)
-		} else if Now.After(bid.win.right) {
-			q.deleteBid(0)
-		} else {
-			return
-		}
-		log("expired-and-removed", bid.String())
-		if bid.state == bidStateCanceled {
-			q.canceled--
+		for k := 0; k < len(q.pending); k++ {
+			bid := q.pending[k]
+			switch bid.state {
+			case bidStateCanceled:
+				if earliestnotify.After(bid.win.left) {
+					q.deleteBid(k)
+					log("expired-and-removed", q.r.String(), bid.String(), k)
+					q.canceled--
+					keepwalking = true
+					break
+				}
+			case bidStateTentative:
+				if earliestEndReceive.After(bid.win.right) {
+					log(LogBoth, "WARNING: timeout waiting for accept/cancel", q.r.String(), bid.String(), k)
+				}
+			default:
+				assert(bid.state == bidStateAccepted)
+				if Now.After(bid.win.right) {
+					log(LogBoth, "WARNING: accepted bid LINGER", q.r.String(), bid.String(), k)
+				}
+			}
 		}
 	}
 }
@@ -399,40 +402,44 @@ func (q *GatewayBidQueue) StringBids() string {
 func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 	l := len(q.pending)
 	assert(l == configReplicast.sizeNgtGroup)
-	found := false
-	k := 0
 	var begin, end time.Time
+	earliestbegin := Now.Add(configNetwork.durationControlPDU)
 	//
 	// using the fact that the bids are sorted (ascending)
 	// by their left (window) boundary
+	k := 0
 	for ; k < l-configStorage.numReplicas; k++ {
-		begin = q.pending[k+configStorage.numReplicas-1].win.left
-		if Now.After(begin) {
-			begin = Now
+		bid1 := q.pending[k]
+		bid3 := q.pending[k+configStorage.numReplicas-1]
+		assert(!bid1.win.left.After(bid3.win.left), bid1.String()+","+bid3.String())
+		assert(!bid1.win.right.After(bid3.win.right), bid1.String()+","+bid3.String())
+
+		begin = bid3.win.left
+		if earliestbegin.After(begin) {
+			begin = earliestbegin
 		}
-		end = q.pending[k].win.right
-		assert(!begin.Before(q.pending[k].win.left))
-		// assert(!end.After(q.pending[k+configStorage.numReplicas-1].win.right))
-		if begin.After(end) {
+		d := bid1.win.right.Sub(begin)
+		if d < configNetwork.netdurationDataChunk+config.timeClusterTrip+(config.timeClusterTrip>>1) {
 			continue
 		}
-		d := end.Sub(begin)
-		if d < configNetwork.netdurationDataChunk+config.timeClusterTrip {
-			continue
-		}
-		found = true
+		end = bid1.win.right
 		break
 	}
-	if !found {
-		log("ERROR: insufficient bid overlap", q.r.String(), chunk.String(), q.StringBids())
+	if k == l-configStorage.numReplicas {
+		// insiffucient bid overlap
+		log("WARNING: chunk abort", q.r.String(), chunk.String(), q.StringBids())
 		return nil
 	}
-	// delete the rest bids from the local queue
+
+	// cleanup everything except the (future) rzvgroup-accepted:
+	// delete the rest bids from the local gateway's queue
 	for i := l - 1; i >= 0; i-- {
 		if i > k+configStorage.numReplicas-1 || i < k {
 			q.deleteBid(i)
 		}
 	}
+	// logical (computed) bid, with the left and right boundaries
+	// the gateway will actually use
 	l = len(q.pending)
 	assert(l == configStorage.numReplicas)
 	log(LogV, "gwy-best-bids", q.r.String(), chunk.String(), q.StringBids())

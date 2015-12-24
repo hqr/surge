@@ -116,7 +116,7 @@ func (r *gatewayFour) M4putreqack(ev EventInterface) error {
 	tioevent := ev.(*TimedAnyEvent)
 	tio := tioevent.GetTio()
 
-	tio.next(nextev)
+	tio.next(nextev, SmethodWait)
 	return nil
 }
 

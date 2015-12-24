@@ -114,11 +114,11 @@ func (tio *Tio) nextAnon(when time.Duration, tgt RunnerInterface) {
 	} else {
 		ev = newTimedAnyEvent(tio.event.GetTarget(), when, tgt)
 	}
-	tio.next(ev)
+	tio.next(ev, SmethodWait)
 }
 
 // advance the stage & send specific event to the next stage's target
-func (tio *Tio) next(newev EventInterface) {
+func (tio *Tio) next(newev EventInterface, sendhow SendMethodEnum) {
 	var src RunnerInterface
 	if tio.index == -1 {
 		src = tio.source
@@ -132,7 +132,7 @@ func (tio *Tio) next(newev EventInterface) {
 	tio.index++
 
 	log(LogV, "stage-next-send", src.String(), tio.String())
-	src.Send(newev, SmethodWait) // blocking
+	src.Send(newev, sendhow)
 	log(LogVV, "stage-next-sent", src.String(), tio.String())
 }
 

@@ -133,7 +133,7 @@ type ConfigReplicast struct {
 var configReplicast = ConfigReplicast{
 	sizeNgtGroup:     9,
 	bidMultiplier:    2,
-	bidGapBytes:      configNetwork.sizeFrame * 2,
+	bidGapBytes:      configNetwork.sizeControlPDU,
 	solicitedLinkPct: 90,
 }
 

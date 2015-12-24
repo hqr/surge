@@ -313,12 +313,6 @@ func (r *serverSix) aimdCheckTotalBandwidth() {
 	dingall := false
 	frsize := configNetwork.sizeFrame
 
-	num := r.disk.queueDepth(DqdChunks)
-	if num >= configStorage.maxDiskQueueChunks {
-		dingall = true
-		log("srv-dingall", r.String())
-	}
-
 	for gwy, flow := range fdir.flows {
 		if flow.totalbytes-flow.offset < 2*configNetwork.sizeFrame {
 			continue
@@ -393,7 +387,7 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 		log("srv-new-flow", flow.String(), putreqackev.String())
 	}
 
-	tio.next(putreqackev)
+	tio.next(putreqackev, SmethodWait)
 	return nil
 }
 

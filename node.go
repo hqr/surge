@@ -24,6 +24,11 @@ type FlowFactoryInterface interface {
 	newflow(target interface{}, args ...interface{}) *Flow
 }
 
+const (
+	ReplicaNotDoneYet int = iota
+	ReplicaDone
+)
+
 //===============================================================
 //
 // GatewayCommon
@@ -192,7 +197,7 @@ func (r *GatewayUch) startNewReplica(num int) {
 
 	ev := newReplicaPutRequestEvent(r.realobject(), tgt, r.replica, flow.tio)
 
-	flow.tio.next(ev)
+	flow.tio.next(ev, SmethodWait)
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
 	flow.rb.use(int64(configNetwork.sizeControlPDU * 8))
 	flow.timeTxDone = Now.Add(configNetwork.durationControlPDU) // FIXME: assuming 10GE
@@ -358,7 +363,7 @@ func (r *ServerUch) GetRateBucket() RateBucketInterface {
 // (putting a single replica is a single transaction that will typpically include
 // 3 or more IO stages)
 //
-func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) {
+func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 	gwy := ev.GetSource()
 	flow := r.flowsfrom.get(gwy, true)
 	group := ev.GetGroup()
@@ -373,29 +378,33 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) {
 	assert(x <= configNetwork.sizeFrame, fmt.Sprintf("FATAL: out of order:%d:%s", ev.offset, flow.String()))
 
 	flow.offset = ev.offset
-	tio := ev.GetTio()
 
-	if flow.offset >= flow.totalbytes {
-		// postpone the ack until after the replica (chunk.sizeb) is written to disk
-		atdisk := r.disk.scheduleWrite(flow.totalbytes)
-
-		putackev := newReplicaPutAckEvent(r.realobject(), gwy, flow, tio, atdisk)
-		if group != nil {
-			// pass the targetgroup back, to validate by the mcasting gwy
-			putackev.setOneArg(group)
-		}
-		gwyacktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
-		tio.next(putackev)
-
-		cstr := ""
-		if flow.repnum != 0 {
-			cstr = fmt.Sprintf("chunk#%d(%d)", flow.sid, flow.repnum)
-		} else {
-			cstr = fmt.Sprintf("chunk#%d", flow.sid)
-		}
-		log("srv-replica-received", cstr, "replica-ack-scheduled", gwyacktime)
-		r.flowsfrom.deleteFlow(gwy)
+	if flow.offset < flow.totalbytes {
+		return ReplicaNotDoneYet
 	}
+	//
+	// postpone the ack until after the replica (chunk.sizeb) is written to disk
+	//
+	atdisk := r.disk.scheduleWrite(flow.totalbytes)
+
+	tio := ev.GetTio()
+	putackev := newReplicaPutAckEvent(r.realobject(), gwy, flow, tio, atdisk)
+	if group != nil {
+		// pass the targetgroup back, to validate by the mcasting gwy
+		putackev.setOneArg(group)
+	}
+	gwyacktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
+	tio.next(putackev, SmethodWait)
+
+	cstr := ""
+	if flow.repnum != 0 {
+		cstr = fmt.Sprintf("chunk#%d(%d)", flow.sid, flow.repnum)
+	} else {
+		cstr = fmt.Sprintf("chunk#%d", flow.sid)
+	}
+	log("srv-replica-received", cstr, "replica-ack-scheduled", gwyacktime)
+	r.flowsfrom.deleteFlow(gwy)
+	return ReplicaDone
 }
 
 //

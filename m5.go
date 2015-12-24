@@ -367,7 +367,7 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 		log("srv-new-flow", flow.String(), rateinitev.String())
 	}
 
-	tio.next(rateinitev)
+	tio.next(rateinitev, SmethodWait)
 	return nil
 }
 
