@@ -82,7 +82,8 @@ func (r *GatewayCommon) replicackCommon(tioevent *ReplicaPutAckEvent) int {
 	if r.numreplicas < configStorage.numReplicas {
 		return ChunkNotDoneYet
 	}
-	log("chunk-done", r.chunk.String())
+	chunklatency := Now.Sub(r.chunk.crtime)
+	log("chunk-done", r.chunk.String(), "latency", chunklatency)
 	atomic.AddInt64(&r.chunkstats, int64(1))
 	r.chunk = nil
 	return ChunkDone

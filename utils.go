@@ -19,6 +19,8 @@ const (
 	LogVVVV = "VVVV"
 )
 
+const gigb = float64(1000000000)
+
 var logfd *os.File
 var logstream *bufio.Writer
 var logMutex = &sync.Mutex{}
@@ -55,24 +57,39 @@ func flushLog() {
 	}
 }
 
-func configLog() {
-	timestampLog(false)
-
-	log(fmt.Sprintf("{numGateways:%d numServers:%d}", config.numGateways, config.numServers))
-	log(fmt.Sprintf("{timeIncStep:%v timeClusterTrip:%v timeStatsIval:%v timeTrackIval:%v timeToRun:%v}",
-		config.timeIncStep, config.timeClusterTrip, config.timeStatsIval, config.timeTrackIval, config.timeToRun))
-	gigb := float64(1000000000)
-	log(fmt.Sprintf("{linkbps:%.1fGbps linkbpsControl:%.1fGbps linkbpsData:%.1fGbps}",
+func configLog(partial bool) {
+	s1 := fmt.Sprintf("\t    {numGateways:%d numServers:%d}", config.numGateways, config.numServers)
+	s2 := fmt.Sprintf("\t    {timeToRun:%v}", config.timeToRun)
+	s3 := fmt.Sprintf("\t    {linkbps:%.1fGbps linkbpsControl:%.1fGbps linkbpsData:%.1fGbps}",
 		float64(configNetwork.linkbps)/gigb,
 		float64(configNetwork.linkbpsControl)/gigb,
-		float64(configNetwork.linkbpsData)/gigb))
-	log(fmt.Sprintf("{durationControlPDU:%v netdurationDataChunk:%v}", configNetwork.durationControlPDU, configNetwork.netdurationDataChunk))
-	log(fmt.Sprintf("{dskdurationDataChunk:%v}", configStorage.dskdurationDataChunk))
+		float64(configNetwork.linkbpsData)/gigb)
+	s4 := fmt.Sprintf("\t    {sizeFrame:%vB sizeControlPDU:%vB}", configNetwork.sizeFrame, configNetwork.sizeControlPDU)
+	s5 := fmt.Sprintf("\t    {durationControlPDU:%v netdurationDataChunk:%v}", configNetwork.durationControlPDU, configNetwork.netdurationDataChunk)
+	s6 := fmt.Sprintf("\t    {sizeDataChunk:%vKB dskdurationDataChunk:%v}", configStorage.sizeDataChunk, configStorage.dskdurationDataChunk)
 
-	log("detailed raw config:")
-	log(fmt.Sprintf("%+v", configStorage))
-	log(fmt.Sprintf("%+v", configNetwork))
-	timestampLog(true)
+	if partial {
+		fmt.Println(s1)
+		fmt.Println(s2)
+		fmt.Println(s3)
+		fmt.Println(s4)
+		fmt.Println(s5)
+		fmt.Println(s6)
+		return
+	}
+	log("Configuration:")
+	log(s1)
+	log(s2)
+	log(s3)
+	log(s4)
+	log(s5)
+	log(s6)
+	log("Detailed raw config:")
+	log(fmt.Sprintf("\t    %+v", configStorage))
+	log(fmt.Sprintf("\t    %+v", configAIMD))
+	log(fmt.Sprintf("\t    %+v", configReplicast))
+	log(fmt.Sprintf("\t    {timeIncStep:%v timeClusterTrip:%v timeStatsIval:%v timeTrackIval:%v timeToRun:%v}",
+		config.timeIncStep, config.timeClusterTrip, config.timeStatsIval, config.timeTrackIval, config.timeToRun))
 }
 
 //

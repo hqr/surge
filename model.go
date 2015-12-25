@@ -198,7 +198,10 @@ func RunAllModels() {
 		//
 		// log configuration
 		//
-		configLog()
+		timestampLog(false)
+		configLog(true)
+		configLog(false)
+		timestampLog(true)
 
 		//
 		// run it servers first (as they typically do not start generating load)
@@ -225,6 +228,7 @@ func RunAllModels() {
 		fmt.Printf("\r")
 		// benchmark results
 		timestampLog(false)
+		configLog(false)
 		mstats.log(true)
 		timestampLog(true)
 	}

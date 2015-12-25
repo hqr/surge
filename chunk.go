@@ -223,9 +223,6 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 		assert(l > 0)
 		for k := l - 1; k >= 0; k-- {
 			bid := q.pending[k]
-			if bid.state == bidStateAccepted {
-				break
-			}
 			if bid.state != bidStateCanceled {
 				continue
 			}
