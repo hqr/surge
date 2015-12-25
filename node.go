@@ -29,6 +29,11 @@ const (
 	ReplicaDone
 )
 
+const (
+	ChunkNotDoneYet int = iota
+	ChunkDone
+)
+
 //===============================================================
 //
 // GatewayCommon
@@ -65,7 +70,7 @@ func (r *GatewayCommon) realobject() RunnerInterface {
 	return r.rptr
 }
 
-func (r *GatewayCommon) replicackCommon(tioevent *ReplicaPutAckEvent) error {
+func (r *GatewayCommon) replicackCommon(tioevent *ReplicaPutAckEvent) int {
 	tio := tioevent.GetTio()
 	flow := tio.flow
 
@@ -73,14 +78,14 @@ func (r *GatewayCommon) replicackCommon(tioevent *ReplicaPutAckEvent) error {
 	atomic.AddInt64(&r.replicastats, int64(1))
 
 	r.numreplicas++
-	log("replica-acked", flow.String(), "num-acked", r.numreplicas)
+	log("replica-acked", flow.String(), "num-acked", r.numreplicas, "by", tioevent.GetSource().String())
 	if r.numreplicas < configStorage.numReplicas {
-		return nil
+		return ChunkNotDoneYet
 	}
 	log("chunk-done", r.chunk.String())
 	atomic.AddInt64(&r.chunkstats, int64(1))
 	r.chunk = nil
-	return nil
+	return ChunkDone
 }
 
 //
@@ -284,7 +289,8 @@ func (r *GatewayUch) replicack(ev EventInterface) error {
 	assert(flow.cid == tio.cid)
 	assert(flow.repnum == tioevent.num)
 
-	return r.replicackCommon(tioevent)
+	r.replicackCommon(tioevent)
+	return nil
 }
 
 //===============================================================
@@ -402,7 +408,7 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 	} else {
 		cstr = fmt.Sprintf("chunk#%d", flow.sid)
 	}
-	log("srv-replica-received", cstr, "replica-ack-scheduled", gwyacktime)
+	log("srv-replica-received", r.String(), cstr, "replica-ack-scheduled", gwyacktime)
 	r.flowsfrom.deleteFlow(gwy)
 	return ReplicaDone
 }

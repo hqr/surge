@@ -85,10 +85,8 @@ type PutBid struct {
 }
 
 func NewPutBid(io *Tio, begin time.Time, args ...interface{}) *PutBid {
-	// wide enough for two full chunks
-	d := configNetwork.netdurationDataChunk + config.timeClusterTrip
-	d *= configReplicast.bidMultiplier
-	end := begin.Add(d)
+	// FIXME: fixed-size chunk
+	end := begin.Add(configReplicast.durationBidWindow)
 	bid := &PutBid{
 		crtime: Now,
 		win:    TimWin{begin, end},
@@ -412,17 +410,25 @@ func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 		bid1 := q.pending[k]
 		bid3 := q.pending[k+configStorage.numReplicas-1]
 		assert(!bid1.win.left.After(bid3.win.left), bid1.String()+","+bid3.String())
-		assert(!bid1.win.right.After(bid3.win.right), bid1.String()+","+bid3.String())
 
 		begin = bid3.win.left
 		if earliestbegin.After(begin) {
 			begin = earliestbegin
 		}
-		d := bid1.win.right.Sub(begin)
+		end = bid1.win.right
+		if end.After(bid3.win.right) {
+			end = bid3.win.right
+		}
+		if configStorage.numReplicas > 2 {
+			bid2 := q.pending[k+configStorage.numReplicas-2]
+			if end.After(bid2.win.right) {
+				end = bid2.win.right
+			}
+		}
+		d := end.Sub(begin)
 		if d < configNetwork.netdurationDataChunk+config.timeClusterTrip+(config.timeClusterTrip>>1) {
 			continue
 		}
-		end = bid1.win.right
 		break
 	}
 	if k == l-configStorage.numReplicas {

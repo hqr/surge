@@ -123,17 +123,18 @@ var configAIMD = ConfigAIMD{
 //
 type ConfigReplicast struct {
 	sizeNgtGroup     int
-	bidMultiplier    time.Duration
+	bidMultiplierPct int
 	bidGapBytes      int
 	solicitedLinkPct int
 	// derived from other config, for convenience
-	durationBidGap time.Duration
+	durationBidGap    time.Duration
+	durationBidWindow time.Duration
 }
 
 var configReplicast = ConfigReplicast{
 	sizeNgtGroup:     9,
-	bidMultiplier:    2,
-	bidGapBytes:      configNetwork.sizeControlPDU,
+	bidMultiplierPct: 150,
+	bidGapBytes:      0, // configNetwork.sizeControlPDU,
 	solicitedLinkPct: 90,
 }
 
@@ -225,4 +226,5 @@ func init() {
 	configStorage.dskdurationFrame = sizeToDuration(configNetwork.sizeFrame, "B", int64(configStorage.diskMBps), "MB")
 
 	configReplicast.durationBidGap = sizeToDuration(configReplicast.bidGapBytes, "B", configNetwork.linkbpsData, "b")
+	configReplicast.durationBidWindow = (configNetwork.netdurationDataChunk + config.timeClusterTrip) * time.Duration(configReplicast.bidMultiplierPct) / time.Duration(100)
 }
