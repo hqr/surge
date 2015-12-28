@@ -129,6 +129,7 @@ type ConfigReplicast struct {
 	// derived from other config, for convenience
 	durationBidGap    time.Duration
 	durationBidWindow time.Duration
+	numNgtGroups      int
 }
 
 var configReplicast = ConfigReplicast{
@@ -227,4 +228,5 @@ func init() {
 
 	configReplicast.durationBidGap = sizeToDuration(configReplicast.bidGapBytes, "B", configNetwork.linkbpsData, "b")
 	configReplicast.durationBidWindow = (configNetwork.netdurationDataChunk + config.timeClusterTrip) * time.Duration(configReplicast.bidMultiplierPct) / time.Duration(100)
+	configReplicast.numNgtGroups = config.numServers / configReplicast.sizeNgtGroup
 }

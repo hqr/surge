@@ -85,7 +85,7 @@ type PutBid struct {
 }
 
 func NewPutBid(io *Tio, begin time.Time, args ...interface{}) *PutBid {
-	// FIXME: fixed-size chunk
+	// FIXME TODO: fixed-size chunk
 	end := begin.Add(configReplicast.durationBidWindow)
 	bid := &PutBid{
 		crtime: Now,
@@ -241,6 +241,8 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 	if l > 0 {
 		lastbidright := q.pending[l-1].win.right
 		assert(!lastbidright.Before(Now))
+		// newleft here is the time gateways is permitted to send the first byte
+		// option: newleft = lastbidright.Add(configReplicast.durationBidGap - config.timeClusterTrip)
 		newleft = lastbidright.Add(configReplicast.durationBidGap + config.timeClusterTrip)
 		if newleft.Before(earliestnotify) {
 			newleft = earliestnotify
@@ -257,6 +259,14 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 	}
 
 	bid := NewPutBid(tio, newleft)
+
+	// if the server is idle. adjust the right boundary to increase the
+	// selection chances
+	if l == 0 && diskdelay < configNetwork.netdurationDataChunk {
+		bid.win.right = bid.win.right.Add(configNetwork.netdurationDataChunk * 2)
+		log("srv-idle-extending-bid-win", bid.String())
+	}
+
 	q.insertBid(bid)
 	return bid
 }
@@ -307,10 +317,9 @@ func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 	l := len(q.pending)
 	if k < l-1 {
 		nextbid := q.pending[k+1]
-		assert(nextbid.win.left.After(bid.win.right), bid.String()+","+nextbid.String())
-		if nextbid.state == bidStateCanceled {
-			d := nextbid.win.left.Sub(computedbid.win.right)
-			assert(d > 0, computedbid.String()+","+bid.String()+","+nextbid.String())
+		d := nextbid.win.left.Sub(computedbid.win.right)
+		// assert(d >= 0, computedbid.String()+","+bid.String()+","+nextbid.String())
+		if nextbid.state == bidStateCanceled && d > 0 {
 			nextbid.win.left = computedbid.win.right.Add(config.timeIncStep)
 			log("next-canceled-bid-earlier-by", nextbid.String(), d)
 		}
@@ -399,9 +408,11 @@ func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 	assert(l == configReplicast.sizeNgtGroup)
 	var begin, end time.Time
 	earliestbegin := Now.Add(configNetwork.durationControlPDU)
+	// option: + config.timeClusterTrip + (config.timeClusterTrip >> 1)
+	var minduration time.Duration = configNetwork.netdurationDataChunk + (configNetwork.netdurationDataChunk >> 1)
+
 	//
-	// using the fact that the bids are sorted (ascending)
-	// by their left (window) boundary
+	// using the sorted-ness by their left (window) boundary
 	k := 0
 	for ; k < l-configStorage.numReplicas; k++ {
 		bid1 := q.pending[k]
@@ -423,8 +434,14 @@ func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 			}
 		}
 		d := end.Sub(begin)
+		// option: if d < minduration
 		if d < configNetwork.netdurationDataChunk+config.timeClusterTrip+(config.timeClusterTrip>>1) {
 			continue
+		}
+		// found:
+		// adjust the bid window to take only what's required
+		if d > minduration {
+			end = begin.Add(minduration)
 		}
 		break
 	}

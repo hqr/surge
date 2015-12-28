@@ -61,7 +61,6 @@ func init() {
 	m6.putpipeline = p
 
 	d := NewStatsDescriptors("6")
-	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("rxidle", StatsKindPercentage, StatsScopeServer)
 	d.Register("tio", StatsKindCount, StatsScopeGateway)
 	d.Register("chunk", StatsKindCount, StatsScopeGateway)
@@ -260,7 +259,7 @@ func (r *serverSix) aimdCheckRxQueueFuture() {
 	linkoverage := 0
 	dingall := false
 	frsize := configNetwork.sizeFrame
-	num := r.disk.queueDepth(DqdChunks)
+	num, _ := r.disk.queueDepth(DqdChunks)
 	if num >= configStorage.maxDiskQueueChunks {
 		dingall = true
 		log("srv-dingall", r.String())
@@ -365,9 +364,9 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 	gwy := tioevent.GetSource()
 
 	var diskdelay time.Duration
-	num := r.disk.queueDepth(DqdChunks)
-	if num >= configStorage.maxDiskQueueChunks {
-		diskdelay = configStorage.dskdurationDataChunk*time.Duration(num) - configNetwork.netdurationDataChunk - config.timeClusterTrip
+	num, duration := r.disk.queueDepth(DqdChunks)
+	if num >= configStorage.maxDiskQueueChunks && duration > configNetwork.netdurationDataChunk {
+		diskdelay = duration - configNetwork.netdurationDataChunk
 	}
 	f := r.flowsfrom.get(gwy, false)
 	assert(f == nil)

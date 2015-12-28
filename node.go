@@ -314,11 +314,21 @@ func NewGatewayMcast(i int, p *Pipeline) *GatewayMcast {
 // Tx
 //===
 // selectNgtGroup randomly selects target negotiating group and returns its ID
-// FIXME: make sure to select a different one for this gateway..
-func (r *GatewayMcast) selectNgtGroup() int {
-	numGroups := config.numServers / configReplicast.sizeNgtGroup
-	assert(numGroups > 1)
-	return rand.Intn(numGroups) + 1
+// for better pseudo-randomness try to select a different group for this gateway
+func (r *GatewayMcast) selectNgtGroup(cid int64, prevgroupid int) int {
+	id := int(cid%int64(configReplicast.numNgtGroups)) + 1
+	if id != prevgroupid {
+		return id
+	}
+	id = rand.Intn(configReplicast.numNgtGroups) + 1
+	if id != prevgroupid {
+		return id
+	}
+	id = prevgroupid + 1
+	if id > configReplicast.numNgtGroups {
+		id = 1
+	}
+	return id
 }
 
 //===============================================================
@@ -426,7 +436,8 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 // next iteration..
 func (r *ServerUch) GetStats(reset bool) NodeStats {
 	s := r.RunnerBase.GetStats(true)
-	s["disk-queue-depth"] = int64(r.disk.queueDepth(DqdBuffers))
+	num, _ := r.disk.queueDepth(DqdBuffers)
+	s["disk-queue-depth"] = int64(num)
 
 	var d int64
 	if reset {

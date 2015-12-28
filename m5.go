@@ -73,7 +73,6 @@ func init() {
 	m5.putpipeline = p
 
 	d := NewStatsDescriptors("5")
-	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("rxidle", StatsKindPercentage, StatsScopeServer)
 	d.Register("tio", StatsKindCount, StatsScopeGateway)
 	d.Register("chunk", StatsKindCount, StatsScopeGateway)
@@ -343,9 +342,9 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 	tio := tioevent.GetTio()
 	gwy := tioevent.GetSource()
 	var diskdelay time.Duration
-	num := r.disk.queueDepth(DqdChunks)
-	if num >= configStorage.maxDiskQueueChunks {
-		diskdelay = configStorage.dskdurationDataChunk*time.Duration(num) - configNetwork.netdurationDataChunk - config.timeClusterTrip
+	num, duration := r.disk.queueDepth(DqdChunks)
+	if num >= configStorage.maxDiskQueueChunks && duration > configNetwork.netdurationDataChunk {
+		diskdelay = duration - configNetwork.netdurationDataChunk
 	}
 
 	f := r.flowsfrom.get(gwy, false)

@@ -18,6 +18,7 @@ type gatewaySeven struct {
 	GatewayMcast
 	bids        *GatewayBidQueue
 	NowMcasting int64
+	prevgroupid int
 }
 
 type serverSeven struct {
@@ -214,7 +215,7 @@ func (r *gatewaySeven) startNewChunk() {
 	r.numreplicas = 0
 	r.rzvgroup.init(0, true) // cleanup
 
-	ngid := r.selectNgtGroup()
+	ngid := r.selectNgtGroup(r.chunk.cid, r.prevgroupid)
 	ngobj := NewNgtGroup(ngid)
 
 	// create flow and tios
@@ -250,6 +251,7 @@ func (r *gatewaySeven) startNewChunk() {
 	mcastflow.timeTxDone = Now.Add(configNetwork.durationControlPDU)
 
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
+	r.prevgroupid = ngid
 }
 
 func (r *gatewaySeven) sendata() {
@@ -371,11 +373,16 @@ func (r *serverSeven) M7requestng(ev EventInterface) error {
 
 	// respond to the put-request with a bid
 	var diskdelay time.Duration
-	num := r.disk.queueDepth(DqdChunks)
-	var bid *PutBid
-	if num >= configStorage.maxDiskQueueChunks {
-		diskdelay = configStorage.dskdurationDataChunk*time.Duration(num) - configNetwork.netdurationDataChunk - config.timeClusterTrip
+	num, duration := r.disk.queueDepth(DqdChunks)
+	if num >= configStorage.maxDiskQueueChunks && duration > configNetwork.netdurationDataChunk {
+		// options: randomize, handle >> max chunks
+		if num > configStorage.maxDiskQueueChunks {
+			diskdelay = duration
+		} else {
+			diskdelay = duration - configNetwork.netdurationDataChunk
+		}
 	}
+	var bid *PutBid
 	bid = r.bids.createBid(tio, diskdelay)
 	if diskdelay > 0 {
 		log("srv-delayed-bid", bid.String(), diskdelay)

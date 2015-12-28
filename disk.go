@@ -54,17 +54,17 @@ func (d *Disk) scheduleWrite(sizebytes int) time.Duration {
 	return at
 }
 
-func (d *Disk) queueDepth(in DiskQueueDepthEnum) int {
+func (d *Disk) queueDepth(in DiskQueueDepthEnum) (int, time.Duration) {
 	if !Now.Before(d.lastIOdone) {
-		return 0
+		return 0, 0
 	}
 	diff := d.lastIOdone.Sub(Now)
 	// round up as well
 	if in == DqdChunks {
 		numDiskQueueChunks := (int64(diff) + int64(configStorage.dskdurationDataChunk/2)) / int64(configStorage.dskdurationDataChunk)
-		return int(numDiskQueueChunks)
+		return int(numDiskQueueChunks), diff
 	}
 	assert(in == DqdBuffers)
 	numDiskQueueBuffers := (int64(diff) + int64(configStorage.dskdurationFrame/2)) / int64(configStorage.dskdurationFrame)
-	return int(numDiskQueueBuffers)
+	return int(numDiskQueueBuffers), diff
 }
