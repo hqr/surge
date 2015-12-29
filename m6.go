@@ -9,7 +9,7 @@
 //
 // AIMD or Additive Increase/Multiplicative Decrease
 // is a well known and extremely well reseached congestion control
-// mechanism that has got its wide-spread popularity the most part
+// mechanism that has got its wide-spread popularity for the most part
 // due to TCP:
 //
 // https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease

@@ -1,3 +1,31 @@
+// Package surge provides a framework for discrete event simulation, as well as
+// a number of models for Unsolicited and Reservation Group based Edge-driven
+// load balancing.
+//
+// modelSeven (m7) models Replicast(tm) -
+// a new storage clustering protocol that leverages multicast replication,
+// (the term "Replicast" is derived from replication-oriented multicasting)
+// dynamic sub-group load balancing and sub-group based congestion control.
+//
+// Unlike UCH-* models in this package, Replicast makes resource reservations
+// prior to initiating data flows. The flow commences if and when the time
+// window is reserved, to allow the entire multicast data transfer to start,
+// proceed at the full solicited bandwidth 9Gbps
+// (which is 90% of the full 10GE, or configurable),
+// and complete without other flows interfering in the process.
+//
+// A multicast flow that delivers a 1MB (or configurable) chunk to
+// 3 servers (thus producing 3 stored replicas of the chunk)
+// must take care of reserving a single time window that "satisfies"
+// all the 3 servers simultaneously.
+// Similar to all the other models in this package, multiple storage gateways
+// independently and concurrently communicate to storage servers,
+// each one trying to make the best and the earliest reservation for itself.
+// Given the same niumber of clustered nodes, the same disk and network
+// bandwidth, the resulting throughput, latency, utilization etc. statistics
+// can be compared and analyzed across both unicast and multicast (Replicast)
+// families of protocols.
+//
 package surge
 
 import (

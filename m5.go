@@ -11,14 +11,19 @@
 //   Unicast Consistent Hash distribution using Captive Congestion Point
 //   (UCH-CCPi)
 //
-// The model implements a so called Captive Congestion Point logic,
-// to rate-control clients by dividing the servers's bandwidth equally
-// between all concurrent flows. The latter are getting added when
-// consistent-hasher at a gateway selects a given target, etc.
+// The model implements a so called Captive Congestion Point (CCP) logic,
+// to rate-control clients by dividing (edge) servers's bandwidth
+// equally between all concurrent flows. CCP by definition is
+// a network congestion point with a single salient property:
+// it is known to be the one and only source of congestion in an
+// end-to-end flow.
+// Thus, UCH-CCPi, as the name implies, models a storage cluster of
+// arbitrary (configured) size where each server tries to manage its
+// own CCP by equally dividing its receive bandwidth.
 //
 // The gateways are further limited by their own network links. Each
-// chunk replica is separately ACK-ed so that 3 (or configured) replica
-// ACKs constitute a put-chunk.
+// replica of each chunk is separately ACK-ed, so that 3 (or configured)
+// replica ACKs constitute a fully stored chunk.
 //
 // The UCH-CCPi pipeline includes 3 control events per each replica of
 // each chunk, details in the code.
