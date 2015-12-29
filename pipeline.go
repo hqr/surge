@@ -13,11 +13,16 @@ type StageFunc func(EventInterface) error
 
 // PipelineStage is a triplet (name, handler, index) where the handler
 // (callback) gets automatically executed for a given named stage.
-// The generic mechanism to move the pipeline from stage to the next stage
-// - strictly in the order of increasing PipelineStage.index -
-// is specified elsewhere (see tio.go).
-// The pipeline itself is just a simple array/slice of stages that is
-// declared at model initialization time and typically never changes.
+//
+// See tio.go for the generic mechanism to move tio
+// (a.k.a transactional IO, an abstraction for a compound multi-step
+// networking operation) through its associated pipeline,
+// from stage to the next stage and strictly in the order of increasing
+// PipelineStage.index.
+//
+// The pipeline itself is just an array of named stages (and their respective
+// callback handlers) that is *declared* at model initialization time and that
+// typically never changes.
 //
 type PipelineStage struct {
 	name    string

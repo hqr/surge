@@ -25,7 +25,7 @@ import (
 // each tio has a unique ID (Tio.id) and its printable counterpart tio.sid -
 // the latter for easy tracking in the logs.
 //
-// Propagation of tio through its pipeline is accomplished via tio.next()
+// Propagation of tio through the pipeline is accomplished via tio.next()
 // while execution of the current stage is done via tio.doStage()
 // The latter uses generic Go reflect interfaces to execute declared
 // callbacks - the pipeline stage handlers. Once the last stage is reached

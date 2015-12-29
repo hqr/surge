@@ -201,8 +201,20 @@ func (q *BidQueue) findBid(by bidFindEnum, val interface{}) (int, *PutBid) {
 	return -1, nil
 }
 
-//
+//=====================================================================
 // type ServerBidQueue
+//=====================================================================
+// ServerBidQueue is a BidQueue of bids issued by a single given storage
+// server. The object embeds BidQueue where each bid (PutBid type) is
+// in one of the 3 enumerated states, as per bidStateEnum. In addition
+// to its state, each bid contains a time window the server reserves
+// for the requesting gateway.
+//
+// In addition to being a sorted BidQueue, ServerBidQueue tracks the count
+// of canceled bids resulting from the server _not_ being selected for the
+// transaction.
+// A canceled bid may be further re-reserved, fully or partially, by another
+// storage gateway.
 //
 type ServerBidQueue struct {
 	BidQueue
@@ -214,6 +226,24 @@ func NewServerBidQueue(ri RunnerInterface, size int) *ServerBidQueue {
 	return &ServerBidQueue{*q, 0}
 }
 
+// createBid() generates a new PutBid that the server, owner of this
+// ServerBidQueue, then sends to the requesting storage gateway.
+// The latter collects all bids from the group of servers that includes
+// this server, first,
+// and selects certain criteria-satisfying configStorage.numReplicas
+// number of the bids, second.
+// The gateway's logic is coded inside filterBestBids() function
+// which can be viewed as a client-side counterpart of this createBid()
+//
+// createBid() itself walks a thin line in terms of, on one hand, reserving
+// a time window wide enough for very good chances of the overlap between
+// all collected bids to accomodate the request in question.
+// (filterBestBids() failure causes chunk abort with subsequent rescheduling).
+//
+// On another hand, bid overprovisioning leads to cumulative idle time and,
+// ultimately, underperforming server and the entire cluster.
+// More comments inside.
+//
 func (q *ServerBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 	q.expire()
 

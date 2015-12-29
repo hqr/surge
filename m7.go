@@ -21,8 +21,8 @@
 // Similar to all the other models in this package, multiple storage gateways
 // independently and concurrently communicate to storage servers,
 // each one trying to make the best and the earliest reservation for itself.
-// Given the same niumber of clustered nodes, the same disk and network
-// bandwidth, the resulting throughput, latency, utilization etc. statistics
+// Given the same number of clustered nodes and the same disk and network
+// bandwidth, the resulting throughput, latency, utilization statistics
 // can be compared and analyzed across both unicast and multicast (Replicast)
 // families of protocols.
 //
