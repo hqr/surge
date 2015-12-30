@@ -17,7 +17,15 @@
 // A multicast flow that delivers a 1MB (or configurable) chunk to
 // 3 servers (thus producing 3 stored replicas of the chunk)
 // must take care of reserving a single time window that "satisfies"
-// all the 3 servers simultaneously.
+// all the 3 servers simultaneously. More exactly, in this model (m7):
+//
+// 1) gateways make reservations of the server's memory and bandwidth
+// 2) multiple storage servers receive the reservation request
+//    - all storage servers are grouped into pre-configured multicast
+//      groups a.k.a negotiating groups
+// 3) each of the servers in the group responds with a bid carrying
+//    a time window reserved by the server for this request
+//
 // Similar to all the other models in this package, multiple storage gateways
 // independently and concurrently communicate to storage servers,
 // each one trying to make the best and the earliest reservation for itself.
@@ -110,6 +118,8 @@ func (r *gatewaySeven) Run() {
 
 	go func() {
 		for r.state == RstateRunning {
+			// previous chunk done? Tx link is available? If yes,
+			// start a new put-chunk operation
 			if r.chunk == nil {
 				if r.rb.above(int64(configNetwork.sizeControlPDU * 8)) {
 					r.startNewChunk()
@@ -119,6 +129,11 @@ func (r *gatewaySeven) Run() {
 			r.receiveEnqueue()
 			r.processPendingEvents(rxcallback)
 
+			// the second condition (rzvgroup.getCount() ...)
+			// corresponds to the post-negotiation phase when
+			// all the bids are already received, "filtered" via filterBestBids()
+			// and the corresponding servers selected for the chunk transfer.
+			//
 			if r.chunk != nil && r.rzvgroup.getCount() == configStorage.numReplicas {
 				r.sendata()
 			}
@@ -130,6 +145,10 @@ func (r *gatewaySeven) Run() {
 //==========================
 // gatewaySeven TIO handlers
 //==========================
+// M7receivebid is invoked by the generic tio-processing code when
+// the latter (tio) undergoes the corresponding pipeline stage named
+// "BID"
+// The pipeline itself is declared at the top of this model.
 func (r *gatewaySeven) M7receivebid(ev EventInterface) error {
 	tioevent := ev.(*BidEvent)
 	tiochild := tioevent.GetTio()
@@ -143,14 +162,18 @@ func (r *gatewaySeven) M7receivebid(ev EventInterface) error {
 	assert(ngobj.hasmember(srv))
 
 	n := r.bids.receiveBid(tiochild, tioevent.bid)
+	// keep reschedulng until each server in the multicast group
+	// responds with a bid
 	if n < configReplicast.sizeNgtGroup {
 		return nil
 	}
 	computedbid := r.bids.filterBestBids(r.chunk)
 
-	// not enough overlap between available reservations
-	// aka "tentative" bids from the servers:
-	// cancel all server bids and cleanup -
+	// returned nil indicates a failure:
+	// received bids are too far apart to produce a common
+	// usable reservation window for the multicast put.
+	//
+	// Cancel all server bids and cleanup -
 	// note that rzvgroup is nil-inited at this point
 	if computedbid == nil {
 		r.accept(ngobj, tioparent)
@@ -165,6 +188,9 @@ func (r *gatewaySeven) M7receivebid(ev EventInterface) error {
 	mcastflow := tioparent.flow
 	mcastflow.extension = computedbid
 
+	// fill in the multicast rendezvous group for chunk data transfer
+	// note that pending[] bids at these point are already "filtered"
+	// to contain only those bids that were selected
 	for k := 0; k < configStorage.numReplicas; k++ {
 		bid := r.bids.pending[k]
 		assert(ngobj.hasmember(bid.tio.target))
@@ -184,6 +210,18 @@ func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
 	assert(len(tioparent.children) == ngobj.getCount())
 
 	targets := ngobj.getmembers()
+
+	//
+	// send multicast put-accept to all servers in the negotiating group
+	// (ngobj);
+	// carry the 3 (or configured) servers selected for the operation
+	// (rzvgroup)
+	// inside this put-accept message
+	//
+	// atomic on/off here is done to make sure all the events are issued at
+	// the same exact system tick, to simulate multicast IP router
+	// simultaneously transmitting a buffered frame on all designated ports
+	//
 	atomic.StoreInt64(&r.NowMcasting, 1)
 	for _, srv := range targets {
 		tio := tioparent.children[srv]
@@ -208,9 +246,11 @@ func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
 	assert(len(tioparent.children) == r.rzvgroup.getCount())
 }
 
+// M7replicack is invoked by the generic tio-processing code when
+// the latter (tio) undergoes the pipeline stage named "REPLICA-ACK"
+// This callback processes replica put ack from the server
 //
-// ReplicaPutAck handler
-//
+// The pipeline itself is declared at the top of this model.
 func (r *gatewaySeven) M7replicack(ev EventInterface) error {
 	tioevent := ev.(*ReplicaPutAckEvent)
 	tio := ev.GetTio()
@@ -233,9 +273,18 @@ func (r *gatewaySeven) M7replicack(ev EventInterface) error {
 	return nil
 }
 
-//=================
-// gatewaySeven aux
-//=================
+// Similar to unicast models in this package,
+// startNewChunk is in effect a minimalistic embedded client.
+// The client, via startNewChunk, generates a new random chunk if and once
+// the required number of replicas (configStorage.numReplicas)
+// of the previous chunk are transmitted,
+// written to disks and then ACK-ed by the respective servers.
+//
+// Since all the gateways in the model run the same code, the cumulative
+// effect of randomly generated chunks by many dozens or hundreds
+// gateways means that there's probably no need, simulation-wise,
+// to have each gateway generate multiple chunks simultaneously..
+//
 func (r *gatewaySeven) startNewChunk() {
 	assert(r.chunk == nil)
 	r.chunk = NewChunk(r, configStorage.sizeDataChunk*1024)
@@ -243,6 +292,8 @@ func (r *gatewaySeven) startNewChunk() {
 	r.numreplicas = 0
 	r.rzvgroup.init(0, true) // cleanup
 
+	// given a pseudo-random chunk id, select a multicast group
+	// to store this chunk
 	ngid := r.selectNgtGroup(r.chunk.cid, r.prevgroupid)
 	ngobj := NewNgtGroup(ngid)
 
@@ -250,10 +301,12 @@ func (r *gatewaySeven) startNewChunk() {
 	targets := ngobj.getmembers()
 	assert(len(targets) == configReplicast.sizeNgtGroup)
 
+	// new IO request and new multicast flow
 	tioparent := r.putpipeline.NewTio(r, r.chunk)
 	mcastflow := NewFlow(r, r.chunk.cid, tioparent, ngobj)
 
-	// children tios
+	// children tios; each server must see its own copy of
+	// the message
 	for _, srv := range targets {
 		r.putpipeline.NewTio(r, tioparent, r.chunk, mcastflow, srv)
 	}
@@ -265,8 +318,15 @@ func (r *gatewaySeven) startNewChunk() {
 
 	log("gwy-new-mcastflow-tio", mcastflow.String(), tioparent.String())
 
+	// start negotiating; each server in the negotiating group
+	// will subsequently respond with a bid
+	//
+	// atomic on/off here and elsewhere is done to make sure that
+	// all the put-request messages are issued at
+	// the same exact system tick, to simulate multicast IP router
+	// simultaneously transmitting a buffered frame on all designated ports
+	//
 	atomic.StoreInt64(&r.NowMcasting, 1)
-	// start negotiating
 	for _, srv := range targets {
 		tio := tioparent.children[srv]
 		ev := newMcastChunkPutRequestEvent(r, ngobj, r.chunk, srv, tio)
@@ -282,6 +342,8 @@ func (r *gatewaySeven) startNewChunk() {
 	r.prevgroupid = ngid
 }
 
+// send data periodically walks all pending IO requests and transmits
+// data (for the in-progress chunks), when permitted
 func (r *gatewaySeven) sendata() {
 	frsize := configNetwork.sizeFrame
 	for _, tioparent := range r.tios {
@@ -363,6 +425,10 @@ func (r *serverSeven) Run() {
 			}
 
 			log(LogVV, "SRV::rxcallback: chunk data", tioevent.String(), bid.String())
+			// once the entire chunk is received, we can cleanup
+			// the corresponding accepted bids without waiting for them
+			// to self-expire
+			//
 			if r.receiveReplicaData(tioevent) == ReplicaDone {
 				r.bids.deleteBid(k)
 			}
@@ -376,6 +442,7 @@ func (r *serverSeven) Run() {
 		return ev.GetSize()
 	}
 
+	// this goroutine main loop
 	go func() {
 		for r.state == RstateRunning {
 			r.receiveEnqueue()
@@ -389,6 +456,11 @@ func (r *serverSeven) Run() {
 //==========================
 // serverSeven TIO handlers
 //==========================
+// M7requestng is invoked by the generic tio-processing code when
+// the latter executes pipeline stage named "REQUEST-NG"
+// This callback processes put-chunk request from the gateway
+//
+// The pipeline itself is declared at the top of this model.
 func (r *serverSeven) M7requestng(ev EventInterface) error {
 	log(r.String(), "::M7requestng()", ev.String())
 
@@ -423,6 +495,13 @@ func (r *serverSeven) M7requestng(ev EventInterface) error {
 	return nil
 }
 
+// M7acceptng is invoked by the generic tio-processing code when
+// the latter executes pipeline stage named "REQUEST-NG"
+// This callback processes put-accept message from the gateway
+// and further calls acceptBid() or cancelBid(), depending on whether
+// the gateway has selected this server or not.
+//
+// The pipeline itself is declared at the top of this model.
 func (r *serverSeven) M7acceptng(ev EventInterface) error {
 	tioevent := ev.(*McastChunkPutAcceptEvent)
 	log(r.String(), "::M7acceptng()", tioevent.String())
