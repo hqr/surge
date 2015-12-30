@@ -128,3 +128,8 @@ func bytesMillisToKMGseconds(bytesms float64) string {
 		return fmt.Sprintf("%.2fGB/s", x/1024.0/1024.0/1024.0)
 	}
 }
+
+func bytesMillisToMseconds(bytesms float64) string {
+	x := bytesms * 1000.0 / 1024.0 / 1024.0
+	return fmt.Sprintf("%.2f", x)
+}

@@ -50,7 +50,7 @@ func newTimedUniqueEvent(src RunnerInterface, when time.Duration, tgt RunnerInte
 func init() {
 	d := NewStatsDescriptors("3")
 	d.Register("event", StatsKindCount, StatsScopeGateway|StatsScopeServer)
-	d.Register("rxbusy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
+	d.Register("rxchannelbusy", StatsKindPercentage, StatsScopeGateway|StatsScopeServer)
 	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
 	d.Register("rxbytes", StatsKindByteCount, StatsScopeServer|StatsScopeGateway)
 

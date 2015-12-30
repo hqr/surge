@@ -61,7 +61,8 @@ func init() {
 	m6.putpipeline = p
 
 	d := NewStatsDescriptors("6")
-	d.Register("rxidle", StatsKindPercentage, StatsScopeServer)
+	d.Register("rxbusydata", StatsKindPercentage, StatsScopeServer)
+	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer) // data + control
 	d.Register("tio", StatsKindCount, StatsScopeGateway)
 	d.Register("chunk", StatsKindCount, StatsScopeGateway)
 	d.Register("replica", StatsKindCount, StatsScopeGateway)
@@ -224,6 +225,8 @@ func (r *serverSix) Run() {
 		default:
 			tio := ev.GetTio()
 			log(LogV, "SRV::rxcallback", tio.String())
+			// ev.GetSize() == configNetwork.sizeControlPDU
+			r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, false)
 			tio.doStage(r)
 		}
 

@@ -77,7 +77,8 @@ func init() {
 	m7.putpipeline = p
 
 	d := NewStatsDescriptors("7")
-	d.Register("rxidle", StatsKindPercentage, StatsScopeServer)
+	d.Register("rxbusydata", StatsKindPercentage, StatsScopeServer)
+	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer) // data + control
 	d.Register("chunk", StatsKindCount, StatsScopeGateway)
 	d.Register("replica", StatsKindCount, StatsScopeGateway)
 	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
@@ -180,7 +181,6 @@ func (r *gatewaySeven) M7receivebid(ev EventInterface) error {
 
 		r.bids.cleanup()
 		tioparent.abort()
-		log("WARNING: abort chunk", r.chunk.String())
 		r.chunk = nil
 		return nil
 	}
@@ -435,6 +435,8 @@ func (r *serverSeven) Run() {
 		default:
 			tio := ev.GetTio()
 			log(LogV, "SRV::rxcallback", ev.String(), r.String())
+			// ev.GetSize() == configNetwork.sizeControlPDU
+			r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, false)
 
 			tio.doStage(r, ev)
 		}

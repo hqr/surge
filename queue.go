@@ -244,7 +244,7 @@ func (q *RxQueue) NowIsDone() bool {
 }
 
 //
-// generic "event" and "rxbusy" d-tors/stats
+// generic "event" and "rxchannelbusy" d-tors/stats
 //
 func (q *RxQueue) GetStats(reset bool) NodeStats {
 	var b, i int64
@@ -258,9 +258,9 @@ func (q *RxQueue) GetStats(reset bool) NodeStats {
 		b = atomic.LoadInt64(&q.busycnt)
 		i = atomic.LoadInt64(&q.idlecnt)
 	}
-	s["rxbusy"] = 0
+	s["rxchannelbusy"] = 0
 	if b > 0 {
-		s["rxbusy"] = b * 100 / (b + i)
+		s["rxchannelbusy"] = b * 100 / (b + i)
 	}
 
 	return s

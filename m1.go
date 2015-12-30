@@ -33,7 +33,7 @@ type serverOne struct {
 func init() {
 	d := NewStatsDescriptors("1")
 	d.Register("event", StatsKindCount, StatsScopeServer)
-	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer)
+	d.Register("rxchannelbusy", StatsKindPercentage, StatsScopeServer)
 	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway)
 
 	props := make(map[string]interface{}, 1)
