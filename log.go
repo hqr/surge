@@ -72,16 +72,16 @@ func flushLog() {
 }
 
 func configLog(partial bool) {
-	s1 := fmt.Sprintf("\t    {numGateways:%d numServers:%d}", config.numGateways, config.numServers)
-	s2 := fmt.Sprintf("\t    {timeToRun:%v}", config.timeToRun)
-	s3 := fmt.Sprintf("\t    {linkbps:%.1fGbps linkbpsControl:%.1fGbps linkbpsData:%.1fGbps}",
+	s1 := fmt.Sprintf("\t    {numGateways:%d numServers:%d timeToRun:%v}", config.numGateways, config.numServers, config.timeToRun)
+	s2 := fmt.Sprintf("\t    {linkbps:%.1fGbps linkbpsControl:%.1fGbps linkbpsData:%.1fGbps}",
 		float64(configNetwork.linkbps)/gigb,
 		float64(configNetwork.linkbpsControl)/gigb,
 		float64(configNetwork.linkbpsData)/gigb)
-	s4 := fmt.Sprintf("\t    {sizeFrame:%vB sizeControlPDU:%vB}", configNetwork.sizeFrame, configNetwork.sizeControlPDU)
-	s5 := fmt.Sprintf("\t    {durationControlPDU:%v netdurationDataChunk:%v}", configNetwork.durationControlPDU, configNetwork.netdurationDataChunk)
-	s6 := fmt.Sprintf("\t    {sizeDataChunk:%vKB dskdurationDataChunk:%v diskbps:%.1fGbps}",
+	s3 := fmt.Sprintf("\t    {sizeFrame:%vB sizeControlPDU:%vB}", configNetwork.sizeFrame, configNetwork.sizeControlPDU)
+	s4 := fmt.Sprintf("\t    {durationControlPDU:%v netdurationDataChunk:%v}", configNetwork.durationControlPDU, configNetwork.netdurationDataChunk)
+	s5 := fmt.Sprintf("\t    {sizeDataChunk:%vKB dskdurationDataChunk:%v diskbps:%.1fGbps}",
 		configStorage.sizeDataChunk, configStorage.dskdurationDataChunk, float64(configStorage.diskbps)/gigb)
+	s6 := fmt.Sprintf("\t    {durationBidWindow:%v}", configReplicast.durationBidWindow)
 
 	if partial {
 		fmt.Println(s1)

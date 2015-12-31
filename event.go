@@ -173,7 +173,7 @@ func newMcastChunkPutAcceptEvent(gwy RunnerInterface, ngtgroup GroupInterface, c
 
 func (e *McastChunkPutAcceptEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[McastChunkPutAcceptEvent src=%v,tgt=%v,chunk#%d,rzv-group=%s]", e.source.String(), e.target.String(), printid, e.rzvgroup.String())
+	return fmt.Sprintf("[McastChunkPutAcceptEvent src=%v,tgt=%v,chunk#%d,%s]", e.source.String(), e.target.String(), printid, e.rzvgroup.String())
 }
 
 type BidEvent struct {

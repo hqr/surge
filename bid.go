@@ -263,7 +263,9 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 				continue
 			}
 			if earliestnotify.After(bid.win.left) {
-				break
+				if bid.win.right.Sub(earliestnotify) < configReplicast.durationBidWindow {
+					break
+				}
 			}
 			q.canceled--
 			s := fmt.Sprintf("(%d/%d)", k, l-1)
@@ -308,7 +310,7 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 	//
 	if l == 0 && diskdelay < configNetwork.netdurationDataChunk {
 		bid.win.right = bid.win.right.Add(configNetwork.netdurationDataChunk * 2)
-		log("srv-idle-extending-bid-win", bid.String())
+		log("srv-idle-extend-bid", bid.String())
 	}
 
 	q.insertBid(bid)
@@ -393,29 +395,29 @@ func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 	log("bid-accept-trim", bid.String(), computedbid.String())
 
 	//
-	// extend the next canceled bids if exists
-	//
-	l := len(q.pending)
-	if configReplicast.durationBidGap > 0 && k < l-1 {
-		nextbid := q.pending[k+1]
-		d := nextbid.win.left.Sub(computedbid.win.right)
-		if nextbid.state == bidStateCanceled && d > 0 {
-			nextbid.win.left = computedbid.win.right.Add(config.timeIncStep)
-			log(LogV, "next-canceled-bid-earlier-by", nextbid.String(), d)
-		}
-	}
-	//
 	// trim the accepted bid
 	//
 	bid.win.left = computedbid.win.left
 	bid.win.right = computedbid.win.right
 
-	if configReplicast.durationBidGap > 0 && k > 0 {
+	//
+	// adjust adjacent canceled bids if exist
+	//
+	l := len(q.pending)
+	if k < l-1 {
+		nextbid := q.pending[k+1]
+		d := nextbid.win.left.Sub(bid.win.right)
+		if nextbid.state == bidStateCanceled && d > configReplicast.durationBidGap+configNetwork.durationControlPDU {
+			nextbid.win.left = bid.win.right.Add(configReplicast.durationBidGap)
+			log("trim:bid-canceled-extend-left", nextbid.String(), d-configReplicast.durationBidGap)
+		}
+	}
+	if k > 0 {
 		prevbid := q.pending[k-1]
 		d := bid.win.left.Sub(prevbid.win.right)
-		if prevbid.state == bidStateCanceled && d > 0 {
-			prevbid.win.right = bid.win.left.Add(-config.timeIncStep)
-			log(LogV, "prev-canceled-bid-extend-by", prevbid.String(), d)
+		if prevbid.state == bidStateCanceled && d > configReplicast.durationBidGap+configNetwork.durationControlPDU {
+			prevbid.win.right = bid.win.left.Add(-configReplicast.durationBidGap)
+			log("trim:bid-canceled-extend-right", prevbid.String(), d-configReplicast.durationBidGap)
 		}
 	}
 }
@@ -439,11 +441,13 @@ func (q *ServerBidQueue) expire() {
 			switch bid.state {
 			case bidStateCanceled:
 				if earliestnotify.After(bid.win.left) {
-					q.deleteBid(k)
-					log("expired-and-removed", q.r.String(), bid.String(), k)
-					q.canceled--
-					keepwalking = true
-					break
+					if bid.win.right.Sub(earliestnotify) < configReplicast.durationBidWindow {
+						q.deleteBid(k)
+						log("expired-and-removed", q.r.String(), bid.String(), k)
+						q.canceled--
+						keepwalking = true
+						break
+					}
 				}
 			case bidStateTentative:
 				if earliestEndReceive.After(bid.win.right) {
@@ -505,11 +509,10 @@ func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 	assert(l == configReplicast.sizeNgtGroup)
 	var begin, end time.Time
 	earliestbegin := Now.Add(configNetwork.durationControlPDU)
-	// minduration is the minimal size time window required to execute
-	// a given put-chunk
-	// TODO option: extra half chunk-duration is maybe a bit conservative:
-	//              make it configurable?
-	var minduration time.Duration = configNetwork.netdurationDataChunk + (configNetwork.netdurationDataChunk >> 1)
+	//
+	// minduration is the minimal time window to execute put-chunk
+	// - from the gateway's perspective (TODO: make it configurable)
+	var minduration time.Duration = configNetwork.netdurationDataChunk + configNetwork.durationControlPDU + config.timeClusterTrip
 
 	//
 	// BidQueue is sorted, the code uses its sorted-ness by
@@ -537,13 +540,7 @@ func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 			}
 		}
 		d := end.Sub(begin)
-		// option: if d < minduration
-		// Note (TODO):
-		// chunk duration + 1.5 trip time is very close to an absolute minimum
-		// that may not work for an overloaded host running hundreds of
-		// preemptive goroutines
-		//
-		if d < configNetwork.netdurationDataChunk+config.timeClusterTrip+(config.timeClusterTrip>>1) {
+		if d < minduration {
 			continue
 		}
 		// found! adjust the time window to take only what's required and no more

@@ -39,6 +39,7 @@ package surge
 import (
 	"fmt"
 	"os"
+	"sort"
 	"sync/atomic"
 	"time"
 )
@@ -192,10 +193,17 @@ func (r *gatewaySeven) M7receivebid(ev EventInterface) error {
 	// fill in the multicast rendezvous group for chunk data transfer
 	// note that pending[] bids at these point are already "filtered"
 	// to contain only those bids that were selected
+	ids := make([]int, configStorage.numReplicas)
 	for k := 0; k < configStorage.numReplicas; k++ {
 		bid := r.bids.pending[k]
 		assert(ngobj.hasmember(bid.tio.target))
-		r.rzvgroup.servers[k] = bid.tio.target
+		ids[k] = bid.tio.target.GetID()
+
+		assert(r.eps[ids[k]] == bid.tio.target)
+	}
+	sort.Ints(ids)
+	for k := 0; k < configStorage.numReplicas; k++ {
+		r.rzvgroup.servers[k] = r.eps[ids[k]]
 	}
 
 	r.rzvgroup.init(ngobj.getID(), false)
