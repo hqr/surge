@@ -64,6 +64,7 @@ type ConfigStorage struct {
 	// derived from other config, for convenience
 	dskdurationDataChunk time.Duration
 	dskdurationFrame     time.Duration
+	diskbps              int64
 }
 
 var configStorage = ConfigStorage{
@@ -225,6 +226,10 @@ func init() {
 
 	configStorage.dskdurationDataChunk = sizeToDuration(configStorage.sizeDataChunk, "KB", int64(configStorage.diskMBps), "MB")
 	configStorage.dskdurationFrame = sizeToDuration(configNetwork.sizeFrame, "B", int64(configStorage.diskMBps), "MB")
+	//
+	// Note: MiB effectively, here and in sizeToDuration()
+	//
+	configStorage.diskbps = int64(configStorage.diskMBps) * 1024 * 1024 * 8
 
 	configReplicast.durationBidGap = sizeToDuration(configReplicast.bidGapBytes, "B", configNetwork.linkbpsData, "b")
 	configReplicast.durationBidWindow = (configNetwork.netdurationDataChunk + config.timeClusterTrip) * time.Duration(configReplicast.bidMultiplierPct) / time.Duration(100)

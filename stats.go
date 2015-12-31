@@ -149,10 +149,9 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 					mstats.totalsrv[n] += val
 				}
 			} else if d.kind == StatsKindPercentage {
-				// adjust the average
-				mstats.allNodeStats[ij][n] = (mstats.allNodeStats[ij][n]*(mstats.iter-1) + val + 1) / mstats.iter
-				// running average optional & later..
-				// mstats.allNodeStats[ij][n] = (mstats.allNodeStats[ij][n]*60 + val*40) / 100
+				// StatsKindPercentage implies averaging done elsewhere, e.g.
+				// the busy %% averaging continuously over cumulative time
+				mstats.allNodeStats[ij][n] = val
 				if scope == StatsScopeGateway {
 					newgwy += val
 				} else if scope == StatsScopeServer {

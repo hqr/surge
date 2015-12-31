@@ -255,7 +255,7 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 	// pending in the disk queue, waiting to get written,
 	// in which case we skip down to create a new bid to the right of the
 	// existing rightmost..
-	if diskdelay == 0 && q.canceled > 0 {
+	if diskdelay < configStorage.dskdurationDataChunk && q.canceled > 0 {
 		assert(l > 0)
 		for k := l - 1; k >= 0; k-- {
 			bid := q.pending[k]
@@ -327,20 +327,41 @@ func (q *ServerBidQueue) insertBid(bid *PutBid) {
 // cancelBid is called in the server's receive path, to handle
 // a non-accepted (canceled) bid
 func (q *ServerBidQueue) cancelBid(replytio *Tio) {
+	q.expire()
+
 	cid := replytio.cid
-	_, bid := q.findBid(bidFindChunk, cid)
+	k, bid := q.findBid(bidFindChunk, cid)
 	if bid == nil {
 		log("WARNING: failed to find (expired) bid", q.r.String(), replytio.String())
 		return
 	}
 	assert(bid.tio == replytio)
-
 	assert(bid.state == bidStateTentative)
+
 	bid.state = bidStateCanceled
-	log(bid.String())
+	log(LogV, bid.String())
 	q.canceled++
 
-	q.expire()
+	// try merge with adjacents
+	l := len(q.pending)
+	if k < l-1 {
+		nextbid := q.pending[k+1]
+		if nextbid.state == bidStateCanceled {
+			q.deleteBid(k + 1)
+			q.canceled--
+			bid.win.right = nextbid.win.right
+			log("bid-canceled-merge-right", bid.String())
+		}
+	}
+	if k > 0 {
+		prevbid := q.pending[k-1]
+		if prevbid.state == bidStateCanceled {
+			q.deleteBid(k - 1)
+			q.canceled--
+			bid.win.left = prevbid.win.left
+			log("bid-canceled-merge-left", bid.String())
+		}
+	}
 }
 
 // acceptBid is called in the server's receive path, to accept the bid as the
@@ -357,6 +378,8 @@ func (q *ServerBidQueue) cancelBid(replytio *Tio) {
 // window of its next canceled reservation, if exists.
 //
 func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
+	q.expire()
+
 	cid := replytio.cid
 	k, bid := q.findBid(bidFindChunk, cid)
 	assert(bid != nil)
@@ -367,19 +390,18 @@ func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 	assert(!bid.win.right.Before(computedbid.win.right), computedbid.String()+","+bid.String())
 
 	bid.state = bidStateAccepted
-	log("bid-accept-trim", bid.String())
+	log("bid-accept-trim", bid.String(), computedbid.String())
 
 	//
 	// extend the next canceled bids if exists
 	//
 	l := len(q.pending)
-	if k < l-1 {
+	if configReplicast.durationBidGap > 0 && k < l-1 {
 		nextbid := q.pending[k+1]
 		d := nextbid.win.left.Sub(computedbid.win.right)
-		// assert(d >= 0, computedbid.String()+","+bid.String()+","+nextbid.String())
 		if nextbid.state == bidStateCanceled && d > 0 {
 			nextbid.win.left = computedbid.win.right.Add(config.timeIncStep)
-			log("next-canceled-bid-earlier-by", nextbid.String(), d)
+			log(LogV, "next-canceled-bid-earlier-by", nextbid.String(), d)
 		}
 	}
 	//
@@ -388,7 +410,14 @@ func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 	bid.win.left = computedbid.win.left
 	bid.win.right = computedbid.win.right
 
-	q.expire()
+	if configReplicast.durationBidGap > 0 && k > 0 {
+		prevbid := q.pending[k-1]
+		d := bid.win.left.Sub(prevbid.win.right)
+		if prevbid.state == bidStateCanceled && d > 0 {
+			prevbid.win.right = bid.win.left.Add(-config.timeIncStep)
+			log(LogV, "prev-canceled-bid-extend-by", prevbid.String(), d)
+		}
+	}
 }
 
 // expire canceled bids

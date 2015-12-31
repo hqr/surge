@@ -34,6 +34,12 @@ const (
 	ChunkDone
 )
 
+const (
+	NetControlBusy int = iota
+	NetDataBusy
+	DiskBusy
+)
+
 //===============================================================
 //
 // GatewayCommon
@@ -348,6 +354,7 @@ type ServerUch struct {
 	putpipeline    *Pipeline       // tio pipeline
 	rxbusydata     int64           // time.Duration receive-link busy for data
 	rxbusydatactrl int64           // time.Duration receive-link busy for data+control
+	diskbusy       int64           // time.Duration (disk)
 	timeResetStats time.Time
 	rb             RateBucketInterface
 }
@@ -395,7 +402,7 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 	assert(group != nil || flow.repnum == ev.num)
 
 	// flow.tobandwidth == configNetwork.linkbpsData
-	r.addBusyDuration(ev.GetSize(), flow.tobandwidth, true)
+	r.addBusyDuration(ev.GetSize(), flow.tobandwidth, NetDataBusy)
 
 	x := ev.offset - flow.offset
 	assert(x <= configNetwork.sizeFrame, fmt.Sprintf("FATAL: out of order:%d:%s", ev.offset, flow.String()))
@@ -409,6 +416,7 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 	// postpone the ack until after the replica (chunk.sizeb) is written to disk
 	//
 	atdisk := r.disk.scheduleWrite(flow.totalbytes)
+	r.addBusyDuration(flow.totalbytes, configStorage.diskbps, DiskBusy)
 
 	tio := ev.GetTio()
 	putackev := newReplicaPutAckEvent(r.realobject(), gwy, flow, tio, atdisk)
@@ -441,9 +449,9 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 // atomic counters and reset them to zeros to collect new values with the
 // next iteration..
 func (r *ServerUch) GetStats(reset bool) NodeStats {
-	var a, d int64
+	var a, d, w int64
 	var s = make(map[string]int64, 8)
-	elapsed := int64(Now.Sub(r.timeResetStats))
+	elapsed := int64(Now.Sub(time.Time{})) // run time
 
 	num, _ := r.disk.queueDepth(DqdBuffers)
 	s["disk-queue-depth"] = int64(num)
@@ -451,25 +459,30 @@ func (r *ServerUch) GetStats(reset bool) NodeStats {
 	if reset {
 		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, 0)
 		s["rxbytes"] = atomic.SwapInt64(&r.rxbytestats, 0)
-		d = atomic.SwapInt64(&r.rxbusydata, 0)
-		a = atomic.SwapInt64(&r.rxbusydatactrl, 0)
 		r.timeResetStats = Now
 	} else {
 		s["txbytes"] = atomic.LoadInt64(&r.txbytestats)
 		s["rxbytes"] = atomic.LoadInt64(&r.rxbytestats)
-		d = atomic.LoadInt64(&r.rxbusydata)
-		a = atomic.LoadInt64(&r.rxbusydatactrl)
 	}
+	// cumulative
+	d = atomic.LoadInt64(&r.rxbusydata)
+	a = atomic.LoadInt64(&r.rxbusydatactrl)
+	w = atomic.LoadInt64(&r.diskbusy)
 
 	if d >= elapsed {
 		s["rxbusydata"] = 100
 	} else {
-		s["rxbusydata"] = d * 100 / elapsed
+		s["rxbusydata"] = (d + 5) * 100 / elapsed
 	}
 	if a >= elapsed {
 		s["rxbusy"] = 100
 	} else {
-		s["rxbusy"] = a * 100 / elapsed
+		s["rxbusy"] = (a + 5) * 100 / elapsed
+	}
+	if w >= elapsed {
+		s["diskbusy"] = 100
+	} else {
+		s["diskbusy"] = (w + 5) * 100 / elapsed
 	}
 	return s
 }
@@ -477,13 +490,18 @@ func (r *ServerUch) GetStats(reset bool) NodeStats {
 // link busy time based on the link's full bandwidth
 // e.g., when a 10GE link is constantly used to send/receive at 5Gpbs,
 // the link's busy percentage will compute as 50%
-func (r *ServerUch) addBusyDuration(sizeb int, bandwidth int64, isdata bool) {
-	d := time.Duration(sizeb*8) * time.Second / time.Duration(configNetwork.linkbps)
-	if isdata {
+func (r *ServerUch) addBusyDuration(sizeb int, bandwidth int64, kind int) {
+	switch kind {
+	case NetControlBusy:
+		d := time.Duration(sizeb*8) * time.Second / time.Duration(configNetwork.linkbps)
+		atomic.AddInt64(&r.rxbusydatactrl, int64(d))
+	case NetDataBusy:
+		d := time.Duration(sizeb*8) * time.Second / time.Duration(configNetwork.linkbps)
 		atomic.AddInt64(&r.rxbusydata, int64(d))
 		atomic.AddInt64(&r.rxbusydatactrl, int64(d))
-	} else {
-		atomic.AddInt64(&r.rxbusydatactrl, int64(d))
+	case DiskBusy:
+		d := time.Duration(sizeb*8) * time.Second / time.Duration(configStorage.diskbps)
+		atomic.AddInt64(&r.diskbusy, int64(d))
 	}
 }
 

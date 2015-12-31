@@ -231,11 +231,11 @@ func (q *RxQueue) NowIsDone() bool {
 	q.runlock()
 
 	if !q.busyidletick.Equal(Now) {
-		// nothing *really* pending means idle, otherwise busy
-		if realpendingdepth == 0 {
-			atomic.AddInt64(&q.idlecnt, int64(1))
-		} else {
+		// FIXME: redefine or remove
+		if realpendingdepth > 1 {
 			atomic.AddInt64(&q.busycnt, int64(1))
+		} else {
+			atomic.AddInt64(&q.idlecnt, int64(1))
 		}
 		q.busyidletick = Now
 	}
@@ -248,16 +248,14 @@ func (q *RxQueue) NowIsDone() bool {
 //
 func (q *RxQueue) GetStats(reset bool) NodeStats {
 	var b, i int64
-	s := map[string]int64{}
+	s := make(map[string]int64, 8)
 	if reset {
 		s["event"] = atomic.SwapInt64(&q.eventstats, 0)
-		b = atomic.SwapInt64(&q.busycnt, 0)
-		i = atomic.SwapInt64(&q.idlecnt, 0)
 	} else {
 		s["event"] = atomic.LoadInt64(&q.eventstats)
-		b = atomic.LoadInt64(&q.busycnt)
-		i = atomic.LoadInt64(&q.idlecnt)
 	}
+	b = atomic.LoadInt64(&q.busycnt)
+	i = atomic.LoadInt64(&q.idlecnt)
 	s["rxchannelbusy"] = 0
 	if b > 0 {
 		s["rxchannelbusy"] = b * 100 / (b + i)

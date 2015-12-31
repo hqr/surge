@@ -79,6 +79,7 @@ func init() {
 	d := NewStatsDescriptors("7")
 	d.Register("rxbusydata", StatsKindPercentage, StatsScopeServer)
 	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer) // data + control
+	d.Register("diskbusy", StatsKindPercentage, StatsScopeServer)
 	d.Register("chunk", StatsKindCount, StatsScopeGateway)
 	d.Register("replica", StatsKindCount, StatsScopeGateway)
 	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
@@ -436,7 +437,7 @@ func (r *serverSeven) Run() {
 			tio := ev.GetTio()
 			log(LogV, "SRV::rxcallback", ev.String(), r.String())
 			// ev.GetSize() == configNetwork.sizeControlPDU
-			r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, false)
+			r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, NetControlBusy)
 
 			tio.doStage(r, ev)
 		}
