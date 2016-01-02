@@ -149,6 +149,18 @@ func prepareToStopModel(model ModelInterface) {
 // MAIN LOOP
 //
 func RunAllModels() {
+	cnt := 0
+	onename := ""
+	for _, onename = range allNamesSorted {
+		if !strings.HasPrefix(onename, config.mprefix) {
+			continue
+		}
+		cnt++
+	}
+	if cnt == 1 {
+		nameLog(onename)
+	}
+
 	initLog()
 	defer terminateLog()
 	stdout := bufio.NewWriter(os.Stdout)

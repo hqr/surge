@@ -40,6 +40,16 @@ var logstream *bufio.Writer
 var logMutex = &sync.Mutex{}
 var logTimestamp = true
 
+func nameLog(n string) {
+	if config.LogFile != config.LogFileOrig {
+		return
+	}
+	if len(build) == 0 {
+		return
+	}
+	config.LogFile = "/tmp/" + fmt.Sprintf("log-m%s-%dx%d-%v-%s.csv", n, config.numGateways, config.numServers, config.timeToRun, build)
+}
+
 func initLog() {
 	if len(config.LogFile) > 0 {
 		var err error

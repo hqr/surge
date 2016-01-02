@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+var build string
+
 //
 // config: common and miscellaneous
 //
@@ -27,6 +29,8 @@ type Config struct {
 	LogFile                              string
 	DEBUG                                bool
 	srand                                int
+	// derived
+	LogFileOrig string
 }
 
 var config = Config{
@@ -91,6 +95,7 @@ type ConfigNetwork struct {
 	linkbpsControl       int64
 	linkbpsData          int64
 	netdurationDataChunk time.Duration
+	netdurationFrame     time.Duration
 }
 
 var configNetwork = ConfigNetwork{
@@ -131,6 +136,7 @@ type ConfigReplicast struct {
 	durationBidGap    time.Duration
 	durationBidWindow time.Duration
 	numNgtGroups      int
+	minduration       time.Duration
 }
 
 var configReplicast = ConfigReplicast{
@@ -168,6 +174,8 @@ func init() {
 
 	l2framePtr := flag.Int("l2frame", configNetwork.sizeFrame, "L2 frame size (bytes)")
 	linkbpsPtr := flag.Int64("linkbps", configNetwork.linkbps, "Network Link Bandwidth (bits/sec)")
+
+	buildPtr := flag.String("build", build, "build ID (as in: 'git rev-parse'), or any user-defined string to be used as a logfile name suffix")
 	//
 	// parse command line
 	//
@@ -189,7 +197,9 @@ func init() {
 
 	config.timeTrackIval = config.timeToRun / 10
 
+	config.LogFileOrig = config.LogFile
 	config.LogFile = *lfPtr
+
 	if *qPtr {
 		config.LogLevel = ""
 	} else if *vPtr {
@@ -212,6 +222,7 @@ func init() {
 	configNetwork.sizeFrame = *l2framePtr
 	configNetwork.linkbps = *linkbpsPtr
 
+	build = *buildPtr
 	//
 	// computed and assigned (here for convenience)
 	//
@@ -223,6 +234,7 @@ func init() {
 	configNetwork.linkbpsControl = configNetwork.linkbps
 	configNetwork.linkbpsData = configNetwork.linkbps
 	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbps)
+	configNetwork.netdurationFrame = time.Duration(configNetwork.sizeFrame*8) * time.Second / time.Duration(configNetwork.linkbps)
 
 	configStorage.dskdurationDataChunk = sizeToDuration(configStorage.sizeDataChunk, "KB", int64(configStorage.diskMBps), "MB")
 	configStorage.dskdurationFrame = sizeToDuration(configNetwork.sizeFrame, "B", int64(configStorage.diskMBps), "MB")
@@ -234,4 +246,7 @@ func init() {
 	configReplicast.durationBidGap = sizeToDuration(configReplicast.bidGapBytes, "B", configNetwork.linkbpsData, "b")
 	configReplicast.durationBidWindow = (configNetwork.netdurationDataChunk + config.timeClusterTrip) * time.Duration(configReplicast.bidMultiplierPct) / time.Duration(100)
 	configReplicast.numNgtGroups = config.numServers / configReplicast.sizeNgtGroup
+
+	// minimal time window from the gateway's perspective to execute put-chunk
+	configReplicast.minduration = configNetwork.netdurationDataChunk + configNetwork.netdurationFrame
 }

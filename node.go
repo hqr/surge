@@ -661,10 +661,9 @@ func (g *RzvGroup) String() string {
 	s := ""
 	for idx := range g.servers {
 		if g.servers[idx] == nil {
-			s += "<nil>"
-		} else {
-			s += g.servers[idx].String()
+			return "[rzv-group <nil>]"
 		}
+		s += g.servers[idx].String()
 		if idx < len(g.servers)-1 {
 			s += ","
 		}

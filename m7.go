@@ -78,7 +78,8 @@ func init() {
 	m7.putpipeline = p
 
 	d := NewStatsDescriptors("7")
-	d.Register("rxbusydata", StatsKindPercentage, StatsScopeServer)
+	// uncomment if needed
+	// d.Register("rxbusydata", StatsKindPercentage, StatsScopeServer)
 	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer) // data + control
 	d.Register("diskbusy", StatsKindPercentage, StatsScopeServer)
 	d.Register("chunk", StatsKindCount, StatsScopeGateway)
@@ -587,4 +588,7 @@ func (m *modelSeven) Configure() {
 
 	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbpsControl)
 	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbpsData)
+	configNetwork.netdurationFrame = time.Duration(configNetwork.sizeFrame*8) * time.Second / time.Duration(configNetwork.linkbpsData)
+
+	configReplicast.minduration = configNetwork.netdurationDataChunk + configNetwork.netdurationFrame
 }
