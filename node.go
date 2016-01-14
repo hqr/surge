@@ -216,7 +216,7 @@ func (r *GatewayUch) startNewReplica(num int) {
 	flow.tio.next(ev, SmethodWait)
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
 	flow.rb.use(int64(configNetwork.sizeControlPDU * 8))
-	flow.timeTxDone = Now.Add(configNetwork.durationControlPDU) // FIXME: assuming 10GE
+	flow.timeTxDone = Now.Add(configNetwork.durationControlPDU)
 }
 
 // sendata sends data packets (frames) in the form of ReplicaDataEvent,
@@ -224,6 +224,7 @@ func (r *GatewayUch) startNewReplica(num int) {
 // The sending is throttled both by the gateway's own egress link (r.rb)
 // and the end-to-end flow (flow,rb)
 func (r *GatewayUch) sendata() {
+	rep := r.replica
 	for _, tio := range r.tios {
 		flow := tio.flow
 		srv := tio.target
@@ -259,7 +260,7 @@ func (r *GatewayUch) sendata() {
 		}
 
 		flow.offset += frsize
-		ev := newReplicaDataEvent(r.realobject(), srv, r.replica, flow, frsize, flow.tio)
+		ev := newReplicaDataEvent(r.realobject(), srv, rep.chunk.cid, rep.num, flow, frsize)
 
 		// transmit given the current flow's bandwidth
 		d := time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth)
@@ -517,7 +518,7 @@ type GroupInterface interface {
 	hasmember(r RunnerInterface) bool
 	getmembers() []RunnerInterface
 
-	// FIXME: not used
+	// NOTE: cloning based group send not currently used
 	SendGroup(ev EventInterface, how SendMethodEnum, cloner EventClonerInterface) bool
 
 	String() string
@@ -593,6 +594,7 @@ type RzvGroup struct {
 	id      int64
 	servers []RunnerInterface
 	ngtid   int
+	unicast bool
 }
 
 func (g *RzvGroup) init(ngtid int, cleanup bool) {
@@ -604,14 +606,6 @@ func (g *RzvGroup) init(ngtid int, cleanup bool) {
 	}
 	g.ngtid = ngtid
 	g.id = 0
-	for _, srv := range g.servers {
-		if srv == nil {
-			g.id = 0
-			return
-		}
-		assert(srv.GetID() < 1000)
-		g.id = int64(1000)*g.id + int64(srv.GetID())
-	}
 }
 
 func (g *RzvGroup) getID() int {
@@ -623,12 +617,17 @@ func (g *RzvGroup) getID64() int64 {
 }
 
 func (g *RzvGroup) getCount() int {
+	cnt := 0
 	for _, srv := range g.servers {
 		if srv == nil {
+			if g.unicast {
+				continue
+			}
 			return 0
 		}
+		cnt++
 	}
-	return len(g.servers)
+	return cnt
 }
 
 func (g *RzvGroup) hasmember(r RunnerInterface) bool {
@@ -661,12 +660,18 @@ func (g *RzvGroup) String() string {
 	s := ""
 	for idx := range g.servers {
 		if g.servers[idx] == nil {
+			if g.unicast {
+				continue
+			}
 			return "[rzv-group <nil>]"
 		}
-		s += g.servers[idx].String()
-		if idx < len(g.servers)-1 {
+		if len(s) > 0 {
 			s += ","
 		}
+		s += g.servers[idx].String()
+	}
+	if g.unicast {
+		return fmt.Sprintf("[rzv-group-unicast %s]", s)
 	}
 	return fmt.Sprintf("[rzv-group %s]", s)
 }

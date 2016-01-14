@@ -45,21 +45,26 @@ type Tio struct {
 	done  bool
 	err   error
 
-	cid      int64
-	chunksid int64
-	parent   *Tio
-	flow     *Flow
-	children map[RunnerInterface]*Tio
-	repnum   int
-	target   RunnerInterface
+	cid            int64
+	chunksid       int64
+	parent         *Tio
+	flow           *Flow
+	children       map[RunnerInterface]*Tio
+	repnum         int
+	target         RunnerInterface
+	removeWhenDone bool
 }
 
 func newTio(src RunnerInterface, p *Pipeline, args []interface{}) *Tio {
 	assert(p.Count() > 0)
-
 	uqid, printid := uqrandom64(src.GetID())
-	tio := &Tio{id: uqid, sid: printid, pipeline: p, index: -1, source: src}
-
+	tio := &Tio{
+		id:             uqid,
+		sid:            printid,
+		pipeline:       p,
+		index:          -1,
+		source:         src,
+		removeWhenDone: true}
 	for i := 0; i < len(args); i++ {
 		tio.setOneArg(args[i])
 	}
@@ -147,7 +152,17 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 	stage := tio.pipeline.GetStage(tio.index)
 	assert(tio.index == stage.index)
 
+	//
+	// event-enforced staging happens here:
+	//
+	tiostage := tioevent.GetTioStage()
+	if len(tiostage) > 0 {
+		tio.index = tio.pipeline.IndexOf(tiostage)
+		stage = tio.pipeline.GetStage(tio.index)
+	}
+
 	methodValue := reflect.ValueOf(r).MethodByName(stage.handler)
+	// assert(!methodValue.IsValid())
 	rcValue := methodValue.Call([]reflect.Value{reflect.ValueOf(tioevent)})
 
 	// tio's own sources finalizes
@@ -156,12 +171,16 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 		log(LogV, "dostage-tio-done", r.String(), tio.String())
 		tio.done = true
 		if tio.parent == nil {
-			tio.source.RemoveTio(tio)
+			if tio.removeWhenDone {
+				tio.source.RemoveTio(tio)
+			}
 		} else {
 			assert(tio.parent.haschild(tio))
-			delete(tio.parent.children, tio.target)
-			if len(tio.parent.children) == 0 {
-				tio.parent.source.RemoveTio(tio.parent)
+			if tio.removeWhenDone {
+				delete(tio.parent.children, tio.target)
+				if len(tio.parent.children) == 0 && tio.parent.removeWhenDone {
+					tio.parent.source.RemoveTio(tio.parent)
+				}
 			}
 		}
 	}

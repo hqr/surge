@@ -26,12 +26,11 @@ type bidStateEnum int
 
 // bidStateEnum enumerates the 3 possible states of any outstanding server's bid
 //
-// a bid starts its life as a "tentative" (bidStateTentative) and over its lifecycle
+// a bid starts as a "tentative" (bidStateTentative) and over its lifecycle
 // undergoes the following transitions:
 // 	* tentative ==> accepted
 // 	* tentative ==> canceled
-// 	* tentative ==> canceled ==> accepted
-// (the last transition is marked as "un-canceling" in the log)
+// 	* canceled ==> accepted (a.k.a. "un-canceling" in the log)
 //
 // Further, an accepted chunk gets removed by the server when the latter
 // completes the corresponding requests and sends an ACK to the requesting
@@ -70,6 +69,25 @@ type TimWin struct {
 	right time.Time
 }
 
+func (win *TimWin) isNil() bool {
+	return win.left.Equal(TimeNil) && win.right.Equal(TimeNil)
+}
+
+func (win *TimWin) String() string {
+	if win.left.Equal(TimeNil) && win.right.Equal(TimeNil) {
+		return "(-,-)"
+	}
+	left := win.left.Sub(time.Time{})
+	right := win.right.Sub(time.Time{})
+	if !win.left.Equal(TimeNil) && !win.right.Equal(TimeNil) {
+		return fmt.Sprintf("(%11.10v,%11.10v)]", left, right)
+	}
+	if win.left.Equal(TimeNil) {
+		return fmt.Sprintf("(-,%11.10v)]", right)
+	}
+	return fmt.Sprintf("(%11.10v,-)]", left)
+}
+
 type PutBid struct {
 	crtime time.Time    // this bid creation time
 	win    TimWin       // time window reserved for requesting gateway
@@ -78,7 +96,7 @@ type PutBid struct {
 }
 
 func NewPutBid(io *Tio, begin time.Time, args ...interface{}) *PutBid {
-	// FIXME TODO: fixed-size chunk
+	// TODO: fixed-size chunk
 	end := begin.Add(configReplicast.durationBidWindow)
 	bid := &PutBid{
 		crtime: Now,
@@ -114,14 +132,12 @@ func (bid *PutBid) stringState() string {
 }
 
 func (bid *PutBid) String() string {
-	left := bid.win.left.Sub(time.Time{})
-	right := bid.win.right.Sub(time.Time{})
 	s := bid.stringState()
 	if bid.tio.target != nil {
 		tgt := bid.tio.target.String()
-		return fmt.Sprintf("[%s(chunk#%d):srv=%v,(%11.10v,%11.10v),gwy=%v]", s, bid.tio.chunksid, tgt, left, right, bid.tio.source.String())
+		return fmt.Sprintf("[%s(chunk#%d):srv=%v,%s,gwy=%v]", s, bid.tio.chunksid, tgt, bid.win.String(), bid.tio.source.String())
 	}
-	return fmt.Sprintf("[(chunk#%d):(%11.10v,%11.10v),gwy=%v]", bid.tio.chunksid, left, right, bid.tio.source.String())
+	return fmt.Sprintf("[(chunk#%d):%s,gwy=%v]", bid.tio.chunksid, bid.win.String(), bid.tio.source.String())
 }
 
 //
@@ -217,37 +233,47 @@ func (q *BidQueue) StringBids(includestate bool) string {
 }
 
 //=====================================================================
-// type ServerBidQueue
+// type ServerRegBidQueue
 //=====================================================================
-// ServerBidQueue is a BidQueue of bids issued by a single given storage
-// server. The object embeds BidQueue where each bid (PutBid type) is
+// ServerRegBidQueue is a BidQueue of bids issued by a single given storage
+// server at the earliest possible time, given the current server's
+// conditions, including:
+// - already existing bids
+// - disk queue, or rather its size versus the configured maximum.
+//
+// The object embeds BidQueue where each bid (PutBid type) is
 // in one of the 3 enumerated states, as per bidStateEnum. In addition
 // to its state, each bid contains a time window the server reserves
 // for the requesting gateway.
 //
-// In addition to being a sorted BidQueue, ServerBidQueue tracks the count
+// There's a regular and fixed distance between any two adjacent bids
+// in this queue, which makes it Reg(ular)BidQueue.
+// (note: compare with ServerSparseBidQueue type)
+//
+// In addition to being a sorted BidQueue, ServerRegBidQueue tracks the count
 // of canceled bids resulting from the server _not_ being selected for the
 // transaction.
+//
 // A canceled bid may be further re-reserved, fully or partially, by another
 // storage gateway.
 //
-type ServerBidQueue struct {
+type ServerRegBidQueue struct {
 	BidQueue
 	canceled int
 }
 
-func NewServerBidQueue(ri RunnerInterface, size int) *ServerBidQueue {
+func NewServerRegBidQueue(ri RunnerInterface, size int) *ServerRegBidQueue {
 	q := NewBidQueue(ri, size)
-	return &ServerBidQueue{*q, 0}
+	return &ServerRegBidQueue{*q, 0}
 }
 
 // createBid() generates a new PutBid that the server, owner of this
-// ServerBidQueue, then sends to the requesting storage gateway.
+// ServerRegBidQueue, then sends to the requesting storage gateway.
 // The latter collects all bids from the group of servers that includes
 // this server, first,
 // and selects certain criteria-satisfying configStorage.numReplicas
 // number of the bids, second.
-// The gateway's logic is coded inside filterBestBids() function
+// The gateway's logic is coded inside findBestIntersection() function
 // which can be viewed as a client-side counterpart of this createBid()
 //
 // createBid() itself walks a thin line, so to speak. On one hand, the
@@ -255,15 +281,15 @@ func NewServerBidQueue(ri RunnerInterface, size int) *ServerBidQueue {
 // of the subsequent overlap between all collected bids, the "overlap"
 // that must further accomodate the request in question.
 //
-// The corresponding logic is in the gateway's filterBestBids() method, where
-// filterBestBids() failure causes chunk abort with subsequent rescheduling.
+// The corresponding logic is in the gateway's findBestIntersection() method, where
+// findBestIntersection() failure causes chunk abort with subsequent rescheduling.
 //
 // On another hand, bid overprovisioning leads to cumulative idle time and,
 // ultimately, underperforming server and the entire cluster.
 //
 // More comments inside.
 //
-func (q *ServerBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
+func (q *ServerRegBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 	q.expire()
 
 	// the earliest time the new bid created here can possibly reach
@@ -333,7 +359,7 @@ func (q *ServerBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 	return bid
 }
 
-func (q *ServerBidQueue) insertBid(bid *PutBid) {
+func (q *ServerRegBidQueue) insertBid(bid *PutBid) {
 	l := len(q.pending)
 	if l == cap(q.pending) {
 		log(LogVV, "growing bidqueue", q.r.String(), cap(q.pending))
@@ -344,15 +370,13 @@ func (q *ServerBidQueue) insertBid(bid *PutBid) {
 
 // cancelBid is called in the server's receive path, to handle
 // a non-accepted (canceled) bid
-func (q *ServerBidQueue) cancelBid(replytio *Tio) {
+func (q *ServerRegBidQueue) cancelBid(replytio *Tio) {
 	q.expire()
 
 	cid := replytio.cid
 	k, bid := q.findBid(bidFindChunk, cid)
-	if bid == nil {
-		log("WARNING: failed to find (expired) bid", q.r.String(), replytio.String())
-		return
-	}
+
+	assert(bid != nil, "failed to find bid,"+q.r.String()+","+replytio.String())
 	assert(bid.tio == replytio)
 	assert(bid.state == bidStateTentative)
 
@@ -395,7 +419,7 @@ func (q *ServerBidQueue) cancelBid(replytio *Tio) {
 // the newly accepted bid while simultaneously trying to extend the time
 // window of its next canceled reservation, if exists.
 //
-func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
+func (q *ServerRegBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 	q.expire()
 
 	cid := replytio.cid
@@ -442,7 +466,7 @@ func (q *ServerBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 // Note that "tentative" bids are normally get canceled first while accepted
 // bids do get deleted explicitly upon IO completion, hence:
 // two logged warnings below
-func (q *ServerBidQueue) expire() {
+func (q *ServerRegBidQueue) expire() {
 	// first, forget canceled bids on top of the queue
 	l := len(q.pending)
 	for k := l - 1; k >= 0; k-- {
@@ -495,12 +519,99 @@ func (q *ServerBidQueue) expire() {
 }
 
 //=====================================================================
+// type ServerSparseBidQueue
+//=====================================================================
+// ServerSparseBidQueue is a BidQueue of bids issued by a single given storage
+// server at or after the requested time, given the current server's
+// conditions, including:
+// - already existing bids
+// - disk queue, or rather its size versus the configured maximum.
+//
+// The object embeds BidQueue where each bid (PutBid type) is
+// in one of the 3 enumerated states, as per bidStateEnum. In addition
+// to its state, each bid contains a time window the server reserves
+// for the requesting gateway.
+//
+// Unlike the "regular" bid queue type, ServerSparseBidQueue does not
+// keep canceled bids around and does not rely on regular inter-bid gap
+// (note: compare with ServerRegBidQueue type)
+//
+type ServerSparseBidQueue struct {
+	BidQueue
+}
+
+func NewServerSparseBidQueue(ri RunnerInterface, size int) *ServerSparseBidQueue {
+	q := NewBidQueue(ri, size)
+	return &ServerSparseBidQueue{*q}
+}
+
+func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid {
+	// the earliest time can possibly notify the requesting gateway
+	earliestnotify := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip)
+	earliestdiskdelay := Now.Add(diskdelay)
+
+	newleft := rwin.left
+	if newleft.Equal(TimeNil) {
+		newleft = Now
+	}
+	if newleft.Before(earliestnotify) {
+		newleft = earliestnotify
+	}
+	if newleft.Before(earliestdiskdelay) {
+		newleft = earliestdiskdelay
+	}
+	for k := 0; k < len(q.pending); k++ {
+		bid := q.pending[k]
+		if newleft.Before(bid.win.left) {
+			if bid.win.left.Sub(newleft) >= configReplicast.durationBidWindow+configReplicast.durationBidGap {
+				break
+			}
+		}
+		earliestnextleft := bid.win.right.Add(configReplicast.durationBidGap + config.timeClusterTrip)
+		if newleft.Before(earliestnextleft) {
+			newleft = earliestnextleft
+		}
+	}
+	bid := NewPutBid(tio, newleft)
+	q.insertBid(bid)
+	return bid
+}
+
+func (q *ServerSparseBidQueue) cancelBid(replytio *Tio) {
+	cid := replytio.cid
+	k, bid := q.findBid(bidFindChunk, cid)
+
+	assert(bid != nil, "failed to find bid,"+q.r.String()+","+replytio.String())
+	assert(bid.tio == replytio)
+	assert(bid.state == bidStateTentative)
+
+	q.deleteBid(k)
+	log(LogV, bid.String())
+}
+
+func (q *ServerSparseBidQueue) acceptBid(replytio *Tio, mybid *PutBid) {
+	cid := replytio.cid
+	_, bid := q.findBid(bidFindChunk, cid)
+	assert(bid != nil, "WARNING: failed to find bid,"+q.r.String()+","+replytio.String())
+
+	assert(bid.state == bidStateTentative)
+	assert(bid.tio == replytio)
+	assert(!bid.win.left.After(mybid.win.left), mybid.String()+","+bid.String())
+	assert(!bid.win.right.Before(mybid.win.right), mybid.String()+","+bid.String())
+
+	bid.state = bidStateAccepted
+	log("bid-accept", bid.String(), mybid.String())
+	bid.win.left = mybid.win.left
+	bid.win.right = mybid.win.right
+}
+
+//=====================================================================
 // GatewayBidQueue
 //=====================================================================
 // GatewayBidQueue is a BidQueue of the bids generated by targeted servers
 // in response to the gateway's IO (tio) request.
 // Gateway accumulates the bids and, once the group-size count is reached,
-// "filters" them through the filterBestBids() method of the GatewayBidQueue
+// "filters" them through the findBestIntersection() method of the GatewayBidQueue
 //
 type GatewayBidQueue struct {
 	BidQueue
@@ -520,10 +631,10 @@ func (q *GatewayBidQueue) receiveBid(tio *Tio, bid *PutBid) int {
 	return len(q.pending)
 }
 
-// filterBestBids selects the best configStorage.numReplicas bids,
+// findBestIntersection selects the best configStorage.numReplicas bids,
 // if possible.
 //
-func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
+func (q *GatewayBidQueue) findBestIntersection(chunk *Chunk) *PutBid {
 	l := len(q.pending)
 	assert(l == configReplicast.sizeNgtGroup)
 	var begin, end time.Time
@@ -601,6 +712,87 @@ func (q *GatewayBidQueue) filterBestBids(chunk *Chunk) *PutBid {
 	s := fmt.Sprintf("[computed-bid (chunk#%d):(%11.10v,%11.10v),gwy=%v]", tioparent.chunksid, left, right, q.r.String())
 	log(s)
 	return computedbid
+}
+
+// FIXME: initial version
+//        a) maxgap must be separately configured
+//        b) bid0 with no alternatives
+func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
+	//
+	// take the bid #0 and trim it right away
+	//
+	bid0 := q.pending[0]
+	end0 := bid0.win.left.Add(configReplicast.minduration)
+	assert(!bid0.win.right.Before(end0))
+	if bid0.win.right.After(end0) {
+		bid0.win.right = end0
+	}
+
+	maxgap := configReplicast.minduration / 3
+	if maxgap < configNetwork.netdurationFrame {
+		maxgap = configNetwork.netdurationFrame
+	}
+
+	// try to make sequence..
+	var bid1, bid2 *PutBid
+	if maxnum > 1 {
+		bid1 = q.findNextAdjacent(end0, maxgap, configReplicast.minduration)
+	}
+	if maxnum > 2 && bid1 != nil {
+		assert(bid1.win.right.Sub(bid1.win.left) >= configReplicast.minduration)
+		end1 := bid1.win.left.Add(configReplicast.minduration)
+		assert(!bid1.win.right.Before(end1))
+		bid2 = q.findNextAdjacent(end1, maxgap, configReplicast.minduration)
+	}
+	if bid2 != nil {
+		assert(bid2.win.right.Sub(bid2.win.left) >= configReplicast.minduration)
+		end2 := bid2.win.left.Add(configReplicast.minduration)
+		assert(!bid2.win.right.Before(end2))
+	}
+
+	// prepre filtered result queue
+	q.cleanup()
+	q.insertBid(bid0)
+	if bid1 != nil {
+		q.insertBid(bid1)
+		if bid2 != nil {
+			q.insertBid(bid2)
+		}
+		log("gwy-bid-sequence", q.r.String(), q.StringBids(false))
+	} else {
+		log(LogV, "gwy-bid-single", q.r.String(), bid0.String())
+	}
+}
+
+func (q *GatewayBidQueue) findNextAdjacent(endprev time.Time, maxgap time.Duration, minduration time.Duration) *PutBid {
+	l := len(q.pending)
+	for k := 1; k < l; k++ {
+		bid := q.pending[k]
+		// too distant in the future?
+		if bid.win.left.Sub(endprev) > maxgap {
+			break
+		}
+		// too close for the next chunk?
+		start := bid.win.right.Add(-minduration)
+		if start.Before(endprev) {
+			continue
+		}
+		//
+		// adjust, trim and yank from the queue
+		//
+		if bid.win.left.Before(endprev) {
+			assert(bid.win.right.After(endprev))
+			bid.win.left = endprev
+		}
+		end := bid.win.left.Add(minduration)
+		assert(!bid.win.right.Before(end))
+		if bid.win.right.After(end) {
+			bid.win.right = end
+		}
+		q.deleteBid(k)
+		return bid
+	}
+	return nil
 }
 
 func (q *GatewayBidQueue) cleanup() {

@@ -18,6 +18,7 @@ type EventInterface interface {
 	GetGroup() GroupInterface
 	GetSize() int // size in  bytes
 	IsMcast() bool
+	GetTioStage() string
 
 	String() string
 
@@ -47,6 +48,7 @@ type TimedAnyEvent struct {
 	targetgroup GroupInterface
 	sizeb       int // bytes
 	mcast       bool
+	tiostage    string
 }
 
 func newTimedAnyEvent(src RunnerInterface, when time.Duration, args ...interface{}) *TimedAnyEvent {
@@ -87,6 +89,8 @@ func (e *TimedAnyEvent) setOneArg(a interface{}) {
 		e.sizeb = a.(int)
 	case bool:
 		e.mcast = a.(bool)
+	case string:
+		e.tiostage = a.(string)
 	default:
 		assert(false, fmt.Sprintf("unexpected type: %#v", a))
 	}
@@ -103,6 +107,7 @@ func (e *TimedAnyEvent) GetTio() *Tio               { return e.tio }
 func (e *TimedAnyEvent) GetGroup() GroupInterface   { return e.targetgroup }
 func (e *TimedAnyEvent) GetSize() int               { return e.sizeb }
 func (e *TimedAnyEvent) IsMcast() bool              { return e.mcast }
+func (e *TimedAnyEvent) GetTioStage() string        { return e.tiostage }
 
 func (e *TimedAnyEvent) String() string {
 	dcreated := e.crtime.Sub(time.Time{})
@@ -116,7 +121,7 @@ func (e *TimedAnyEvent) String() string {
 
 //=====================================================================
 //
-// UCH* models
+// put-chunk unicast & multicast models: control & data
 //
 //=====================================================================
 type zEvent struct {
@@ -143,19 +148,29 @@ func newReplicaPutRequestEvent(gwy RunnerInterface, srv RunnerInterface, rep *Pu
 
 type McastChunkPutRequestEvent struct {
 	zControlEvent
-	sizeb int // size in bytes
+	sizeb    int       // size in bytes
+	winleft  time.Time // reserve bid at or after this time
+	rzvgroup *RzvGroup // rendezvous group that has been already negotiated via previous McastChunkPut...
 }
 
 func newMcastChunkPutRequestEvent(gwy RunnerInterface, group GroupInterface, chunk *Chunk, srv RunnerInterface, tio *Tio) *McastChunkPutRequestEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(gwy, at, group, srv, tio, true, configNetwork.sizeControlPDU)
+	cntrlev := &zControlEvent{zEvent{*timedev}, chunk.cid}
 
-	return &McastChunkPutRequestEvent{zControlEvent{zEvent{*timedev}, chunk.cid}, chunk.sizeb}
+	e := &McastChunkPutRequestEvent{zControlEvent: *cntrlev, sizeb: chunk.sizeb, winleft: TimeNil}
+	return e
 }
 
 func (e *McastChunkPutRequestEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[McastChunkPutRequestEvent src=%v,tgt=%v,chunk#%d,ngt-group=%s]", e.source.String(), e.target.String(), printid, e.targetgroup.String())
+	s := fmt.Sprintf("MCPRE src=%v,tgt=%v,chunk#%d,ngt-group=%s", e.source.String(), e.target.String(), printid, e.targetgroup.String())
+	win := &TimWin{e.winleft, TimeNil}
+
+	if win.isNil() {
+		return fmt.Sprintf("[%s]", s)
+	}
+	return fmt.Sprintf("[%s,win=%s]", s, win.String())
 }
 
 type McastChunkPutAcceptEvent struct {
@@ -173,7 +188,7 @@ func newMcastChunkPutAcceptEvent(gwy RunnerInterface, ngtgroup GroupInterface, c
 
 func (e *McastChunkPutAcceptEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[McastChunkPutAcceptEvent src=%v,tgt=%v,chunk#%d,%s]", e.source.String(), e.target.String(), printid, e.rzvgroup.String())
+	return fmt.Sprintf("[MCPAE src=%v,tgt=%v,chunk#%d,%s]", e.source.String(), e.target.String(), printid, e.rzvgroup.String())
 }
 
 type BidEvent struct {
@@ -183,7 +198,7 @@ type BidEvent struct {
 
 func (e *BidEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[McastBidEvent src=%v,tgt=%v,chunk#%d]", e.source.String(), e.target.String(), printid)
+	return fmt.Sprintf("[MBE src=%v,tgt=%v,chunk#%d]", e.source.String(), e.target.String(), printid)
 }
 
 func newBidEvent(srv RunnerInterface, gwy RunnerInterface, group GroupInterface, chunkid int64, bid *PutBid, tio *Tio) *BidEvent {
@@ -215,7 +230,7 @@ type ReplicaPutAckEvent struct {
 func (e *ReplicaPutAckEvent) String() string {
 	printid := uqrand(e.cid)
 	dtriggered := e.thtime.Sub(time.Time{})
-	return fmt.Sprintf("[PutAckEvent src=%v,tgt=%v,chunk#%d(%d),at=%11.10v]", e.source.String(), e.target.String(), printid, e.num, dtriggered)
+	return fmt.Sprintf("[RPAE src=%v,tgt=%v,chunk#%d(%d),at=%11.10v]", e.source.String(), e.target.String(), printid, e.num, dtriggered)
 }
 
 func newReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow, tio *Tio, atdisk time.Duration) *ReplicaPutAckEvent {
@@ -239,13 +254,15 @@ type ReplicaDataEvent struct {
 	zDataEvent
 }
 
-func newReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, flow *Flow, frsize int, tio *Tio) *ReplicaDataEvent {
+func newReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, cid int64, repnum int, flow *Flow, frsize int) *ReplicaDataEvent {
+	tio := flow.tio
+	assert(flow.cid == tio.cid)
+	assert(cid == tio.cid)
+	assert(flow.repnum == tio.repnum)
+
 	at := sizeToDuration(frsize, "B", flow.tobandwidth, "b") + config.timeClusterTrip
 	timedev := newTimedAnyEvent(gwy, at, srv, tio, frsize)
-	assert(flow.cid == tio.cid)
-	assert(flow.repnum == tio.repnum)
-	assert(tio.cid == rep.chunk.cid)
-	return &ReplicaDataEvent{zDataEvent{zEvent{*timedev}, rep.chunk.cid, rep.num, flow.offset, flow.tobandwidth}}
+	return &ReplicaDataEvent{zDataEvent{zEvent{*timedev}, cid, repnum, flow.offset, flow.tobandwidth}}
 }
 
 func (e *ReplicaDataEvent) String() string {
@@ -253,10 +270,10 @@ func (e *ReplicaDataEvent) String() string {
 	dcreated := e.crtime.Sub(time.Time{})
 	dtriggered := e.thtime.Sub(time.Time{})
 	if e.targetgroup == nil {
-		return fmt.Sprintf("[ReplicaDataEvent src=%v,tgt=%v,chunk#%d,num=%d,offset=%d,(%11.10v,%11.10v)]",
+		return fmt.Sprintf("[RDE src=%v,tgt=%v,chunk#%d,num=%d,offset=%d,(%11.10v,%11.10v)]",
 			e.source.String(), e.target.String(), printid, e.num, e.offset, dcreated, dtriggered)
 	}
-	return fmt.Sprintf("[mcast-ReplicaDataEvent src=%v,tgt=%v,group=%v,chunk#%d,offset=%d,(%11.10v,%11.10v)]",
+	return fmt.Sprintf("[mcast-RDE src=%v,tgt=%v,group=%v,chunk#%d,offset=%d,(%11.10v,%11.10v)]",
 		e.source.String(), e.target.String(), e.targetgroup.String(), printid, e.offset, dcreated, dtriggered)
 }
 

@@ -12,6 +12,12 @@ import (
 
 var build string
 
+const (
+	transportTypeDefault   = "default" // default for the model (or, the only supported)
+	transportTypeUnicast   = "unicast"
+	transportTypeMulticast = "multicast"
+)
+
 //
 // config: common and miscellaneous
 //
@@ -23,11 +29,11 @@ type Config struct {
 	timeStatsIval                        time.Duration
 	timeTrackIval                        time.Duration
 	timeToRun                            time.Duration
-	channelBuffer                        int
 	LogLevel                             string
 	realtimeLogStats                     time.Duration
 	LogFile                              string
 	DEBUG                                bool
+	channelBuffer                        int
 	srand                                int
 	// derived
 	LogFileOrig string
@@ -47,13 +53,13 @@ var config = Config{
 	timeTrackIval: time.Millisecond / 10,
 	timeToRun:     time.Millisecond, // ttr: total time to run
 
-	channelBuffer: 16,
-
 	LogLevel:         "", // quiet
-	LogFile:          "/tmp/log.csv",
 	realtimeLogStats: time.Second * 60,
+	LogFile:          "/tmp/log.csv",
 	DEBUG:            true,
-	srand:            1,
+
+	channelBuffer: 16,
+	srand:         1,
 }
 
 //
@@ -88,6 +94,8 @@ type ConfigNetwork struct {
 	sizeFrame      int
 	sizeControlPDU int
 	overheadpct    int
+	reserved       int
+	transportType  string
 	// derived from other config, for convenience
 	linkbpsorig          int64
 	maxratebucketval     int64
@@ -104,6 +112,8 @@ var configNetwork = ConfigNetwork{
 	sizeFrame:      9000, // L2 frame size (bytes)
 	sizeControlPDU: 1000, // solicited/control PDU size (bytes)
 	overheadpct:    1,    // L2 + L3 + L4 + L5 + arp, etc. overhead (%)
+
+	transportType: transportTypeDefault, // transportType* const above
 }
 
 //
@@ -141,7 +151,7 @@ type ConfigReplicast struct {
 
 var configReplicast = ConfigReplicast{
 	sizeNgtGroup:     9,
-	bidMultiplierPct: 150,
+	bidMultiplierPct: 140,
 	bidGapBytes:      0, // configNetwork.sizeControlPDU,
 	solicitedLinkPct: 90,
 }
@@ -155,7 +165,7 @@ func init() {
 
 	moPtr := flag.String("m", config.mprefix, "prefix that defines which models to run, use \"\" to run all")
 
-	trPtr := flag.Duration("ttr", config.timeToRun, "time to run, e.g. 1500us, 350ms, 15s")
+	trPtr := flag.Duration("ttr", config.timeToRun, "time to run, e.g. 1500us, 350ms, 15s (depending on the model and RAM/CPU, a 10ms run may take 30min and beyond)")
 
 	lfPtr := flag.String("log", config.LogFile, "log file, use -log=\"\" for stdout")
 
@@ -174,6 +184,7 @@ func init() {
 
 	l2framePtr := flag.Int("l2frame", configNetwork.sizeFrame, "L2 frame size (bytes)")
 	linkbpsPtr := flag.Int64("linkbps", configNetwork.linkbps, "Network Link Bandwidth (bits/sec)")
+	transportPtr := flag.String("transport", configNetwork.transportType, "transport type: [default | unicast | multicast]")
 
 	buildPtr := flag.String("build", build, "build ID (as in: 'git rev-parse'), or any user-defined string to be used as a logfile name suffix")
 	//
@@ -221,6 +232,7 @@ func init() {
 
 	configNetwork.sizeFrame = *l2framePtr
 	configNetwork.linkbps = *linkbpsPtr
+	configNetwork.transportType = *transportPtr
 
 	build = *buildPtr
 	//
@@ -229,10 +241,18 @@ func init() {
 	configNetwork.maxratebucketval = int64(configNetwork.sizeFrame*8) + int64(configNetwork.sizeControlPDU*8)
 	configNetwork.linkbpsorig = configNetwork.linkbps
 	configNetwork.linkbps = configNetwork.linkbps - configNetwork.linkbps*int64(configNetwork.overheadpct)/int64(100)
+
 	// the 4 confvars defaults below are based on the full linkbps bw
 	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
+
+	//
+	// NOTE: these two may be changed by the models that
+	//       separately provision network bandwidth for control and data
+	//       therefore, depending computed durations must change as well, accordingly
+	//
 	configNetwork.linkbpsControl = configNetwork.linkbps
 	configNetwork.linkbpsData = configNetwork.linkbps
+
 	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbps)
 	configNetwork.netdurationFrame = time.Duration(configNetwork.sizeFrame*8) * time.Second / time.Duration(configNetwork.linkbps)
 

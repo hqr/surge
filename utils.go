@@ -23,6 +23,7 @@ func assert(cond bool, args ...interface{}) {
 		}
 	}
 	// log(message)
+	flushLog()
 	panic(message)
 }
 

@@ -58,6 +58,15 @@ func (p *Pipeline) GetStage(idx int) *PipelineStage {
 	return &p.pslice[idx]
 }
 
+func (p *Pipeline) IndexOf(name string) int {
+	for i := 0; i < len(p.pslice); i++ {
+		if name == p.pslice[i].name {
+			return i
+		}
+	}
+	return -1
+}
+
 func (p *Pipeline) NewTio(src RunnerInterface, args ...interface{}) *Tio {
 	return newTio(src, p, args)
 }
