@@ -38,7 +38,6 @@ package surge
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -54,7 +53,6 @@ type modelSeven struct {
 type gatewaySeven struct {
 	GatewayMcast
 	bids        *GatewayBidQueue
-	NowMcasting int64
 	prevgroupid int
 }
 
@@ -78,15 +76,7 @@ func init() {
 	m7.putpipeline = p
 
 	d := NewStatsDescriptors("7")
-	// uncomment if needed
-	// d.Register("rxbusydata", StatsKindPercentage, StatsScopeServer)
-	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer) // data + control
-	d.Register("diskbusy", StatsKindPercentage, StatsScopeServer)
-	d.Register("chunk", StatsKindCount, StatsScopeGateway)
-	d.Register("replica", StatsKindCount, StatsScopeGateway)
-	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
-	d.Register("rxbytes", StatsKindByteCount, StatsScopeServer|StatsScopeGateway)
-	d.Register("disk-queue-depth", StatsKindSampleCount, StatsScopeServer)
+	d.registerCommonProtoStats()
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "Basic Replicast(tm)"
@@ -103,22 +93,8 @@ func init() {
 // config.numGateways) has a type gatewayFive and spends all its given runtime
 // inside its own goroutine.
 //
-// As per rxcallback below, the gateway handles the model's pipeline stages
-// (via generic doStage)
-//
 func (r *gatewaySeven) Run() {
 	r.state = RstateRunning
-
-	rxcallback := func(ev EventInterface) int {
-		tio := ev.GetTio()
-		log(LogV, "GWY::rxcallback", tio.String())
-		tio.doStage(r, ev)
-		if tio.done {
-			log(LogV, "tio-done", tio.String())
-			atomic.AddInt64(&r.tiostats, int64(1))
-		}
-		return ev.GetSize()
-	}
 
 	go func() {
 		for r.state == RstateRunning {
@@ -131,7 +107,7 @@ func (r *gatewaySeven) Run() {
 			}
 			// recv
 			r.receiveEnqueue()
-			r.processPendingEvents(rxcallback)
+			r.processPendingEvents(r.rxcallback)
 
 			// the second condition (rzvgroup.getCount() ...)
 			// corresponds to the post-negotiation phase when
@@ -397,16 +373,6 @@ func (r *gatewaySeven) sendata() {
 	}
 }
 
-//=============
-// multicast vs. system time
-//=============
-func (r *gatewaySeven) NowIsDone() bool {
-	if atomic.LoadInt64(&r.NowMcasting) > 0 {
-		return false
-	}
-	return r.RunnerBase.NowIsDone()
-}
-
 //==================================================================
 //
 // serverSeven methods
@@ -418,6 +384,7 @@ func (r *gatewaySeven) NowIsDone() bool {
 func (r *serverSeven) Run() {
 	r.state = RstateRunning
 
+	// FIXME: m7/m8 copy-paste
 	rxcallback := func(ev EventInterface) int {
 		switch ev.(type) {
 		case *ReplicaDataEvent:
@@ -551,7 +518,7 @@ func (m *modelSeven) NewGateway(i int) RunnerInterface {
 	gwy.rb = &DummyRateBucket{}
 
 	rgwy := &gatewaySeven{GatewayMcast: *gwy}
-	rgwy.rptr = rgwy
+	rgwy.rptr = rgwy // realobject
 	bids := NewGatewayBidQueue(rgwy)
 	rgwy.bids = bids
 	return rgwy
@@ -568,37 +535,5 @@ func (m *modelSeven) NewServer(i int) RunnerInterface {
 }
 
 func (m *modelSeven) Configure() {
-	rem := config.numServers % configReplicast.sizeNgtGroup
-	if rem > 0 {
-		// TODO: model.go to round up numServers
-		config.numServers -= rem
-		if config.numServers == configReplicast.sizeNgtGroup {
-			log(LogBoth, "Cannot execute the model with a single negotiating group configured, exiting..")
-			os.Exit(1)
-		}
-		log(LogBoth, "NOTE: adjusting the number of servers down, to be a multiple of negotiating group size:", config.numServers)
-	}
-	//
-	// NOTE: only for this model!
-	// recompute network durations based on the solicited (data) BW percentage and the transport type
-	//
-	if configNetwork.transportType != transportTypeUnicast {
-		configNetwork.linkbpsData = configNetwork.linkbps * int64(configReplicast.solicitedLinkPct) / int64(100)
-		configNetwork.linkbpsControl = configNetwork.linkbps - configNetwork.linkbpsData
-	}
-
-	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbpsControl)
-	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbpsData)
-
-	if configNetwork.transportType == transportTypeUnicast {
-		configReplicast.bidMultiplierPct = configStorage.numReplicas * 110 // FIXME
-	}
-	configReplicast.durationBidWindow = (configNetwork.netdurationDataChunk + config.timeClusterTrip) * time.Duration(configReplicast.bidMultiplierPct) / time.Duration(100)
-
-	configNetwork.netdurationFrame = time.Duration(configNetwork.sizeFrame*8) * time.Second / time.Duration(configNetwork.linkbpsData)
-
-	configReplicast.minduration = configNetwork.netdurationDataChunk + configNetwork.netdurationFrame
-	if configNetwork.transportType == transportTypeUnicast {
-		configReplicast.minduration *= time.Duration(configStorage.numReplicas)
-	}
+	configureReplicast(configNetwork.transportType == transportTypeUnicast)
 }

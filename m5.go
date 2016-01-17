@@ -78,15 +78,7 @@ func init() {
 	m5.putpipeline = p
 
 	d := NewStatsDescriptors("5")
-	d.Register("rxbusydata", StatsKindPercentage, StatsScopeServer)
-	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer) // data + control
-	d.Register("diskbusy", StatsKindPercentage, StatsScopeServer)
-	d.Register("tio", StatsKindCount, StatsScopeGateway)
-	d.Register("chunk", StatsKindCount, StatsScopeGateway)
-	d.Register("replica", StatsKindCount, StatsScopeGateway)
-	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
-	d.Register("rxbytes", StatsKindByteCount, StatsScopeServer|StatsScopeGateway)
-	d.Register("disk-queue-depth", StatsKindSampleCount, StatsScopeServer)
+	d.registerCommonProtoStats()
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "UCH-CCPi: Unicast Consistent Hash distribution using Captive Congestion Point"

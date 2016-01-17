@@ -25,7 +25,7 @@ func NewChunk(gwy RunnerInterface, sizebytes int) *Chunk {
 }
 
 func (chunk *Chunk) String() string {
-	return fmt.Sprintf("[chunk#%d]", chunk.sid)
+	return fmt.Sprintf("c#%d", chunk.sid)
 }
 
 //
@@ -38,7 +38,7 @@ type PutReplica struct {
 }
 
 func (replica *PutReplica) String() string {
-	return fmt.Sprintf("[replica#%d,chunk#%d]", replica.num, replica.chunk.sid)
+	return fmt.Sprintf("[rep#%d,c#%d]", replica.num, replica.chunk.sid)
 }
 
 func NewPutReplica(c *Chunk, n int) *PutReplica {

@@ -7,6 +7,7 @@ package surge
 
 import (
 	"flag"
+	"os"
 	"time"
 )
 
@@ -262,11 +263,45 @@ func init() {
 	// Note: MiB effectively, here and in sizeToDuration()
 	//
 	configStorage.diskbps = int64(configStorage.diskMBps) * 1024 * 1024 * 8
+}
 
-	configReplicast.durationBidGap = sizeToDuration(configReplicast.bidGapBytes, "B", configNetwork.linkbpsData, "b")
-	configReplicast.durationBidWindow = (configNetwork.netdurationDataChunk + config.timeClusterTrip) * time.Duration(configReplicast.bidMultiplierPct) / time.Duration(100)
+// NOTE:
+//   1) Multicast control place multiplies amount of the control traffic:
+//      each server in the negotiating group sees all control packets sent to this group, etc.
+//      That is why, unlike UCH-* unicast models, this model provisions control
+//      bandwidth as a separate significant (configurable) percentage of the total link
+//
+//   2) Recompute network durations accordingly
+//   3) TODO: model.go to round up numServers
+//
+func configureReplicast(unicastBidMultiplier bool) {
+	rem := config.numServers % configReplicast.sizeNgtGroup
+	if rem > 0 {
+		config.numServers -= rem
+		if config.numServers == configReplicast.sizeNgtGroup {
+			log(LogBoth, "Cannot execute the model with a single negotiating group configured, exiting..")
+			os.Exit(1)
+		}
+		log(LogBoth, "NOTE: adjusting the number of servers down, to be a multiple of negotiating group size:", config.numServers)
+	}
 	configReplicast.numNgtGroups = config.numServers / configReplicast.sizeNgtGroup
 
-	// minimal time window from the gateway's perspective to execute put-chunk
+	configNetwork.linkbpsData = configNetwork.linkbps * int64(configReplicast.solicitedLinkPct) / int64(100)
+	configNetwork.linkbpsControl = configNetwork.linkbps - configNetwork.linkbpsData
+
+	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbpsControl)
+	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbpsData)
+
+	if unicastBidMultiplier {
+		configReplicast.bidMultiplierPct = configStorage.numReplicas * 110
+	}
+	x := configNetwork.netdurationDataChunk + config.timeClusterTrip
+	configReplicast.durationBidWindow = x * time.Duration(configReplicast.bidMultiplierPct) / time.Duration(100)
+
+	configNetwork.netdurationFrame = time.Duration(configNetwork.sizeFrame*8) * time.Second / time.Duration(configNetwork.linkbpsData)
+
 	configReplicast.minduration = configNetwork.netdurationDataChunk + configNetwork.netdurationFrame
+	if unicastBidMultiplier {
+		configReplicast.minduration *= time.Duration(configStorage.numReplicas)
+	}
 }

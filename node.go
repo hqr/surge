@@ -312,7 +312,8 @@ func (r *GatewayUch) replicack(ev EventInterface) error {
 //===============================================================
 type GatewayMcast struct {
 	GatewayCommon
-	rzvgroup *RzvGroup
+	rzvgroup    *RzvGroup
+	NowMcasting int64
 }
 
 func NewGatewayMcast(i int, p *Pipeline) *GatewayMcast {
@@ -340,6 +341,31 @@ func (r *GatewayMcast) selectNgtGroup(cid int64, prevgroupid int) int {
 		id = 1
 	}
 	return id
+}
+
+//
+// As per rxcallback below, the m-casting gateway handles all
+// model's pipeline stages via generic doStage()
+//
+func (r *GatewayMcast) rxcallback(ev EventInterface) int {
+	tio := ev.GetTio()
+	log(LogV, "GWY::rxcallback", tio.String())
+	tio.doStage(r.realobject(), ev)
+	if tio.done {
+		log(LogV, "tio-done", tio.String())
+		atomic.AddInt64(&r.tiostats, int64(1))
+	}
+	return ev.GetSize()
+}
+
+//=============
+// multicast vs. system time
+//=============
+func (r *GatewayMcast) NowIsDone() bool {
+	if atomic.LoadInt64(&r.NowMcasting) > 0 {
+		return false
+	}
+	return r.RunnerBase.NowIsDone()
 }
 
 //===============================================================
@@ -591,10 +617,10 @@ func (g *NgtGroup) String() string {
 // Rendezvous Group
 //
 type RzvGroup struct {
-	id      int64
-	servers []RunnerInterface
-	ngtid   int
-	unicast bool
+	id          int64
+	servers     []RunnerInterface
+	ngtid       int
+	incremental bool
 }
 
 func (g *RzvGroup) init(ngtid int, cleanup bool) {
@@ -620,7 +646,7 @@ func (g *RzvGroup) getCount() int {
 	cnt := 0
 	for _, srv := range g.servers {
 		if srv == nil {
-			if g.unicast {
+			if g.incremental {
 				continue
 			}
 			return 0
@@ -660,7 +686,7 @@ func (g *RzvGroup) String() string {
 	s := ""
 	for idx := range g.servers {
 		if g.servers[idx] == nil {
-			if g.unicast {
+			if g.incremental {
 				continue
 			}
 			return "[rzv-group <nil>]"
@@ -669,9 +695,6 @@ func (g *RzvGroup) String() string {
 			s += ","
 		}
 		s += g.servers[idx].String()
-	}
-	if g.unicast {
-		return fmt.Sprintf("[rzv-group-unicast %s]", s)
 	}
 	return fmt.Sprintf("[rzv-group %s]", s)
 }

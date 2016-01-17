@@ -164,7 +164,7 @@ func newMcastChunkPutRequestEvent(gwy RunnerInterface, group GroupInterface, chu
 
 func (e *McastChunkPutRequestEvent) String() string {
 	printid := uqrand(e.cid)
-	s := fmt.Sprintf("MCPRE src=%v,tgt=%v,chunk#%d,ngt-group=%s", e.source.String(), e.target.String(), printid, e.targetgroup.String())
+	s := fmt.Sprintf("MCPRE %v=>%v,c#%d,ngt-group=%s", e.source.String(), e.target.String(), printid, e.targetgroup.String())
 	win := &TimWin{e.winleft, TimeNil}
 
 	if win.isNil() {
@@ -177,18 +177,19 @@ type McastChunkPutAcceptEvent struct {
 	zControlEvent
 	rzvgroup GroupInterface
 	sizeb    int // size in bytes
+	bid      *PutBid
 }
 
 func newMcastChunkPutAcceptEvent(gwy RunnerInterface, ngtgroup GroupInterface, chunk *Chunk, rzvgroup GroupInterface, tio *Tio) *McastChunkPutAcceptEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(gwy, at, ngtgroup, tio, tio.target, true, configNetwork.sizeControlPDU)
 
-	return &McastChunkPutAcceptEvent{zControlEvent{zEvent{*timedev}, chunk.cid}, rzvgroup, chunk.sizeb}
+	return &McastChunkPutAcceptEvent{zControlEvent{zEvent{*timedev}, chunk.cid}, rzvgroup, chunk.sizeb, nil}
 }
 
 func (e *McastChunkPutAcceptEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[MCPAE src=%v,tgt=%v,chunk#%d,%s]", e.source.String(), e.target.String(), printid, e.rzvgroup.String())
+	return fmt.Sprintf("[MCPAE %v=>%v,c#%d,%s]", e.source.String(), e.target.String(), printid, e.rzvgroup.String())
 }
 
 type BidEvent struct {
@@ -198,7 +199,7 @@ type BidEvent struct {
 
 func (e *BidEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[MBE src=%v,tgt=%v,chunk#%d]", e.source.String(), e.target.String(), printid)
+	return fmt.Sprintf("[MBE %v=>%v,c#%d]", e.source.String(), e.target.String(), printid)
 }
 
 func newBidEvent(srv RunnerInterface, gwy RunnerInterface, group GroupInterface, chunkid int64, bid *PutBid, tio *Tio) *BidEvent {
@@ -230,7 +231,7 @@ type ReplicaPutAckEvent struct {
 func (e *ReplicaPutAckEvent) String() string {
 	printid := uqrand(e.cid)
 	dtriggered := e.thtime.Sub(time.Time{})
-	return fmt.Sprintf("[RPAE src=%v,tgt=%v,chunk#%d(%d),at=%11.10v]", e.source.String(), e.target.String(), printid, e.num, dtriggered)
+	return fmt.Sprintf("[RPAE %v=>%v,c#%d(%d),at=%11.10v]", e.source.String(), e.target.String(), printid, e.num, dtriggered)
 }
 
 func newReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow, tio *Tio, atdisk time.Duration) *ReplicaPutAckEvent {
@@ -270,10 +271,10 @@ func (e *ReplicaDataEvent) String() string {
 	dcreated := e.crtime.Sub(time.Time{})
 	dtriggered := e.thtime.Sub(time.Time{})
 	if e.targetgroup == nil {
-		return fmt.Sprintf("[RDE src=%v,tgt=%v,chunk#%d,num=%d,offset=%d,(%11.10v,%11.10v)]",
+		return fmt.Sprintf("[RDE %v=>%v,c#%d,num=%d,offset=%d,(%11.10v,%11.10v)]",
 			e.source.String(), e.target.String(), printid, e.num, e.offset, dcreated, dtriggered)
 	}
-	return fmt.Sprintf("[mcast-RDE src=%v,tgt=%v,group=%v,chunk#%d,offset=%d,(%11.10v,%11.10v)]",
+	return fmt.Sprintf("[mcast-RDE %v=>%v,group=%v,c#%d,offset=%d,(%11.10v,%11.10v)]",
 		e.source.String(), e.target.String(), e.targetgroup.String(), printid, e.offset, dcreated, dtriggered)
 }
 

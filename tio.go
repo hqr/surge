@@ -125,16 +125,27 @@ func (tio *Tio) nextAnon(when time.Duration, tgt RunnerInterface) {
 // advance the stage & send specific event to the next stage's target
 func (tio *Tio) next(newev EventInterface, sendhow SendMethodEnum) {
 	var src RunnerInterface
+
 	if tio.index == -1 {
 		src = tio.source
 		tio.strtime = Now
 	} else {
-		assert(tio.index < tio.pipeline.Count()-1)
 		src = newev.GetSource()
 	}
 	newev.setOneArg(tio)
 	tio.event = newev
 	tio.index++
+
+	//
+	// event-enforced staging
+	//
+	tiostage := newev.GetTioStage()
+	if len(tiostage) > 0 {
+		tio.index = tio.pipeline.IndexOf(tiostage)
+		assert(tio.index >= 0)
+	}
+
+	assert(tio.index < tio.pipeline.Count(), tio.String()+","+newev.String())
 
 	log(LogV, "stage-next-send", src.String(), tio.String())
 	src.Send(newev, sendhow)
@@ -152,15 +163,6 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 	stage := tio.pipeline.GetStage(tio.index)
 	assert(tio.index == stage.index)
 
-	//
-	// event-enforced staging happens here:
-	//
-	tiostage := tioevent.GetTioStage()
-	if len(tiostage) > 0 {
-		tio.index = tio.pipeline.IndexOf(tiostage)
-		stage = tio.pipeline.GetStage(tio.index)
-	}
-
 	methodValue := reflect.ValueOf(r).MethodByName(stage.handler)
 	// assert(!methodValue.IsValid())
 	rcValue := methodValue.Call([]reflect.Value{reflect.ValueOf(tioevent)})
@@ -168,15 +170,17 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 	// tio's own sources finalizes
 	if r == tio.source && tio.index == tio.pipeline.Count()-1 {
 		tio.fintime = Now
-		log(LogV, "dostage-tio-done", r.String(), tio.String())
+		log("dostage-tio-done", r.String(), tio.String())
 		tio.done = true
 		if tio.parent == nil {
 			if tio.removeWhenDone {
+				log("dostage-tio-done-removed", r.String(), tio.String())
 				tio.source.RemoveTio(tio)
 			}
 		} else {
-			assert(tio.parent.haschild(tio))
+			assert(tio.parent.haschild(tio), "tioparent="+tio.parent.String()+",child="+tio.String())
 			if tio.removeWhenDone {
+				log("dostage-tio-done-removed", r.String(), tio.String())
 				delete(tio.parent.children, tio.target)
 				if len(tio.parent.children) == 0 && tio.parent.removeWhenDone {
 					tio.parent.source.RemoveTio(tio.parent)
@@ -212,22 +216,21 @@ func (tio *Tio) abort() {
 func (tio *Tio) String() string {
 	tioidstr := fmt.Sprintf("%d", tio.sid)
 	if tio.repnum != 0 {
-		tioidstr += fmt.Sprintf("(%d,%d)", tio.chunksid, tio.repnum)
+		tioidstr += fmt.Sprintf("(c#%d,%d)", tio.chunksid, tio.repnum)
 	} else if tio.cid != 0 {
-		tioidstr += fmt.Sprintf("(%d)", tio.chunksid)
+		tioidstr += fmt.Sprintf("(c#%d)", tio.chunksid)
 	}
 	if tio.done {
 		if tio.err == nil {
-			return fmt.Sprintf("[tio#%s done]", tioidstr)
+			return fmt.Sprintf("[tio#%s,done,%s=>%s]", tioidstr, tio.source.String(), tio.target.String())
 		}
-		return fmt.Sprintf("ERROR: [tio#%s failed,%#v]", tioidstr, tio.err)
+		return fmt.Sprintf("ERROR: [tio#%s,failed,%#v,%s=>%s]", tioidstr, tio.err, tio.source.String(), tio.target.String())
 	}
 	if tio.index < 0 {
-		return fmt.Sprintf("[tio#%s,stage-prerun]", tioidstr)
+		return fmt.Sprintf("[tio#%s,init]", tioidstr)
 	}
-	stage := tio.pipeline.GetStage(tio.index)
 	if tio.err == nil {
-		return fmt.Sprintf("[tio#%s,stage(%s,%d)]", tioidstr, stage.name, tio.index)
+		return fmt.Sprintf("[tio#%s,%d,%s=>%s]", tioidstr, tio.index, tio.source.String(), tio.target.String())
 	}
-	return fmt.Sprintf("ERROR: [tio#%s,stage(%s,%d) failed]", tioidstr, stage.name, tio.index)
+	return fmt.Sprintf("ERROR: [tio#%s,%d failed]", tioidstr, tio.index)
 }

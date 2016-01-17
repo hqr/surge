@@ -78,9 +78,9 @@ func (flow *Flow) String() string {
 	bwstr := fmt.Sprintf("%.2f", float64(flow.tobandwidth)/1000.0/1000.0/1000.0)
 	var cstr string
 	if flow.repnum != 0 {
-		cstr = fmt.Sprintf("chunk#%d(%d)", flow.sid, flow.repnum)
+		cstr = fmt.Sprintf("c#%d(%d)", flow.sid, flow.repnum)
 	} else {
-		cstr = fmt.Sprintf("chunk#%d", flow.sid)
+		cstr = fmt.Sprintf("c#%d", flow.sid)
 	}
 	if flow.unicast() {
 		t := flow.to.String()

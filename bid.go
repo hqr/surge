@@ -17,6 +17,7 @@ package surge
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
 )
 
@@ -122,22 +123,21 @@ func (bid *PutBid) setOneArg(a interface{}) {
 func (bid *PutBid) stringState() string {
 	switch bid.state {
 	case bidStateTentative:
-		return "tentative"
+		return "tent"
 	case bidStateCanceled:
-		return "canceled"
+		return "canc"
 	case bidStateAccepted:
-		return "accepted"
+		return "acpt"
 	}
 	return ""
 }
 
 func (bid *PutBid) String() string {
-	s := bid.stringState()
+	var s string
 	if bid.tio.target != nil {
-		tgt := bid.tio.target.String()
-		return fmt.Sprintf("[%s(chunk#%d):srv=%v,%s,gwy=%v]", s, bid.tio.chunksid, tgt, bid.win.String(), bid.tio.source.String())
+		s = bid.stringState()
 	}
-	return fmt.Sprintf("[(chunk#%d):%s,gwy=%v]", bid.tio.chunksid, bid.win.String(), bid.tio.source.String())
+	return fmt.Sprintf("[%s%s:%s]", s, bid.tio.String(), bid.win.String())
 }
 
 //
@@ -216,18 +216,10 @@ func (q *BidQueue) findBid(by bidFindEnum, val interface{}) (int, *PutBid) {
 	return -1, nil
 }
 
-func (q *BidQueue) StringBids(includestate bool) string {
-	l := len(q.pending)
-	s := ""
-	for k := 0; k < l; k++ {
-		bid := q.pending[k]
-		left := bid.win.left.Sub(time.Time{})
-		right := bid.win.right.Sub(time.Time{})
-		if includestate {
-			s += fmt.Sprintf("%s(%11.10v,%11.10v)", bid.stringState(), left, right)
-		} else {
-			s += fmt.Sprintf("(%11.10v,%11.10v)", left, right)
-		}
+func (q *BidQueue) StringBids() string {
+	var s string
+	for _, bid := range q.pending {
+		s += bid.String()
 	}
 	return s
 }
@@ -292,9 +284,9 @@ func NewServerRegBidQueue(ri RunnerInterface, size int) *ServerRegBidQueue {
 func (q *ServerRegBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
 	q.expire()
 
-	// the earliest time the new bid created here can possibly reach
-	// the requesting gateway
-	earliestnotify := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip)
+	// the earliest time for the first data packet targeting this TBD bid:
+	// the bid's control packet + Accept response
+	earliestnotify := Now.Add(configNetwork.durationControlPDU*2 + config.timeClusterTrip)
 	l := len(q.pending)
 	// First, make an attempt to reuse an existing non-accepted ("canceled") bid
 	// Non-zero diskdelay indicates configReplicast.maxDiskQueueChunks
@@ -315,7 +307,7 @@ func (q *ServerRegBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid
 			q.canceled--
 			if l > 1 {
 				s := fmt.Sprintf("(%d/%d)", k, l-1)
-				log("un-canceling", s, diskdelay, q.StringBids(true))
+				log("un-canceling", s, diskdelay, q.StringBids())
 			}
 			bid.state = bidStateTentative
 			bid.tio = tio
@@ -352,7 +344,7 @@ func (q *ServerRegBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid
 	// server's selection chances
 	if l == 0 && diskdelay < configNetwork.netdurationDataChunk {
 		bid.win.right = bid.win.right.Add(configNetwork.netdurationDataChunk * 2)
-		log("srv-idle-extend-bid", bid.String())
+		log("srv-extend-idle-bid", bid.String())
 	}
 
 	q.insertBid(bid)
@@ -546,13 +538,16 @@ func NewServerSparseBidQueue(ri RunnerInterface, size int) *ServerSparseBidQueue
 }
 
 func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid {
-	// the earliest time can possibly notify the requesting gateway
-	earliestnotify := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip)
+	// the earliest time the gateway can start sending
+	// - time for the bid to reach the gateway
+	//   +
+	// - time for accept message to be sent
+	earliestnotify := Now.Add(configNetwork.durationControlPDU*2 + config.timeClusterTrip)
 	earliestdiskdelay := Now.Add(diskdelay)
 
 	newleft := rwin.left
 	if newleft.Equal(TimeNil) {
-		newleft = Now
+		newleft = earliestnotify
 	}
 	if newleft.Before(earliestnotify) {
 		newleft = earliestnotify
@@ -560,8 +555,17 @@ func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin
 	if newleft.Before(earliestdiskdelay) {
 		newleft = earliestdiskdelay
 	}
-	for k := 0; k < len(q.pending); k++ {
+	l := len(q.pending)
+	for k := 0; k < l; k++ {
 		bid := q.pending[k]
+		// FIXME: remove asserts
+		assert(bid.tio != tio, bid.String()+","+tio.String()+","+bid.tio.String())
+		assert(bid.tio.source != tio.source, tio.String()+","+bid.String()+","+bid.tio.source.String())
+		if k < l-1 {
+			assert(bid.win.right.Before(q.pending[k+1].win.left))
+			assert(bid.tio != q.pending[k+1].tio)
+			assert(bid.tio.source != q.pending[k+1].tio.source, tio.String()+","+q.StringBids()+","+bid.tio.source.String())
+		}
 		if newleft.Before(bid.win.left) {
 			if bid.win.left.Sub(newleft) >= configReplicast.durationBidWindow+configReplicast.durationBidGap {
 				break
@@ -573,6 +577,27 @@ func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin
 		}
 	}
 	bid := NewPutBid(tio, newleft)
+
+	// FIXME: 1) rand(), 2) make configurable
+	//
+	// if the server is idle. adjust the right boundary to increase this
+	// server's selection chances
+	if l == 0 && diskdelay < configNetwork.netdurationDataChunk && rand.Intn(2) == 0 {
+		bid.win.right = bid.win.right.Add(configNetwork.netdurationDataChunk * 2)
+		log("srv-extend-idle-bid", bid.String())
+	}
+
+	/* extended debug
+	assert(bid.win.right.Sub(bid.win.left) >= configReplicast.durationBidWindow)
+	for _, b := range q.pending {
+		assert(b.tio != bid.tio)
+		if bid.win.left.Before(b.win.left) {
+			assert(!bid.win.right.After(b.win.left), bid.String()+","+b.String())
+		} else {
+			assert(!bid.win.left.Before(b.win.right), bid.String()+","+b.String())
+		}
+	}
+	*/
 	q.insertBid(bid)
 	return bid
 }
@@ -586,7 +611,7 @@ func (q *ServerSparseBidQueue) cancelBid(replytio *Tio) {
 	assert(bid.state == bidStateTentative)
 
 	q.deleteBid(k)
-	log(LogV, bid.String())
+	log(LogV, "cancel-del", replytio.String(), bid.String())
 }
 
 func (q *ServerSparseBidQueue) acceptBid(replytio *Tio, mybid *PutBid) {
@@ -682,7 +707,7 @@ func (q *GatewayBidQueue) findBestIntersection(chunk *Chunk) *PutBid {
 	//
 	if k == l-configStorage.numReplicas {
 		// insiffucient bid overlap
-		log("WARNING: chunk-abort", q.r.String(), chunk.String(), q.StringBids(false))
+		log("WARNING: chunk-abort", q.r.String(), chunk.String(), q.StringBids())
 		return nil
 	}
 
@@ -697,7 +722,7 @@ func (q *GatewayBidQueue) findBestIntersection(chunk *Chunk) *PutBid {
 	// the gateway will actually use
 	l = len(q.pending)
 	assert(l == configStorage.numReplicas)
-	log(LogV, "gwy-best-bids", q.r.String(), chunk.String(), q.StringBids(false))
+	log(LogV, "gwy-best-bids", q.r.String(), chunk.String(), q.StringBids())
 
 	tioparent := q.pending[0].tio.parent
 	assert(tioparent.cid == q.pending[0].tio.cid)
@@ -714,7 +739,7 @@ func (q *GatewayBidQueue) findBestIntersection(chunk *Chunk) *PutBid {
 	return computedbid
 }
 
-// FIXME: initial version
+// FIXME:
 //        a) maxgap must be separately configured
 //        b) bid0 with no alternatives
 func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
@@ -728,12 +753,12 @@ func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
 		bid0.win.right = end0
 	}
 
-	maxgap := configReplicast.minduration / 3
+	maxgap := configNetwork.durationControlPDU * 3
 	if maxgap < configNetwork.netdurationFrame {
 		maxgap = configNetwork.netdurationFrame
 	}
 
-	// try to make sequence..
+	// try to continue the sequence..
 	var bid1, bid2 *PutBid
 	if maxnum > 1 {
 		bid1 = q.findNextAdjacent(end0, maxgap, configReplicast.minduration)
@@ -750,7 +775,26 @@ func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
 		assert(!bid2.win.right.Before(end2))
 	}
 
-	// prepre filtered result queue
+	// not a sequence of two or more: look for an idle server alternative
+	if bid1 == nil && bid2 == nil && len(q.pending) > 2 {
+		w0 := bid0.win.right.Sub(bid0.win.left)
+		bid1 = q.pending[1]
+		w1 := bid1.win.right.Sub(bid1.win.left)
+		if bid1.win.left.Sub(bid0.win.left) < configNetwork.netdurationFrame && w1 > w0+configNetwork.netdurationFrame {
+			log("select-idle", bid0.String(), bid1.String())
+			bid0 = bid1
+		}
+		bid2 = q.pending[2]
+		w2 := bid2.win.right.Sub(bid2.win.left)
+		if bid2.win.left.Sub(bid0.win.left) < configNetwork.netdurationFrame && w2 > w0+configNetwork.netdurationFrame {
+			bid0 = bid2
+			log("select-idle", bid0.String(), bid2.String())
+		}
+		bid1 = nil
+		bid2 = nil
+	}
+
+	// prepare the queue in place to include only selected bid(s)
 	q.cleanup()
 	q.insertBid(bid0)
 	if bid1 != nil {
@@ -758,9 +802,9 @@ func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
 		if bid2 != nil {
 			q.insertBid(bid2)
 		}
-		log("gwy-bid-sequence", q.r.String(), q.StringBids(false))
+		log("bid-sequence", q.StringBids())
 	} else {
-		log(LogV, "gwy-bid-single", q.r.String(), bid0.String())
+		log(LogV, "bid-single", bid0.String())
 	}
 }
 

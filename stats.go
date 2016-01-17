@@ -78,6 +78,21 @@ func (dtors *ModelStatsDescriptors) Register(sname string, skind StatsKindEnum, 
 	dtors.x[sname] = &StatsDescriptor{sname, skind, scope}
 }
 
+func (dtors *ModelStatsDescriptors) registerCommonProtoStats() {
+	// uncomment if needed:
+	//   dtors.Register("rxbusydata", StatsKindPercentage, StatsScopeServer)
+	//   dtors.Register("tio", StatsKindCount, StatsScopeGateway)
+	dtors.Register("rxbusy", StatsKindPercentage, StatsScopeServer) // data + control
+	dtors.Register("diskbusy", StatsKindPercentage, StatsScopeServer)
+	dtors.Register("disk-queue-depth", StatsKindSampleCount, StatsScopeServer)
+
+	dtors.Register("chunk", StatsKindCount, StatsScopeGateway)
+	dtors.Register("replica", StatsKindCount, StatsScopeGateway)
+
+	dtors.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
+	dtors.Register("rxbytes", StatsKindByteCount, StatsScopeServer|StatsScopeGateway)
+}
+
 func (mstats *ModelStats) init(mname ModelName) {
 	mdtors = allDtors[mname]
 	assert(mdtors != nil)

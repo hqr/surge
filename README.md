@@ -30,6 +30,20 @@ startup all clustered nodes (of this model) get automatically connected and
 ready to Go: send, receive and handle events and IO requests from all other
 nodes.
 
+## Gateway
+
+The term "gateway" is widespread: there are internet gateways, cloud storage
+gateways, security gateways - the latter defined in RFC 2663, for instance,
+where they are called Application Level gateways or ALGs. While concrete
+functions differ in a wide range, the common thing about gateways is that
+they all implement and support two or more *types* of network interfaces.
+
+SURGE's gateway is an abstraction that models storage access point, on one
+hand. On another, each gateway has a full connectivity to all clustered
+storage servers via internal storage network which in turn is modeled as
+a bunch of point to point (bandwidth configurable, default 10Gbps) lossless
+links.
+
 ## Models
 
 Overall, the idea and the motivation to develop this framework and concrete

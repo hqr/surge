@@ -15,14 +15,15 @@ func assert(cond bool, args ...interface{}) {
 	if cond {
 		return
 	}
-	var message = "assertion failed"
+	sincestartup := Now.Sub(time.Time{})
+	var message = fmt.Sprintf("%-12.10v:%s", "assertion failed", sincestartup)
 	if len(args) > 0 {
 		message += ": "
 		for i := 0; i < len(args); i++ {
 			message += fmt.Sprintf("%#v ", args[i])
 		}
 	}
-	// log(message)
+	log(message)
 	flushLog()
 	panic(message)
 }
