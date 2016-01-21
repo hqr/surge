@@ -433,7 +433,7 @@ func newUchRateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, fl
 func (e *UchRateSetEvent) String() string {
 	printid := uqrand(e.cid)
 	bwstr := fmt.Sprintf("%.2fGbps", float64(e.tobandwidth)/1000.0/1000.0/1000.0)
-	return fmt.Sprintf("[RateSetEvent src=%v,tgt=%v,chunk#%d(%d),%s]", e.source.String(), e.target.String(), printid, e.num, bwstr)
+	return fmt.Sprintf("[RSE %v=>%v,c#%d(%d),%s]", e.source.String(), e.target.String(), printid, e.num, bwstr)
 }
 
 type UchRateInitEvent struct {
@@ -447,8 +447,7 @@ func newUchRateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, f
 
 func (e *UchRateInitEvent) String() string {
 	printid := uqrand(e.cid)
-	dtriggered := e.thtime.Sub(time.Time{})
-	return fmt.Sprintf("[RateInitEvent src=%v,tgt=%v,chunk#%d(%d),at=%11.10v]", e.source.String(), e.target.String(), printid, e.num, dtriggered)
+	return fmt.Sprintf("[RIE %v=>%v,c#%d(%d)]", e.source.String(), e.target.String(), printid, e.num)
 }
 
 //==================================================================

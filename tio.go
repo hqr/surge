@@ -216,7 +216,7 @@ func (tio *Tio) abort() {
 func (tio *Tio) String() string {
 	tioidstr := fmt.Sprintf("%d", tio.sid)
 	if tio.repnum != 0 {
-		tioidstr += fmt.Sprintf("(c#%d,%d)", tio.chunksid, tio.repnum)
+		tioidstr += fmt.Sprintf("(c#%d(%d))", tio.chunksid, tio.repnum)
 	} else if tio.cid != 0 {
 		tioidstr += fmt.Sprintf("(c#%d)", tio.chunksid)
 	}

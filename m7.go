@@ -536,4 +536,8 @@ func (m *modelSeven) NewServer(i int) RunnerInterface {
 
 func (m *modelSeven) Configure() {
 	configureReplicast(configNetwork.transportType == transportTypeUnicast)
+	x := (configReplicast.durationBidWindow - configReplicast.minduration) / configNetwork.netdurationFrame
+	if x > 4 {
+		configReplicast.minduration = configNetwork.netdurationDataChunk + configNetwork.netdurationFrame*(x/3)
+	}
 }

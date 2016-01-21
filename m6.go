@@ -442,5 +442,5 @@ func newUchDingAimdEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow, t
 
 func (e *UchDingAimdEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[DingAimdEvent src=%v,tgt=%v,chunk#%d,num=%d]", e.source.String(), e.target.String(), printid, e.num)
+	return fmt.Sprintf("[DAE %v=>%v,c#%d(%d)]", e.source.String(), e.target.String(), printid, e.num)
 }

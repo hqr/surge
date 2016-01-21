@@ -38,7 +38,7 @@ type PutReplica struct {
 }
 
 func (replica *PutReplica) String() string {
-	return fmt.Sprintf("[rep#%d,c#%d]", replica.num, replica.chunk.sid)
+	return fmt.Sprintf("c#%d(%d)", replica.chunk.sid, replica.num)
 }
 
 func NewPutReplica(c *Chunk, n int) *PutReplica {

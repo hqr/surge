@@ -89,7 +89,8 @@ func (r *GatewayCommon) replicackCommon(tioevent *ReplicaPutAckEvent) int {
 		return ChunkNotDoneYet
 	}
 	chunklatency := Now.Sub(r.chunk.crtime)
-	log("chunk-done", r.chunk.String(), "latency", chunklatency)
+	x := int64(chunklatency) / 1000
+	log("chunk-done", r.chunk.String(), "latency", chunklatency, x)
 	atomic.AddInt64(&r.chunkstats, int64(1))
 	r.chunk = nil
 	return ChunkDone
@@ -456,9 +457,9 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 
 	cstr := ""
 	if flow.repnum != 0 {
-		cstr = fmt.Sprintf("chunk#%d(%d)", flow.sid, flow.repnum)
+		cstr = fmt.Sprintf("c#%d(%d)", flow.sid, flow.repnum)
 	} else {
-		cstr = fmt.Sprintf("chunk#%d", flow.sid)
+		cstr = fmt.Sprintf("c#%d", flow.sid)
 	}
 	log("srv-replica-received", r.String(), cstr, "replica-ack-scheduled", gwyacktime)
 	r.flowsfrom.deleteFlow(gwy)

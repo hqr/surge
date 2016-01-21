@@ -719,5 +719,9 @@ func (m *modelEight) NewServer(i int) RunnerInterface {
 func (m *modelEight) Configure() {
 	configReplicast.bidMultiplierPct = 110
 	configureReplicast(false)
+	if configReplicast.durationBidWindow < configNetwork.netdurationFrame*3 {
+		configReplicast.bidMultiplierPct = 120
+		configureReplicast(false)
+	}
 	configReplicast.minduration = configReplicast.durationBidWindow - config.timeClusterTrip
 }

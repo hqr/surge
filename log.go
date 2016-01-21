@@ -47,7 +47,16 @@ func nameLog(n string) {
 	if len(build) == 0 {
 		return
 	}
-	config.LogFile = "/tmp/" + fmt.Sprintf("log-m%s-%dx%d-%v-%s.csv", n, config.numGateways, config.numServers, config.timeToRun, build)
+	x := configStorage.sizeDataChunk
+	s := "K"
+	if x >= 1024 && x%1024 == 0 {
+		x /= 1024
+		s = "M"
+	}
+	config.LogFile = "/tmp/" + fmt.Sprintf("log-m%s-%dx%d-%v-%d%s-%dMs-%s.csv", n,
+		config.numGateways, config.numServers, config.timeToRun,
+		x, s, configStorage.diskMBps,
+		build)
 }
 
 func initLog() {
@@ -100,7 +109,9 @@ func configLog(partial bool) {
 		fmt.Println(s3)
 		fmt.Println(s4)
 		fmt.Println(s5)
-		fmt.Println(s6)
+		if configReplicast.durationBidWindow > 0 {
+			fmt.Println(s6)
+		}
 		return
 	}
 	log("Configuration:")
@@ -113,7 +124,9 @@ func configLog(partial bool) {
 	log("Detailed raw config:")
 	log(fmt.Sprintf("\t    %+v", configStorage))
 	log(fmt.Sprintf("\t    %+v", configAIMD))
-	log(fmt.Sprintf("\t    %+v", configReplicast))
+	if configReplicast.durationBidWindow > 0 {
+		log(fmt.Sprintf("\t    %+v", configReplicast))
+	}
 	log(fmt.Sprintf("\t    {timeIncStep:%v timeClusterTrip:%v timeStatsIval:%v timeTrackIval:%v timeToRun:%v}",
 		config.timeIncStep, config.timeClusterTrip, config.timeStatsIval, config.timeTrackIval, config.timeToRun))
 }

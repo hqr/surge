@@ -70,21 +70,22 @@ type ConfigStorage struct {
 	numReplicas                  int
 	sizeDataChunk, sizeMetaChunk int
 	diskMBps                     int
-	maxDiskQueueChunks           int
+	maxDiskQueue                 int
 	chunksInFlight               int // TODO: UCH-* models to start next chunk without waiting for ACK..
 	// derived from other config, for convenience
 	dskdurationDataChunk time.Duration
 	dskdurationFrame     time.Duration
 	diskbps              int64
+	maxDiskQueueChunks   int
 }
 
 var configStorage = ConfigStorage{
-	numReplicas:        3,
-	sizeDataChunk:      128, // KB
-	sizeMetaChunk:      1,   // KB
-	diskMBps:           400, // MB/sec
-	maxDiskQueueChunks: 2,
-	chunksInFlight:     1, // TODO: limits total in-flight for a given gateway
+	numReplicas:    3,
+	sizeDataChunk:  128, // KB
+	sizeMetaChunk:  1,   // KB
+	diskMBps:       400, // MB/sec
+	maxDiskQueue:   256, // KB
+	chunksInFlight: 1,   // TODO: limits total in-flight for a given gateway
 }
 
 //
@@ -111,7 +112,7 @@ var configNetwork = ConfigNetwork{
 	linkbps: 10 * 1000 * 1000 * 1000, // bits/sec
 
 	sizeFrame:      9000, // L2 frame size (bytes)
-	sizeControlPDU: 1000, // solicited/control PDU size (bytes)
+	sizeControlPDU: 300,  // control PDU size (bytes); note that unicast use 100bytes instead
 	overheadpct:    1,    // L2 + L3 + L4 + L5 + arp, etc. overhead (%)
 
 	transportType: transportTypeDefault, // transportType* const above
@@ -257,6 +258,10 @@ func init() {
 	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbps)
 	configNetwork.netdurationFrame = time.Duration(configNetwork.sizeFrame*8) * time.Second / time.Duration(configNetwork.linkbps)
 
+	configStorage.maxDiskQueueChunks = configStorage.maxDiskQueue / configStorage.sizeDataChunk
+	if configStorage.maxDiskQueueChunks < 2 {
+		configStorage.maxDiskQueueChunks = 2
+	}
 	configStorage.dskdurationDataChunk = sizeToDuration(configStorage.sizeDataChunk, "KB", int64(configStorage.diskMBps), "MB")
 	configStorage.dskdurationFrame = sizeToDuration(configNetwork.sizeFrame, "B", int64(configStorage.diskMBps), "MB")
 	//
@@ -303,5 +308,8 @@ func configureReplicast(unicastBidMultiplier bool) {
 	configReplicast.minduration = configNetwork.netdurationDataChunk + configNetwork.netdurationFrame
 	if unicastBidMultiplier {
 		configReplicast.minduration *= time.Duration(configStorage.numReplicas)
+	}
+	if configReplicast.durationBidWindow < configReplicast.minduration {
+		configReplicast.durationBidWindow = configReplicast.minduration + configNetwork.netdurationFrame
 	}
 }

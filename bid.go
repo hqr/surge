@@ -562,7 +562,7 @@ func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin
 		assert(bid.tio != tio, bid.String()+","+tio.String()+","+bid.tio.String())
 		assert(bid.tio.source != tio.source, tio.String()+","+bid.String()+","+bid.tio.source.String())
 		if k < l-1 {
-			assert(bid.win.right.Before(q.pending[k+1].win.left))
+			assert(!bid.win.right.After(q.pending[k+1].win.left), q.StringBids())
 			assert(bid.tio != q.pending[k+1].tio)
 			assert(bid.tio.source != q.pending[k+1].tio.source, tio.String()+","+q.StringBids()+","+bid.tio.source.String())
 		}
@@ -587,17 +587,11 @@ func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin
 		log("srv-extend-idle-bid", bid.String())
 	}
 
-	/* extended debug
-	assert(bid.win.right.Sub(bid.win.left) >= configReplicast.durationBidWindow)
-	for _, b := range q.pending {
-		assert(b.tio != bid.tio)
-		if bid.win.left.Before(b.win.left) {
-			assert(!bid.win.right.After(b.win.left), bid.String()+","+b.String())
-		} else {
-			assert(!bid.win.left.Before(b.win.right), bid.String()+","+b.String())
-		}
+	diff := bid.win.left.Sub(rwin.left)
+	if diff > configNetwork.netdurationDataChunk/4 {
+		log(LogV, "srv-bid-shift", bid.String(), "by", diff)
 	}
-	*/
+
 	q.insertBid(bid)
 	return bid
 }

@@ -151,11 +151,12 @@ func prepareToStopModel(model ModelInterface) {
 func RunAllModels() {
 	cnt := 0
 	onename := ""
-	for _, onename = range allNamesSorted {
-		if !strings.HasPrefix(onename, config.mprefix) {
+	for _, o := range allNamesSorted {
+		if !strings.HasPrefix(o, config.mprefix) {
 			continue
 		}
 		cnt++
+		onename = o
 	}
 	if cnt == 1 {
 		nameLog(onename)
