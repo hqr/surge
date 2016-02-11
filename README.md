@@ -90,9 +90,8 @@ The SURGE framework currently provides the following initial services:
 Each time a model starts running, the (modeled) time starts from 0 (literal zero
 - not to be confused with 00:00:00 1/1/1970) and then advances forward in
 (configurable) steps. Each step of the internal global universal timer is
-currently set to 10 nanoseconds, which also means that the margin of error to
-execute a given timed event can be up to 9 nanoseconds (finer time-stepping
-granularity may slow down your simulated benchmarks..)
+(by default) 1 nanosecond, which also implies the corresponding margin of error
+to execute a given timed event.
 
 The framework enforces the following simple rule: each event scheduled to
 trigger at a given time does get executed at approximately this time with a very
@@ -100,6 +99,8 @@ high level of precision (see above). This statement may sound a bit circular but
 the consequence of this is that modeled NOW does not advance until all the
 events scheduled at NOW do in fact execute. Which is exactly how the time is (or
 at least supposed to be) in a real world unless we lose track of it..
+
+Read [more here](http://storagetarget.com/2016/02/11/surge-performance-modeling-for-distributed-systems) about SURGE framework in general and time modeling in particular.
 
 * Logging
 
@@ -186,3 +187,7 @@ $ go test -timeout 120m -m 5 -ttr 100ms
 ```
 $ go run cmd/ck.go -m 3 -servers 20 -gateways 10 -ttr 150ms -v
 ```
+
+## See Also
+
+* [SURGE: performance modeling for distributed systems](http://storagetarget.com/2016/02/11/surge-performance-modeling-for-distributed-systems)
