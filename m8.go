@@ -54,17 +54,16 @@ type gatewayEight struct {
 	GatewayMcast
 	bids        *GatewayBidQueue
 	prevgroupid int
-	// FIXME: extra state for requestMoreReplicas()
-	ngobj         *NgtGroup
-	lastright     time.Time
-	prevlastright time.Time
-	requestat     time.Time
-	tioparent     *Tio
+	// extra state for requestMoreReplicas()
+	ngobj     *NgtGroup
+	tioparent *Tio
+	lastright time.Time
+	requestat time.Time
 }
 
 type serverEight struct {
 	ServerUch
-	bids *ServerSparseBidQueue
+	bids ServerBidQueueInterface
 }
 
 //
@@ -94,11 +93,7 @@ func init() {
 // gatewayEight methods
 //
 //==================================================================
-// Run contains the gateway's receive callback and its goroutine. Each of the
-// gateway instances (the running number of which is configured as
-// config.numGateways) has a type gatewayFive and spends all its given runtime
-// inside its own goroutine.
-//
+// TODO: add comment
 func (r *gatewayEight) Run() {
 	r.state = RstateRunning
 
@@ -123,8 +118,10 @@ func (r *gatewayEight) Run() {
 			if r.chunk != nil {
 				r.sendata()
 			}
-			diff := Now.Sub(r.requestat)
-			if diff >= 0 {
+			if r.requestat.Equal(TimeNil) {
+				continue
+			}
+			if Now.Sub(r.requestat) >= 0 {
 				r.requestMoreReplicas(r.ngobj, r.tioparent, r.lastright)
 			}
 		}
@@ -164,8 +161,8 @@ func (r *gatewayEight) startNewChunk() {
 	//       gateway => (tio-child, unicast flow) => server
 	// unicast flows are created later, on a per selected-bid basis
 	//
-	tioparent := r.putpipeline.NewTio(r, r.chunk)
-	mcastflow := NewFlow(r, r.chunk.cid, tioparent, ngobj)
+	tioparent := r.putpipeline.NewTio(r.realobject(), r.chunk)
+	mcastflow := NewFlow(r.realobject(), r.chunk.cid, tioparent, ngobj)
 	targets := ngobj.getmembers()
 	for _, srv := range targets {
 		//
@@ -177,7 +174,7 @@ func (r *gatewayEight) startNewChunk() {
 		// Note also that multiple-times-same-stage tios should
 		// not be automatically removed when done
 		//
-		tio := r.putpipeline.NewTio(r, tioparent, r.chunk, srv)
+		tio := r.putpipeline.NewTio(r.realobject(), tioparent, r.chunk, srv)
 		tio.removeWhenDone = false
 	}
 	assert(len(tioparent.children) == ngobj.getCount())
@@ -188,6 +185,8 @@ func (r *gatewayEight) startNewChunk() {
 
 	log("gwy-new-chunk", mcastflow.String(), tioparent.String())
 
+	r.ngobj = ngobj
+	r.tioparent = tioparent
 	r.requestMoreReplicas(ngobj, tioparent, Now)
 }
 
@@ -196,13 +195,8 @@ func (r *gatewayEight) requestMoreReplicas(ngobj *NgtGroup, tioparent *Tio, left
 	mcastflow := tioparent.flow
 
 	assert(!left.Equal(TimeNil))
-	if r.lastright.Equal(left) {
-		r.prevlastright = r.lastright
-	}
 	r.lastright = TimeNil
 	r.requestat = TimeNil
-	r.tioparent = nil
-	r.ngobj = nil
 
 	assert(r.rzvgroup.getCount() < configStorage.numReplicas)
 
@@ -234,7 +228,7 @@ func (r *gatewayEight) requestMoreReplicas(ngobj *NgtGroup, tioparent *Tio, left
 		//
 		// the MCPR event carries extra information - comments below
 		//
-		ev := newMcastChunkPutRequestEvent(r, ngobj, r.chunk, srv, tio)
+		ev := newMcastChunkPutRequestEvent(r.realobject(), ngobj, r.chunk, srv, tio)
 		ev.winleft = left          // allocate bid at or after this time, please
 		ev.rzvgroup = r.rzvgroup   // exclude these servers, already selected before
 		ev.tiostage = "REQUEST-NG" // force tio to execute this event's stage
@@ -307,7 +301,7 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 
 		// construct unicast flows
 		// gateway => (child tio, unicast flow) => target server
-		flow := NewFlow(r, r.chunk.cid, srv, tio)
+		flow := NewFlow(r.realobject(), r.chunk.cid, srv, tio)
 		assert(tio.flow == flow)
 		flow.rb = &DummyRateBucket{}
 		flow.tobandwidth = configNetwork.linkbpsData
@@ -332,42 +326,18 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 	if r.rzvgroup.getCount() == configStorage.numReplicas {
 		return nil
 	}
+	mcastflow := tioparent.flow
 	//
 	// requestMoreReplicas if required
 	// - in-between the accepted bids
 	// - immediately, if possible
 	// - scheduled at a later time
 	//
-	bid0 := r.bids.pending[0]
 	r.lastright = r.bids.pending[l-1].win.right
-	r.requestat = TimeNil
-	r.tioparent = tioparent
-	r.ngobj = ngobj
-
-	if !r.prevlastright.Equal(TimeNil) && bid0.win.left.Sub(r.prevlastright) > configNetwork.durationControlPDU {
-		x := r.prevlastright
-		// need time to Accept
-		if x.Sub(Now) > configNetwork.durationControlPDU+config.timeClusterTrip {
-			r.requestat = x
-			y := x.Sub(time.Time{})
-			log("more-reps-before", r.String(), y)
-			return nil
-		}
-	}
-
-	if l > 1 {
-		bid1 := r.bids.pending[1]
-		if bid1.win.left.Sub(bid0.win.right) > configNetwork.durationControlPDU {
-			r.requestat = bid0.win.right
-			x := r.requestat.Sub(time.Time{})
-			log("more-reps-between", r.String(), x)
-			return nil
-		}
-	}
-
-	r.requestat = r.lastright.Add(-configNetwork.durationControlPDU * 2)
-	if r.requestat.Before(r.bids.pending[l-1].win.left) {
-		r.requestat = r.bids.pending[l-1].win.left
+	r.requestat = r.bids.pending[l-1].win.left
+	t := mcastflow.timeTxDone.Add(config.timeClusterTrip + configNetwork.durationControlPDU/2)
+	if r.requestat.Before(t) {
+		r.requestat = t
 	}
 	x := r.requestat.Sub(time.Time{})
 	log("more-reps-later", r.String(), x)
@@ -411,7 +381,7 @@ func (r *gatewayEight) accept(ngobj *NgtGroup, tioparent *Tio, incrzvgroup *RzvG
 			continue
 		}
 		tio := tioparent.children[srv]
-		acceptev := newMcastChunkPutAcceptEvent(r, ngobj, r.chunk, incrzvgroup, tio)
+		acceptev := newMcastChunkPutAcceptEvent(r.realobject(), ngobj, r.chunk, incrzvgroup, tio)
 		//
 		// force the pre-allocated tio to execute this event's stage,
 		// possibly multiple times
@@ -438,17 +408,6 @@ func (r *gatewayEight) accept(ngobj *NgtGroup, tioparent *Tio, incrzvgroup *RzvG
 	mcastflow.timeTxDone = Now.Add(configNetwork.durationControlPDU)
 
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
-
-	// once the required number of selected bids is reached:
-	// cleanup redundant child tios
-	if r.rzvgroup.getCount() == configStorage.numReplicas {
-		for _, srv := range targets {
-			if !r.rzvgroup.hasmember(srv) {
-				delete(tioparent.children, srv)
-			}
-		}
-		assert(len(tioparent.children) == r.rzvgroup.getCount())
-	}
 }
 
 // send data periodically walks all pending IO requests and transmits
@@ -457,10 +416,6 @@ func (r *gatewayEight) sendata() {
 	frsize := configNetwork.sizeFrame
 
 	for _, tioparent := range r.tios {
-		mcastflow := tioparent.flow
-		if mcastflow.timeTxDone.After(Now) {
-			continue
-		}
 		for srv, tio := range tioparent.children {
 			if !r.rzvgroup.hasmember(srv) {
 				continue
@@ -489,7 +444,7 @@ func (r *gatewayEight) sendata() {
 
 			flow.offset += frsize
 			newbits := int64(frsize * 8)
-			ev := newReplicaDataEvent(r, srv, r.chunk.cid, 0, flow, frsize)
+			ev := newReplicaDataEvent(r.realobject(), srv, r.chunk.cid, 0, flow, frsize)
 			r.Send(ev, SmethodWait)
 
 			d := time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth)
@@ -520,13 +475,12 @@ func (r *gatewayEight) M8replicack(ev EventInterface) error {
 		r.bids.cleanup()
 
 		// cleanup tios
-		//tioparent.children = nil
+		// tioparent.children = nil - too early inside pipeline doStage()
 		r.RemoveTio(tioparent)
+		r.ngobj = nil
 		r.tioparent = nil
 		r.requestat = TimeNil
 		r.lastright = TimeNil
-		r.prevlastright = TimeNil
-		r.ngobj = nil
 	}
 
 	return nil
@@ -575,7 +529,7 @@ func (r *serverEight) Run() {
 			// ev.GetSize() == configNetwork.sizeControlPDU
 			r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, NetControlBusy)
 
-			tio.doStage(r, ev)
+			tio.doStage(r.realobject(), ev)
 		}
 
 		return ev.GetSize()
@@ -610,11 +564,11 @@ func (r *serverEight) M8requestng(ev EventInterface) error {
 	rzvgroup := tioevent.rzvgroup
 
 	assert(tio.source == gwy)
-	assert(ngobj.hasmember(r))
+	assert(ngobj.hasmember(r.realobject()))
 	assert(rzvgroup != nil)
 
 	// do nothing if previously selected
-	if rzvgroup.hasmember(r) {
+	if rzvgroup.hasmember(r.realobject()) {
 		return nil
 	}
 
@@ -622,11 +576,9 @@ func (r *serverEight) M8requestng(ev EventInterface) error {
 	var diskdelay time.Duration
 	num, duration := r.disk.queueDepth(DqdChunks)
 	if num >= configStorage.maxDiskQueueChunks && duration > configNetwork.netdurationDataChunk {
-		// options: randomize, handle >> max chunks
-		if num > configStorage.maxDiskQueueChunks {
-			diskdelay = duration
-		} else {
-			diskdelay = duration - configNetwork.netdurationDataChunk
+		d1 := configStorage.dskdurationDataChunk * time.Duration(configStorage.maxDiskQueueChunks-1)
+		if duration-d1 > configNetwork.netdurationDataChunk {
+			diskdelay = duration - d1 - configNetwork.netdurationDataChunk
 		}
 	}
 
@@ -636,7 +588,7 @@ func (r *serverEight) M8requestng(ev EventInterface) error {
 	if diskdelay > 0 {
 		log("srv-delayed-bid", bid.String(), diskdelay)
 	}
-	bidev := newBidEvent(r, gwy, ngobj, tioevent.cid, bid, tio)
+	bidev := newBidEvent(r.realobject(), gwy, ngobj, tioevent.cid, bid, tio)
 	bidev.tiostage = "BID" // force tio to execute this event's stage
 	log(LogV, "srv-bid", bidev.String())
 
@@ -670,14 +622,12 @@ func (r *serverEight) M8acceptng(ev EventInterface) error {
 	gwyflow := tio.flow
 	assert(gwyflow.cid == tioevent.cid)
 	mybid := gwyflow.extension.(*PutBid)
-	//
-	// FIXME: gwyflow.extension == tioevent.bid is REDUNDANT
-	//
+	// FIXME: gwyflow.extension == tioevent.bid redundant
 	assert(mybid == tioevent.bid, mybid.String()+","+tioevent.String())
 	r.bids.acceptBid(tio, mybid)
 
 	//new server's flow
-	flow := NewFlow(gwy, tioevent.cid, r, tio)
+	flow := NewFlow(gwy, tioevent.cid, r.realobject(), tio)
 	flow.totalbytes = tioevent.sizeb
 	flow.tobandwidth = configNetwork.linkbpsData
 	log("srv-new-flow", flow.String(), mybid.String())
@@ -692,27 +642,35 @@ func (r *serverEight) M8acceptng(ev EventInterface) error {
 //
 //==================================================================
 func (m *modelEight) NewGateway(i int) RunnerInterface {
+	rgwy := m.newGatewayEight(i)
+	rgwy.rptr = rgwy // realobject
+	bids := NewGatewayBidQueue(rgwy)
+	rgwy.bids = bids
+	return rgwy
+}
+func (m *modelEight) newGatewayEight(i int) *gatewayEight {
 	gwy := NewGatewayMcast(i, m8.putpipeline)
 	gwy.rb = &DummyRateBucket{}
 	gwy.rzvgroup.incremental = true
 
 	rgwy := &gatewayEight{GatewayMcast: *gwy}
-	rgwy.rptr = rgwy // realobject
-	bids := NewGatewayBidQueue(rgwy)
-	rgwy.bids = bids
 	rgwy.requestat = TimeNil
-	rgwy.prevlastright = TimeNil
-	rgwy.lastright = TimeNil
 	return rgwy
 }
 
 func (m *modelEight) NewServer(i int) RunnerInterface {
-	srv := NewServerUch(i, m5.putpipeline)
-	rsrv := &serverEight{ServerUch: *srv}
-	rsrv.ServerUch.rptr = rsrv
+	rsrv := m.newServerEight(i)
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)
+
 	bids := NewServerSparseBidQueue(rsrv, 0)
 	rsrv.bids = bids
+	rsrv.ServerUch.rptr = rsrv
+	return rsrv
+}
+
+func (m *modelEight) newServerEight(i int) *serverEight {
+	srv := NewServerUch(i, m8.putpipeline)
+	rsrv := &serverEight{ServerUch: *srv}
 	return rsrv
 }
 

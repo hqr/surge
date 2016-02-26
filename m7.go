@@ -58,7 +58,7 @@ type gatewaySeven struct {
 
 type serverSeven struct {
 	ServerUch
-	bids *ServerRegBidQueue
+	bids ServerBidQueueInterface
 }
 
 //
@@ -88,10 +88,8 @@ func init() {
 // gatewaySeven methods
 //
 //==================================================================
-// Run contains the gateway's receive callback and its goroutine. Each of the
-// gateway instances (the running number of which is configured as
-// config.numGateways) has a type gatewayFive and spends all its given runtime
-// inside its own goroutine.
+// The gatetway's goroutine uses generic rxcallback that strictly processes
+// pipeline events
 //
 func (r *gatewaySeven) Run() {
 	r.state = RstateRunning
@@ -454,15 +452,13 @@ func (r *serverSeven) M7requestng(ev EventInterface) error {
 	var diskdelay time.Duration
 	num, duration := r.disk.queueDepth(DqdChunks)
 	if num >= configStorage.maxDiskQueueChunks && duration > configNetwork.netdurationDataChunk {
-		// options: randomize, handle >> max chunks
-		if num > configStorage.maxDiskQueueChunks {
-			diskdelay = duration
-		} else {
-			diskdelay = duration - configNetwork.netdurationDataChunk
+		d1 := configStorage.dskdurationDataChunk * time.Duration(configStorage.maxDiskQueueChunks-1)
+		if duration-d1 > configNetwork.netdurationDataChunk {
+			diskdelay = duration - d1 - configNetwork.netdurationDataChunk
 		}
 	}
 	var bid *PutBid
-	bid = r.bids.createBid(tio, diskdelay)
+	bid = r.bids.createBid(tio, diskdelay, nil)
 	if diskdelay > 0 {
 		log("srv-delayed-bid", bid.String(), diskdelay)
 	}
@@ -525,7 +521,7 @@ func (m *modelSeven) NewGateway(i int) RunnerInterface {
 }
 
 func (m *modelSeven) NewServer(i int) RunnerInterface {
-	srv := NewServerUch(i, m5.putpipeline)
+	srv := NewServerUch(i, m7.putpipeline)
 	rsrv := &serverSeven{ServerUch: *srv}
 	rsrv.ServerUch.rptr = rsrv
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)

@@ -157,7 +157,7 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 	if len(args) > 0 {
 		tioevent = args[0].(EventInterface)
 	}
-	assert(r == tioevent.GetTarget())
+	assert(r == tioevent.GetTarget(), r.String()+"!="+tioevent.GetTarget().String())
 	assert(tio == tioevent.GetTio())
 
 	stage := tio.pipeline.GetStage(tio.index)

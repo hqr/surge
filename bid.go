@@ -17,7 +17,6 @@ package surge
 
 import (
 	"fmt"
-	"math/rand"
 	"time"
 )
 
@@ -43,6 +42,7 @@ const (
 	bidStateTentative bidStateEnum = iota
 	bidStateAccepted
 	bidStateCanceled
+	bidStateRejected
 )
 
 type bidFindEnum int
@@ -128,6 +128,8 @@ func (bid *PutBid) stringState() string {
 		return "canc"
 	case bidStateAccepted:
 		return "acpt"
+	case bidStateRejected:
+		return "rjct"
 	}
 	return ""
 }
@@ -160,8 +162,7 @@ func NewBidQueue(ri RunnerInterface, size int) *BidQueue {
 	}
 }
 
-// insertBid maintains a sorted order of the bids:
-// by the left boundary of the bid's time window
+// insertBid maintains the SORTED order: (bid.win.left, bid.crtime)
 func (q *BidQueue) insertBid(bid *PutBid) {
 	l := len(q.pending)
 	if l == cap(q.pending) {
@@ -170,11 +171,16 @@ func (q *BidQueue) insertBid(bid *PutBid) {
 
 	q.pending = append(q.pending, nil)
 	t := bid.win.left
+	c := bid.crtime
 	k := 0
 	// sort by the left boundary of the bid's time window
 	for ; k < l; k++ {
 		tt := q.pending[k].win.left
-		if !t.After(tt) {
+		cc := q.pending[k].crtime
+		if t.Before(tt) {
+			break
+		}
+		if t.Equal(tt) && c.Before(cc) {
 			break
 		}
 	}
@@ -222,6 +228,19 @@ func (q *BidQueue) StringBids() string {
 		s += bid.String()
 	}
 	return s
+}
+
+//=====================================================================
+// interface ServerBidQueueInterface
+//=====================================================================
+type ServerBidQueueInterface interface {
+	createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid
+	cancelBid(replytio *Tio)
+	acceptBid(replytio *Tio, computedbid *PutBid) (*PutBid, bidStateEnum)
+	// BidQueue methods
+	findBid(by bidFindEnum, val interface{}) (int, *PutBid)
+	deleteBid(k int)
+	StringBids() string
 }
 
 //=====================================================================
@@ -281,7 +300,8 @@ func NewServerRegBidQueue(ri RunnerInterface, size int) *ServerRegBidQueue {
 //
 // More comments inside.
 //
-func (q *ServerRegBidQueue) createBid(tio *Tio, diskdelay time.Duration) *PutBid {
+func (q *ServerRegBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid {
+	assert(rwin == nil)
 	q.expire()
 
 	// the earliest time for the first data packet targeting this TBD bid:
@@ -370,7 +390,7 @@ func (q *ServerRegBidQueue) cancelBid(replytio *Tio) {
 
 	assert(bid != nil, "failed to find bid,"+q.r.String()+","+replytio.String())
 	assert(bid.tio == replytio)
-	assert(bid.state == bidStateTentative)
+	assert(bid.state == bidStateTentative || bid.state == bidStateRejected)
 
 	bid.state = bidStateCanceled
 	log(LogV, bid.String())
@@ -411,7 +431,7 @@ func (q *ServerRegBidQueue) cancelBid(replytio *Tio) {
 // the newly accepted bid while simultaneously trying to extend the time
 // window of its next canceled reservation, if exists.
 //
-func (q *ServerRegBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
+func (q *ServerRegBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) (*PutBid, bidStateEnum) {
 	q.expire()
 
 	cid := replytio.cid
@@ -452,6 +472,7 @@ func (q *ServerRegBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) {
 			log("trim:bid-canceled-extend-right", prevbid.String(), d-configReplicast.durationBidGap)
 		}
 	}
+	return nil, bidStateAccepted
 }
 
 // expire canceled bids
@@ -537,11 +558,11 @@ func NewServerSparseBidQueue(ri RunnerInterface, size int) *ServerSparseBidQueue
 	return &ServerSparseBidQueue{*q}
 }
 
-func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid {
-	// the earliest time the gateway can start sending
-	// - time for the bid to reach the gateway
-	//   +
-	// - time for accept message to be sent
+// the earliest time the gateway can start sending
+// - time for the bid to reach the gateway
+//   +
+// - time for accept message to be sent
+func (q *ServerSparseBidQueue) newleft(diskdelay time.Duration, rwin *TimWin) time.Time {
 	earliestnotify := Now.Add(configNetwork.durationControlPDU*2 + config.timeClusterTrip)
 	earliestdiskdelay := Now.Add(diskdelay)
 
@@ -555,6 +576,13 @@ func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin
 	if newleft.Before(earliestdiskdelay) {
 		newleft = earliestdiskdelay
 	}
+	return newleft
+}
+
+func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid {
+	newleft := q.newleft(diskdelay, rwin)
+
+	// try to insert the new bid between existing ones
 	l := len(q.pending)
 	for k := 0; k < l; k++ {
 		bid := q.pending[k]
@@ -562,7 +590,6 @@ func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin
 		assert(bid.tio != tio, bid.String()+","+tio.String()+","+bid.tio.String())
 		assert(bid.tio.source != tio.source, tio.String()+","+bid.String()+","+bid.tio.source.String())
 		if k < l-1 {
-			assert(!bid.win.right.After(q.pending[k+1].win.left), q.StringBids())
 			assert(bid.tio != q.pending[k+1].tio)
 			assert(bid.tio.source != q.pending[k+1].tio.source, tio.String()+","+q.StringBids()+","+bid.tio.source.String())
 		}
@@ -578,12 +605,9 @@ func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin
 	}
 	bid := NewPutBid(tio, newleft)
 
-	// FIXME: 1) rand(), 2) make configurable
-	//
-	// if the server is idle. adjust the right boundary to increase this
-	// server's selection chances
-	if l == 0 && diskdelay < configNetwork.netdurationDataChunk && rand.Intn(2) == 0 {
-		bid.win.right = bid.win.right.Add(configNetwork.netdurationDataChunk * 2)
+	// if the server is idle. inc the bid width slightly over durationBidWindow
+	if l == 0 && diskdelay == 0 {
+		bid.win.right = bid.win.right.Add(config.timeClusterTrip * 2)
 		log("srv-extend-idle-bid", bid.String())
 	}
 
@@ -602,13 +626,13 @@ func (q *ServerSparseBidQueue) cancelBid(replytio *Tio) {
 
 	assert(bid != nil, "failed to find bid,"+q.r.String()+","+replytio.String())
 	assert(bid.tio == replytio)
-	assert(bid.state == bidStateTentative)
+	assert(bid.state == bidStateTentative || bid.state == bidStateRejected)
 
 	q.deleteBid(k)
 	log(LogV, "cancel-del", replytio.String(), bid.String())
 }
 
-func (q *ServerSparseBidQueue) acceptBid(replytio *Tio, mybid *PutBid) {
+func (q *ServerSparseBidQueue) acceptBid(replytio *Tio, mybid *PutBid) (*PutBid, bidStateEnum) {
 	cid := replytio.cid
 	_, bid := q.findBid(bidFindChunk, cid)
 	assert(bid != nil, "WARNING: failed to find bid,"+q.r.String()+","+replytio.String())
@@ -622,6 +646,117 @@ func (q *ServerSparseBidQueue) acceptBid(replytio *Tio, mybid *PutBid) {
 	log("bid-accept", bid.String(), mybid.String())
 	bid.win.left = mybid.win.left
 	bid.win.right = mybid.win.right
+	return nil, bidStateAccepted
+}
+
+//=====================================================================
+// type ServerSparseDblrBidQueue
+//=====================================================================
+type ServerSparseDblrBidQueue struct {
+	ServerSparseBidQueue
+}
+
+func NewServerSparseDblrBidQueue(ri RunnerInterface, size int) *ServerSparseDblrBidQueue {
+	q := NewServerSparseBidQueue(ri, size)
+	return &ServerSparseDblrBidQueue{*q}
+}
+
+//
+// must have enough time to reject before the first gwy starts transmitting into it
+//
+func (q *ServerSparseDblrBidQueue) newleft(rwin *TimWin, crtime time.Time) time.Time {
+	d := (configNetwork.durationControlPDU + config.timeClusterTrip) * 3
+	d -= Now.Sub(crtime)
+	// FIXME: config
+	d += d >> 2
+	earliestreject := Now.Add(d)
+	if rwin.left.Equal(TimeNil) {
+		return earliestreject
+	}
+	if rwin.left.After(earliestreject) {
+		return rwin.left
+	}
+	return earliestreject
+}
+
+// This is the first possible DBLR implementation
+// Allow double-booking if:
+// - diskdelay == 0, and
+// - the most recent (the latest) outstanding tentative bid has not been double-booked yet, and
+func (q *ServerSparseDblrBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid {
+	if diskdelay > 0 {
+		return q.ServerSparseBidQueue.createBid(tio, diskdelay, rwin)
+	}
+	l := len(q.pending)
+	for k := l - 1; k >= 0; k-- {
+		bid := q.pending[k]
+		if bid.state != bidStateTentative {
+			continue
+		}
+		// instead of timeTxDone
+		if Now.Sub(bid.crtime) < configNetwork.durationControlPDU {
+			break
+		}
+		if k > 0 {
+			bid_1 := q.pending[k-1]
+			// don't allow triple-booking
+			if bid_1.win.left.Equal(bid.win.left) {
+				break
+			}
+		}
+		newleft := q.newleft(rwin, bid.crtime)
+		if bid.win.left.Before(newleft) {
+			break
+		}
+		// double-book it!
+		dbid := NewPutBid(tio, bid.win.left)
+		log("double-book", bid.String(), "as", dbid.String())
+		q.insertBid(dbid)
+		// FIXME: remove assert
+		_, b := q.findBid(bidFindChunk, tio.cid)
+		assert(b != nil)
+		assert(b == dbid)
+
+		return dbid
+
+	}
+	return q.ServerSparseBidQueue.createBid(tio, diskdelay, rwin)
+}
+
+func (q *ServerSparseDblrBidQueue) acceptBid(replytio *Tio, mybid *PutBid) (*PutBid, bidStateEnum) {
+	cid := replytio.cid
+	k, bid := q.findBid(bidFindChunk, cid)
+	assert(bid != nil, "WARNING: failed to find bid,"+q.r.String()+","+replytio.String())
+	assert(bid.tio == replytio)
+	assert(!bid.win.left.After(mybid.win.left), mybid.String()+","+bid.String())
+	assert(!bid.win.right.Before(mybid.win.right), mybid.String()+","+bid.String())
+
+	var rjbid *PutBid
+	if k > 0 {
+		bidprev := q.pending[k-1]
+		if bidprev.win.left.Equal(bid.win.left) {
+			assert(bidprev.state == bidStateAccepted, "previously created bid still not accepted nor canceled/removed,"+bidprev.String()+", accepting next="+bid.String())
+			assert(bid.state == bidStateRejected)
+			q.deleteBid(k)
+			log("srv-bid-late-accept-delete", bid.String())
+			return nil, bidStateRejected
+		}
+	}
+	if k < len(q.pending)-1 {
+		bidnext := q.pending[k+1]
+		if bidnext.win.left.Equal(bid.win.left) {
+			rjbid = bidnext
+			log("srv-bid-reject-by-accept", "accept:", bid.String(), "reject:", rjbid.String())
+			rjbid.state = bidStateRejected
+		}
+	}
+
+	assert(bid.state == bidStateTentative)
+	bid.state = bidStateAccepted
+	log("srv-bid-accept-trim", bid.String(), mybid.String())
+	bid.win.left = mybid.win.left
+	bid.win.right = mybid.win.right
+	return rjbid, bidStateAccepted
 }
 
 //=====================================================================
@@ -747,10 +882,7 @@ func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
 		bid0.win.right = end0
 	}
 
-	maxgap := configNetwork.durationControlPDU * 3
-	if maxgap < configNetwork.netdurationFrame {
-		maxgap = configNetwork.netdurationFrame
-	}
+	maxgap := configNetwork.durationControlPDU + config.timeClusterTrip // FIXME
 
 	// try to continue the sequence..
 	var bid1, bid2 *PutBid
@@ -769,20 +901,25 @@ func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
 		assert(!bid2.win.right.Before(end2))
 	}
 
-	// not a sequence of two or more: look for an idle server alternative
-	if bid1 == nil && bid2 == nil && len(q.pending) > 2 {
+	// this is one possible strategy here:
+	// only if there's no sequence of two or more, look for an "idle" alternative:
+	// bigger window indicates "more" idle
+	if bid1 == nil && bid2 == nil && len(q.pending) > 1 {
 		w0 := bid0.win.right.Sub(bid0.win.left)
 		bid1 = q.pending[1]
 		w1 := bid1.win.right.Sub(bid1.win.left)
-		if bid1.win.left.Sub(bid0.win.left) < configNetwork.netdurationFrame && w1 > w0+configNetwork.netdurationFrame {
-			log("select-idle", bid0.String(), bid1.String())
+		if bid1.win.left.Sub(bid0.win.left) < configNetwork.netdurationFrame && w1 > w0 {
+			log("select-idle", bid1.String(), "instead of", bid0.String())
 			bid0 = bid1
+			w0 = w1
 		}
-		bid2 = q.pending[2]
-		w2 := bid2.win.right.Sub(bid2.win.left)
-		if bid2.win.left.Sub(bid0.win.left) < configNetwork.netdurationFrame && w2 > w0+configNetwork.netdurationFrame {
-			bid0 = bid2
-			log("select-idle", bid0.String(), bid2.String())
+		if len(q.pending) > 2 {
+			bid2 = q.pending[2]
+			w2 := bid2.win.right.Sub(bid2.win.left)
+			if bid2.win.left.Sub(bid0.win.left) < configNetwork.netdurationFrame && w2 > w0 {
+				log("select-idle", bid2.String(), "instead of", bid0.String())
+				bid0 = bid2
+			}
 		}
 		bid1 = nil
 		bid2 = nil
@@ -831,6 +968,17 @@ func (q *GatewayBidQueue) findNextAdjacent(endprev time.Time, maxgap time.Durati
 		return bid
 	}
 	return nil
+}
+
+func (q *GatewayBidQueue) rejectBid(bid *PutBid, srv RunnerInterface) {
+	k, b := q.findBid(bidFindServer, srv)
+	if b == nil {
+		log("enough-bids stage and cleanup must be done, nothing to do", q.r.String(), bid.String())
+		return
+	}
+
+	assert(bid == b, "mismatched bid to reject,"+q.r.String()+","+bid.String()+","+b.String())
+	q.deleteBid(k)
 }
 
 func (q *GatewayBidQueue) cleanup() {
