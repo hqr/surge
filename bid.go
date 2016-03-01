@@ -698,9 +698,9 @@ func (q *ServerSparseDblrBidQueue) createBid(tio *Tio, diskdelay time.Duration, 
 			break
 		}
 		if k > 0 {
-			bid_1 := q.pending[k-1]
+			bidprev := q.pending[k-1]
 			// don't allow triple-booking
-			if bid_1.win.left.Equal(bid.win.left) {
+			if bidprev.win.left.Equal(bid.win.left) {
 				break
 			}
 		}
@@ -712,10 +712,6 @@ func (q *ServerSparseDblrBidQueue) createBid(tio *Tio, diskdelay time.Duration, 
 		dbid := NewPutBid(tio, bid.win.left)
 		log("double-book", bid.String(), "as", dbid.String())
 		q.insertBid(dbid)
-		// FIXME: remove assert
-		_, b := q.findBid(bidFindChunk, tio.cid)
-		assert(b != nil)
-		assert(b == dbid)
 
 		return dbid
 
@@ -875,7 +871,17 @@ func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
 	//
 	// take the bid #0 and trim it right away
 	//
-	bid0 := q.pending[0]
+	var bid0 *PutBid
+	k := 0
+	for ; k < len(q.pending); k++ {
+		bid0 = q.pending[k]
+		if bid0.state == bidStateTentative {
+			break
+		}
+		log("gwy-filter-best-already-rejected", bid0.String(), "k", k)
+	}
+	assert(bid0 != nil)
+
 	end0 := bid0.win.left.Add(configReplicast.minduration)
 	assert(!bid0.win.right.Before(end0))
 	if bid0.win.right.After(end0) {
@@ -904,17 +910,17 @@ func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
 	// this is one possible strategy here:
 	// only if there's no sequence of two or more, look for an "idle" alternative:
 	// bigger window indicates "more" idle
-	if bid1 == nil && bid2 == nil && len(q.pending) > 1 {
+	if bid1 == nil && bid2 == nil && len(q.pending) > k+1 {
 		w0 := bid0.win.right.Sub(bid0.win.left)
-		bid1 = q.pending[1]
+		bid1 = q.pending[k+1]
 		w1 := bid1.win.right.Sub(bid1.win.left)
 		if bid1.win.left.Sub(bid0.win.left) < configNetwork.netdurationFrame && w1 > w0 {
 			log("select-idle", bid1.String(), "instead of", bid0.String())
 			bid0 = bid1
 			w0 = w1
 		}
-		if len(q.pending) > 2 {
-			bid2 = q.pending[2]
+		if len(q.pending) > k+2 {
+			bid2 = q.pending[k+2]
 			w2 := bid2.win.right.Sub(bid2.win.left)
 			if bid2.win.left.Sub(bid0.win.left) < configNetwork.netdurationFrame && w2 > w0 {
 				log("select-idle", bid2.String(), "instead of", bid0.String())
@@ -943,6 +949,9 @@ func (q *GatewayBidQueue) findNextAdjacent(endprev time.Time, maxgap time.Durati
 	l := len(q.pending)
 	for k := 1; k < l; k++ {
 		bid := q.pending[k]
+		if bid.state != bidStateTentative {
+			continue
+		}
 		// too distant in the future?
 		if bid.win.left.Sub(endprev) > maxgap {
 			break
@@ -973,7 +982,7 @@ func (q *GatewayBidQueue) findNextAdjacent(endprev time.Time, maxgap time.Durati
 func (q *GatewayBidQueue) rejectBid(bid *PutBid, srv RunnerInterface) {
 	k, b := q.findBid(bidFindServer, srv)
 	if b == nil {
-		log("enough-bids stage and cleanup must be done, nothing to do", q.r.String(), bid.String())
+		log("enough-bids stage: cleanup must be already done", q.r.String(), bid.String())
 		return
 	}
 

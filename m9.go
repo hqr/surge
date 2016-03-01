@@ -48,7 +48,7 @@ func init() {
 // gatewayNine methods
 //
 //==================================================================
-func (r *gatewayNine) rxcallback(ev EventInterface) int {
+func (r *gatewayNine) rxcallbackNine(ev EventInterface) int {
 	switch ev.(type) {
 	case *LateRejectBidEvent:
 		rjev := ev.(*LateRejectBidEvent)
@@ -56,46 +56,9 @@ func (r *gatewayNine) rxcallback(ev EventInterface) int {
 		r.rejectBid(rjev)
 	default:
 		// execute generic tio.doStage() pipeline
-		r.gatewayEight.rxcallback(ev)
+		r.gatewayEight.rxcallbackMcast(ev)
 	}
 	return ev.GetSize()
-}
-
-// FIXME: copy-paste - fix passing type-specific rxcallback (above)
-//
-func (r *gatewayNine) Run() {
-	r.state = RstateRunning
-
-	go func() {
-		for r.state == RstateRunning {
-			// previous chunk done? Tx link is available? If yes,
-			// start a new put-chunk operation
-			if r.chunk == nil {
-				if r.rb.above(int64(configNetwork.sizeControlPDU * 8)) {
-					r.startNewChunk()
-				}
-			}
-			// recv
-			r.receiveEnqueue()
-			r.processPendingEvents(r.rxcallback)
-
-			// the second condition (rzvgroup.getCount() ...)
-			// corresponds to the post-negotiation phase when
-			// all the bids are already received, "filtered" via findBestIntersection()
-			// and the corresponding servers selected for the chunk transfer.
-			//
-			if r.chunk != nil {
-				r.sendata()
-			}
-			if r.requestat.Equal(TimeNil) {
-				continue
-			}
-			if Now.Sub(r.requestat) >= 0 {
-				r.requestMoreReplicas(r.ngobj, r.tioparent, r.lastright)
-			}
-		}
-		r.closeTxChannels()
-	}()
 }
 
 func (r *gatewayNine) rejectBid(rjev *LateRejectBidEvent) {
@@ -113,12 +76,19 @@ func (r *gatewayNine) rejectBid(rjev *LateRejectBidEvent) {
 
 	r.bids.rejectBid(bid, srv)
 	if !r.rzvgroup.hasmember(srv) {
+		log("gwy-reject-not-selected", bid.String())
 		return
 	}
 
 	r.remrzv(r.rzvgroup, srv)
 	cstr := fmt.Sprintf("chunk#%d", r.chunk.sid)
-	log("gwy-late-reject", r.rzvgroup.String(), cstr, "removed", srv.String())
+	log("gwy-late-reject", r.String(), r.rzvgroup.String(), cstr, "removed", srv.String())
+
+	// scheduled soon enough?
+	if r.requestat.Before(Now) || r.requestat.Sub(Now) < configNetwork.durationControlPDU {
+		return
+	}
+
 	r.requestat = Now
 	r.lastright = Now
 	l := len(r.bids.pending)
@@ -138,11 +108,10 @@ func (r *gatewayNine) remrzv(rzvgroup *RzvGroup, srv RunnerInterface) {
 	cnt := rzvgroup.getCount()
 	for k := 0; k < cnt; k++ {
 		if rzvgroup.servers[k] == srv {
-			if k == cnt-1 {
-				rzvgroup.servers[k] = nil
-			} else {
+			if k < cnt-1 {
 				copy(rzvgroup.servers[k:], rzvgroup.servers[k+1:])
 			}
+			rzvgroup.servers[cnt-1] = nil
 			return
 		}
 	}
@@ -180,7 +149,7 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 	gwyflow := tio.flow
 	assert(gwyflow.cid == tioevent.cid)
 	mybid := gwyflow.extension.(*PutBid)
-	// FIXME: gwyflow.extension == tioevent.bid redundant
+	// gwyflow.extension == tioevent.bid r
 	assert(mybid == tioevent.bid, mybid.String()+","+tioevent.String())
 	rjbid, state := r.bids.acceptBid(tio, mybid)
 	if rjbid != nil {
@@ -190,14 +159,14 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 		atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
 	}
 	// NOTE: the bid was previously rejected, currently removed -
-	//       LateRejectBidEvent must be in flight, or else
+	//       LateRejectBidEvent must be in flight
 	if state == bidStateRejected {
 		assert(mybid.state == bidStateRejected)
 		log("srv-accept-rejected-in-flight", mybid.String())
 		return nil
 	}
 
-	//new server's flow
+	// new server flow
 	flow := NewFlow(gwy, tioevent.cid, r, tio)
 	flow.totalbytes = tioevent.sizeb
 	flow.tobandwidth = configNetwork.linkbpsData
@@ -219,6 +188,7 @@ func (m *modelNine) NewGateway(i int) RunnerInterface {
 	rgwy.rptr = rgwy // realobject
 	bids := NewGatewayBidQueue(rgwy)
 	rgwy.bids = bids
+	rgwy.rxcb = rgwy.rxcallbackNine
 	return rgwy
 }
 
@@ -237,7 +207,6 @@ func (m *modelNine) NewServer(i int) RunnerInterface {
 
 func (m *modelNine) Configure() {
 	m8.Configure()
-
 }
 
 //==================================================================

@@ -315,6 +315,7 @@ type GatewayMcast struct {
 	GatewayCommon
 	rzvgroup    *RzvGroup
 	NowMcasting int64
+	rxcb        processEventCb // filled in by the realobj c-tor
 }
 
 func NewGatewayMcast(i int, p *Pipeline) *GatewayMcast {
@@ -348,7 +349,7 @@ func (r *GatewayMcast) selectNgtGroup(cid int64, prevgroupid int) int {
 // As per rxcallback below, the m-casting gateway handles all
 // model's pipeline stages via generic doStage()
 //
-func (r *GatewayMcast) rxcallback(ev EventInterface) int {
+func (r *GatewayMcast) rxcallbackMcast(ev EventInterface) int {
 	tio := ev.GetTio()
 	log(LogV, "GWY::rxcallback", tio.String())
 	tio.doStage(r.realobject(), ev)

@@ -108,7 +108,7 @@ func (r *gatewayEight) Run() {
 			}
 			// recv
 			r.receiveEnqueue()
-			r.processPendingEvents(r.rxcallback)
+			r.processPendingEvents(r.rxcb)
 
 			// the second condition (rzvgroup.getCount() ...)
 			// corresponds to the post-negotiation phase when
@@ -194,11 +194,10 @@ func (r *gatewayEight) requestMoreReplicas(ngobj *NgtGroup, tioparent *Tio, left
 	targets := ngobj.getmembers()
 	mcastflow := tioparent.flow
 
-	assert(!left.Equal(TimeNil))
 	r.lastright = TimeNil
 	r.requestat = TimeNil
 
-	assert(r.rzvgroup.getCount() < configStorage.numReplicas)
+	assert(r.rzvgroup.getCount() < configStorage.numReplicas, r.String()+","+r.rzvgroup.String())
 
 	if r.rzvgroup.getCount() > 0 {
 		x := left.Sub(time.Time{})
@@ -302,7 +301,10 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 		// construct unicast flows
 		// gateway => (child tio, unicast flow) => target server
 		flow := NewFlow(r.realobject(), r.chunk.cid, srv, tio)
-		assert(tio.flow == flow)
+		if tio.flow != flow {
+			log("WARNING: swapping flows in/out of the tio", tio.String(), "out", tio.flow.String(), "in", flow.String())
+			tio.flow = flow
+		}
 		flow.rb = &DummyRateBucket{}
 		flow.tobandwidth = configNetwork.linkbpsData
 		flow.totalbytes = r.chunk.sizeb
@@ -648,6 +650,7 @@ func (m *modelEight) NewGateway(i int) RunnerInterface {
 	rgwy.bids = bids
 	return rgwy
 }
+
 func (m *modelEight) newGatewayEight(i int) *gatewayEight {
 	gwy := NewGatewayMcast(i, m8.putpipeline)
 	gwy.rb = &DummyRateBucket{}
@@ -655,6 +658,7 @@ func (m *modelEight) newGatewayEight(i int) *gatewayEight {
 
 	rgwy := &gatewayEight{GatewayMcast: *gwy}
 	rgwy.requestat = TimeNil
+	rgwy.rxcb = rgwy.rxcallbackMcast
 	return rgwy
 }
 

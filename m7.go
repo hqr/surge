@@ -105,7 +105,7 @@ func (r *gatewaySeven) Run() {
 			}
 			// recv
 			r.receiveEnqueue()
-			r.processPendingEvents(r.rxcallback)
+			r.processPendingEvents(r.rxcb)
 
 			// the second condition (rzvgroup.getCount() ...)
 			// corresponds to the post-negotiation phase when
@@ -517,6 +517,7 @@ func (m *modelSeven) NewGateway(i int) RunnerInterface {
 	rgwy.rptr = rgwy // realobject
 	bids := NewGatewayBidQueue(rgwy)
 	rgwy.bids = bids
+	rgwy.rxcb = rgwy.rxcallbackMcast
 	return rgwy
 }
 

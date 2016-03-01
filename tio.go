@@ -105,6 +105,12 @@ func (tioparent *Tio) haschild(tiochild *Tio) bool {
 	return tioparent.children[tiochild.target] == tiochild
 }
 
+func (tioparent *Tio) getchild(srv RunnerInterface) *Tio {
+	tiochild, ok := tioparent.children[srv]
+	assert(ok, "tiochild does not exist: "+tioparent.String()+" for: "+srv.String())
+	return tiochild
+}
+
 func (tio *Tio) GetStage() (string, int) {
 	stage := tio.pipeline.GetStage(tio.index)
 	return stage.name, tio.index
