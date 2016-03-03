@@ -38,7 +38,6 @@ package surge
 
 import (
 	"fmt"
-	"sort"
 	"sync/atomic"
 	"time"
 )
@@ -281,9 +280,9 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 	//
 	r.bids.filterBestSequence(r.chunk, configStorage.numReplicas-rzvcnt)
 	l := len(r.bids.pending)
-	assert(len(r.bids.pending) > 0)
 	cstr := fmt.Sprintf("chunk#%d", r.chunk.sid)
 	log("enough-bids", r.bids.StringBids())
+	assert(l > 0 && l <= configStorage.numReplicas-rzvcnt, l)
 
 	// given to-be-accepted new bids create the corresponding unicast flows
 	// use temp ("incremental") rendezvous group to indicate newly accepted
@@ -300,6 +299,7 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 
 		// construct unicast flows
 		// gateway => (child tio, unicast flow) => target server
+		// FIXME: delay construction until actual sendata(), see rejectBid()
 		flow := NewFlow(r.realobject(), r.chunk.cid, srv, tio)
 		if tio.flow != flow {
 			log("WARNING: swapping flows in/out of the tio", tio.String(), "out", tio.flow.String(), "in", flow.String())
@@ -318,14 +318,32 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 	// generate and send PutAccept
 	r.accept(ngobj, tioparent, incrzvgroup)
 
-	// merge
+	// sort merge
+	rzv := r.rzvgroup.servers
 	for k := 0; k < l; k++ {
-		r.rzvgroup.servers[rzvcnt+k] = incrzvgroup.servers[k]
+		ns := incrzvgroup.servers[k]
+		id := ns.GetID()
+		if rzvcnt+k == 0 {
+			rzv[0] = ns
+			continue
+		}
+		if id > rzv[rzvcnt+k-1].GetID() {
+			rzv[rzvcnt+k] = ns
+			continue
+		}
+		for i := 0; i < rzvcnt+k; i++ {
+			if id < rzv[i].GetID() {
+				copy(rzv[i+1:], rzv[i:])
+				rzv[i] = ns
+				break
+			}
+		}
 	}
-	r.sortrzv(r.rzvgroup)
 	log("updated-rzvgroup", r.String(), r.rzvgroup.String(), cstr)
 
-	if r.rzvgroup.getCount() == configStorage.numReplicas {
+	newcnt := r.rzvgroup.getCount()
+	assert(newcnt == rzvcnt+l)
+	if newcnt == configStorage.numReplicas {
 		return nil
 	}
 	mcastflow := tioparent.flow
@@ -344,23 +362,6 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 	x := r.requestat.Sub(time.Time{})
 	log("more-reps-later", r.String(), x)
 	return nil
-}
-
-func (r *gatewayEight) sortrzv(rzvgroup *RzvGroup) {
-	cnt := rzvgroup.getCount()
-	if cnt == 1 {
-		return
-	}
-	ids := make([]int, cnt)
-	for k := 0; k < cnt; k++ {
-		assert(rzvgroup.servers[k] != nil)
-		ids[k] = rzvgroup.servers[k].GetID()
-	}
-	sort.Ints(ids)
-	for k := 0; k < cnt; k++ {
-		rzvgroup.servers[k] = r.eps[ids[k]]
-	}
-
 }
 
 // accept-ng control/stage

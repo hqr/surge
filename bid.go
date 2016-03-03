@@ -665,11 +665,15 @@ func NewServerSparseDblrBidQueue(ri RunnerInterface, size int) *ServerSparseDblr
 // must have enough time to reject before the first gwy starts transmitting into it
 //
 func (q *ServerSparseDblrBidQueue) newleft(rwin *TimWin, crtime time.Time) time.Time {
+	// original bid to be communicated to the first gateway +
+	// the first gateway to accept it +
+	// the server to send reject to the second gateway
 	d := (configNetwork.durationControlPDU + config.timeClusterTrip) * 3
+
 	d -= Now.Sub(crtime)
-	// FIXME: config
-	d += d >> 2
+	d += config.timeClusterTrip * 2
 	earliestreject := Now.Add(d)
+
 	if rwin.left.Equal(TimeNil) {
 		return earliestreject
 	}
@@ -688,21 +692,22 @@ func (q *ServerSparseDblrBidQueue) createBid(tio *Tio, diskdelay time.Duration, 
 		return q.ServerSparseBidQueue.createBid(tio, diskdelay, rwin)
 	}
 	l := len(q.pending)
-	for k := l - 1; k >= 0; k-- {
+	k := l - 1
+	maxtentduration := (configNetwork.durationControlPDU + config.timeClusterTrip) * 3
+	for ; k >= 0; k-- {
 		bid := q.pending[k]
+		if k > 0 && q.pending[k-1].win.left.Equal(bid.win.left) {
+			k--
+			continue
+		}
 		if bid.state != bidStateTentative {
 			continue
 		}
+		diff := Now.Sub(bid.crtime)
+		assert(diff < maxtentduration, "bid tentative stale: "+bid.String()+","+fmt.Sprintf("%#v", diff))
 		// instead of timeTxDone
-		if Now.Sub(bid.crtime) < configNetwork.durationControlPDU {
+		if diff < configNetwork.durationControlPDU {
 			break
-		}
-		if k > 0 {
-			bidprev := q.pending[k-1]
-			// don't allow triple-booking
-			if bidprev.win.left.Equal(bid.win.left) {
-				break
-			}
 		}
 		newleft := q.newleft(rwin, bid.crtime)
 		if bid.win.left.Before(newleft) {
@@ -717,6 +722,24 @@ func (q *ServerSparseDblrBidQueue) createBid(tio *Tio, diskdelay time.Duration, 
 
 	}
 	return q.ServerSparseBidQueue.createBid(tio, diskdelay, rwin)
+}
+
+// override base cancelBid() in order to log successful double-bookings..
+func (q *ServerSparseDblrBidQueue) cancelBid(replytio *Tio) {
+	cid := replytio.cid
+	k, bid := q.findBid(bidFindChunk, cid)
+
+	assert(bid != nil, "failed to find bid,"+q.r.String()+","+replytio.String())
+	assert(bid.tio == replytio)
+	assert(bid.state == bidStateTentative || bid.state == bidStateRejected)
+
+	if k < len(q.pending)-1 {
+		bidnext := q.pending[k+1]
+		if bidnext.win.left.Equal(bid.win.left) {
+			log("double-booking-now-has-a-chance", bidnext.String())
+		}
+	}
+	q.deleteBid(k)
 }
 
 func (q *ServerSparseDblrBidQueue) acceptBid(replytio *Tio, mybid *PutBid) (*PutBid, bidStateEnum) {
@@ -743,6 +766,7 @@ func (q *ServerSparseDblrBidQueue) acceptBid(replytio *Tio, mybid *PutBid) (*Put
 		if bidnext.win.left.Equal(bid.win.left) {
 			rjbid = bidnext
 			log("srv-bid-reject-by-accept", "accept:", bid.String(), "reject:", rjbid.String())
+			assert(rjbid.state == bidStateTentative)
 			rjbid.state = bidStateRejected
 		}
 	}
@@ -873,7 +897,8 @@ func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
 	//
 	var bid0 *PutBid
 	k := 0
-	for ; k < len(q.pending); k++ {
+	l := len(q.pending)
+	for ; k < l; k++ {
 		bid0 = q.pending[k]
 		if bid0.state == bidStateTentative {
 			break
@@ -882,66 +907,62 @@ func (q *GatewayBidQueue) filterBestSequence(chunk *Chunk, maxnum int) {
 	}
 	assert(bid0 != nil)
 
-	end0 := bid0.win.left.Add(configReplicast.minduration)
-	assert(!bid0.win.right.Before(end0))
-	if bid0.win.right.After(end0) {
-		bid0.win.right = end0
-	}
-
-	maxgap := configNetwork.durationControlPDU + config.timeClusterTrip // FIXME
-
 	// try to continue the sequence..
+	maxgap := configNetwork.durationControlPDU + config.timeClusterTrip // FIXME
 	var bid1, bid2 *PutBid
 	if maxnum > 1 {
+		end0 := bid0.win.left.Add(configReplicast.minduration)
 		bid1 = q.findNextAdjacent(end0, maxgap, configReplicast.minduration)
-	}
-	if maxnum > 2 && bid1 != nil {
-		assert(bid1.win.right.Sub(bid1.win.left) >= configReplicast.minduration)
-		end1 := bid1.win.left.Add(configReplicast.minduration)
-		assert(!bid1.win.right.Before(end1))
-		bid2 = q.findNextAdjacent(end1, maxgap, configReplicast.minduration)
-	}
-	if bid2 != nil {
-		assert(bid2.win.right.Sub(bid2.win.left) >= configReplicast.minduration)
-		end2 := bid2.win.left.Add(configReplicast.minduration)
-		assert(!bid2.win.right.Before(end2))
+		if maxnum > 2 && bid1 != nil {
+			assert(bid1.win.right.Sub(bid1.win.left) >= configReplicast.minduration)
+			end1 := bid1.win.left.Add(configReplicast.minduration)
+			assert(!bid1.win.right.Before(end1))
+			bid2 = q.findNextAdjacent(end1, maxgap, configReplicast.minduration)
+		}
 	}
 
-	// this is one possible strategy here:
-	// only if there's no sequence of two or more, look for an "idle" alternative:
-	// bigger window indicates "more" idle
-	if bid1 == nil && bid2 == nil && len(q.pending) > k+1 {
+	// if there's no sequence of two or more look for an "idle"
+	// (bigger window indicates "more" idle)
+	if bid1 == nil && bid2 == nil && l > k+1 {
 		w0 := bid0.win.right.Sub(bid0.win.left)
-		bid1 = q.pending[k+1]
-		w1 := bid1.win.right.Sub(bid1.win.left)
-		if bid1.win.left.Sub(bid0.win.left) < configNetwork.netdurationFrame && w1 > w0 {
-			log("select-idle", bid1.String(), "instead of", bid0.String())
-			bid0 = bid1
-			w0 = w1
-		}
-		if len(q.pending) > k+2 {
-			bid2 = q.pending[k+2]
-			w2 := bid2.win.right.Sub(bid2.win.left)
-			if bid2.win.left.Sub(bid0.win.left) < configNetwork.netdurationFrame && w2 > w0 {
-				log("select-idle", bid2.String(), "instead of", bid0.String())
-				bid0 = bid2
+		for kk := k + 1; kk < l; kk++ {
+			bidx := q.pending[kk]
+			if bidx.state != bidStateTentative { // FIXME: atomic set/get?
+				continue
+			}
+			w1 := bidx.win.right.Sub(bidx.win.left)
+			if w1 > w0 && bidx.win.left.Sub(bid0.win.left) < maxgap*2 {
+				log("select-idle", bidx.String(), "instead of", bid0.String())
+				bid0 = bidx
+				break
 			}
 		}
-		bid1 = nil
-		bid2 = nil
 	}
 
 	// prepare the queue in place to include only selected bid(s)
 	q.cleanup()
+
+	q.minduration(bid0)
 	q.insertBid(bid0)
 	if bid1 != nil {
+		assert(maxnum > 1)
+		q.minduration(bid1)
 		q.insertBid(bid1)
 		if bid2 != nil {
+			q.minduration(bid2)
 			q.insertBid(bid2)
 		}
 		log("bid-sequence", q.StringBids())
 	} else {
 		log(LogV, "bid-single", bid0.String())
+	}
+}
+
+func (q *GatewayBidQueue) minduration(bid *PutBid) {
+	right := bid.win.left.Add(configReplicast.minduration)
+	assert(!bid.win.right.Before(right))
+	if bid.win.right.After(right) {
+		bid.win.right = right
 	}
 }
 

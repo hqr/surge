@@ -133,7 +133,6 @@ func (r *gatewayNine) remrzv(rzvgroup *RzvGroup, srv RunnerInterface) {
 // The pipeline itself is declared at the top of this model.
 func (r *serverNine) M9acceptng(ev EventInterface) error {
 	tioevent := ev.(*McastChunkPutAcceptEvent)
-	log(r.String(), "::M9acceptng()", tioevent.String())
 	gwy := tioevent.GetSource()
 	ngobj := tioevent.GetGroup()
 	assert(ngobj.hasmember(r))
@@ -141,6 +140,7 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 
 	rzvgroup := tioevent.rzvgroup
 	if !rzvgroup.hasmember(r) {
+		log("srv-accept=cancel", tioevent.String(), tio.String())
 		r.bids.cancelBid(tio)
 		return nil
 	}
@@ -149,7 +149,7 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 	gwyflow := tio.flow
 	assert(gwyflow.cid == tioevent.cid)
 	mybid := gwyflow.extension.(*PutBid)
-	// gwyflow.extension == tioevent.bid r
+	log("srv-accept=accept", tioevent.String(), mybid.String())
 	assert(mybid == tioevent.bid, mybid.String()+","+tioevent.String())
 	rjbid, state := r.bids.acceptBid(tio, mybid)
 	if rjbid != nil {
