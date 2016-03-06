@@ -91,6 +91,7 @@ func (win *TimWin) String() string {
 
 type PutBid struct {
 	crtime time.Time    // this bid creation time
+	crleft time.Time    // win.left at creation time
 	win    TimWin       // time window reserved for requesting gateway
 	tio    *Tio         // associated IO request from the gateway
 	state  bidStateEnum // bid state
@@ -101,6 +102,7 @@ func NewPutBid(io *Tio, begin time.Time, args ...interface{}) *PutBid {
 	end := begin.Add(configReplicast.durationBidWindow)
 	bid := &PutBid{
 		crtime: Now,
+		crleft: begin,
 		win:    TimWin{begin, end},
 		tio:    io,
 		state:  bidStateTentative,
@@ -175,7 +177,7 @@ func (q *BidQueue) insertBid(bid *PutBid) {
 	k := 0
 	// sort by the left boundary of the bid's time window
 	for ; k < l; k++ {
-		tt := q.pending[k].win.left
+		tt := q.pending[k].crleft
 		cc := q.pending[k].crtime
 		if t.Before(tt) {
 			break
@@ -694,13 +696,14 @@ func (q *ServerSparseDblrBidQueue) createBid(tio *Tio, diskdelay time.Duration, 
 	l := len(q.pending)
 	k := l - 1
 	maxtentduration := (configNetwork.durationControlPDU + config.timeClusterTrip) * 3
-	for ; k >= 0; k-- {
+	for k >= 0 {
 		bid := q.pending[k]
-		if k > 0 && q.pending[k-1].win.left.Equal(bid.win.left) {
-			k--
+		if k > 0 && q.pending[k-1].crleft.Equal(bid.crleft) {
+			k -= 2
 			continue
 		}
 		if bid.state != bidStateTentative {
+			k--
 			continue
 		}
 		diff := Now.Sub(bid.crtime)
@@ -710,11 +713,11 @@ func (q *ServerSparseDblrBidQueue) createBid(tio *Tio, diskdelay time.Duration, 
 			break
 		}
 		newleft := q.newleft(rwin, bid.crtime)
-		if bid.win.left.Before(newleft) {
+		if bid.crleft.Before(newleft) {
 			break
 		}
 		// double-book it!
-		dbid := NewPutBid(tio, bid.win.left)
+		dbid := NewPutBid(tio, bid.crleft)
 		log("double-book", bid.String(), "as", dbid.String())
 		q.insertBid(dbid)
 
@@ -735,8 +738,8 @@ func (q *ServerSparseDblrBidQueue) cancelBid(replytio *Tio) {
 
 	if k < len(q.pending)-1 {
 		bidnext := q.pending[k+1]
-		if bidnext.win.left.Equal(bid.win.left) {
-			log("double-booking-now-has-a-chance", bidnext.String())
+		if bidnext.crleft.Equal(bid.crleft) {
+			log("(un)double-booked", bidnext.String())
 		}
 	}
 	q.deleteBid(k)
@@ -753,9 +756,9 @@ func (q *ServerSparseDblrBidQueue) acceptBid(replytio *Tio, mybid *PutBid) (*Put
 	var rjbid *PutBid
 	if k > 0 {
 		bidprev := q.pending[k-1]
-		if bidprev.win.left.Equal(bid.win.left) {
+		if bidprev.crleft.Equal(bid.crleft) {
 			assert(bidprev.state == bidStateAccepted, "previously created bid still not accepted nor canceled/removed,"+bidprev.String()+", accepting next="+bid.String())
-			assert(bid.state == bidStateRejected)
+			assert(bid.state == bidStateRejected, bidprev.String()+","+bid.String())
 			q.deleteBid(k)
 			log("srv-bid-late-accept-delete", bid.String())
 			return nil, bidStateRejected
@@ -763,10 +766,10 @@ func (q *ServerSparseDblrBidQueue) acceptBid(replytio *Tio, mybid *PutBid) (*Put
 	}
 	if k < len(q.pending)-1 {
 		bidnext := q.pending[k+1]
-		if bidnext.win.left.Equal(bid.win.left) {
+		if bidnext.crleft.Equal(bid.crleft) {
 			rjbid = bidnext
 			log("srv-bid-reject-by-accept", "accept:", bid.String(), "reject:", rjbid.String())
-			assert(rjbid.state == bidStateTentative)
+			assert(rjbid.state == bidStateTentative, bid.String()+","+bidnext.String())
 			rjbid.state = bidStateRejected
 		}
 	}
@@ -883,7 +886,7 @@ func (q *GatewayBidQueue) findBestIntersection(chunk *Chunk) *PutBid {
 	}
 	left := begin.Sub(time.Time{})
 	right := end.Sub(time.Time{})
-	s := fmt.Sprintf("[computed-bid (chunk#%d):(%11.10v,%11.10v),gwy=%v]", tioparent.chunksid, left, right, q.r.String())
+	s := fmt.Sprintf("[computed-bid (c#%d):(%11.10v,%11.10v),gwy=%v]", tioparent.chunksid, left, right, q.r.String())
 	log(s)
 	return computedbid
 }

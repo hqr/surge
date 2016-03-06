@@ -316,7 +316,7 @@ func (r *gatewaySeven) M7replicack(ev EventInterface) error {
 
 	assert(r.chunk != nil, "chunk nil,"+tioevent.String()+","+r.rzvgroup.String())
 	assert(r.rzvgroup.getCount() == configStorage.numReplicas, "incomplete group,"+r.String()+","+r.rzvgroup.String()+","+tioevent.String())
-	cstr := fmt.Sprintf("chunk#%d", flow.sid)
+	cstr := fmt.Sprintf("c#%d", flow.sid)
 
 	if r.replicackCommon(tioevent) == ChunkDone {
 		log(r.String(), cstr, "=>", r.rzvgroup.String())

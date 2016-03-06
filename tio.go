@@ -53,6 +53,7 @@ type Tio struct {
 	repnum         int
 	target         RunnerInterface
 	removeWhenDone bool
+	bid            *PutBid
 }
 
 func newTio(src RunnerInterface, p *Pipeline, args []interface{}) *Tio {

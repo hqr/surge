@@ -79,9 +79,10 @@ func (r *gatewayNine) rejectBid(rjev *LateRejectBidEvent) {
 		log("gwy-reject-not-selected", bid.String())
 		return
 	}
+	assert(tio.bid == bid)
 
 	r.remrzv(r.rzvgroup, srv)
-	cstr := fmt.Sprintf("chunk#%d", r.chunk.sid)
+	cstr := fmt.Sprintf("c#%d", r.chunk.sid)
 	log("gwy-late-reject", r.String(), r.rzvgroup.String(), cstr, "removed", srv.String())
 
 	// scheduled soon enough?
@@ -148,10 +149,9 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 	// accepted?
 	gwyflow := tio.flow
 	assert(gwyflow.cid == tioevent.cid)
-	mybid := gwyflow.extension.(*PutBid)
-	log("srv-accept=accept", tioevent.String(), mybid.String())
-	assert(mybid == tioevent.bid, mybid.String()+","+tioevent.String())
-	rjbid, state := r.bids.acceptBid(tio, mybid)
+	assert(tio.bid == tioevent.bid, tioevent.String()+","+tioevent.bid.String())
+	log("srv-accept=accept", tioevent.String(), tio.bid.String())
+	rjbid, state := r.bids.acceptBid(tio, tio.bid)
 	if rjbid != nil {
 		rjev := newLateRejectBidEvent(r, rjbid)
 		r.Send(rjev, SmethodWait)
@@ -161,8 +161,8 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 	// NOTE: the bid was previously rejected, currently removed -
 	//       LateRejectBidEvent must be in flight
 	if state == bidStateRejected {
-		assert(mybid.state == bidStateRejected)
-		log("srv-accept-rejected-in-flight", mybid.String())
+		assert(tio.bid.state == bidStateRejected)
+		log("srv-accept-rejected-in-flight", tio.bid.String())
 		return nil
 	}
 
@@ -170,7 +170,7 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 	flow := NewFlow(gwy, tioevent.cid, r, tio)
 	flow.totalbytes = tioevent.sizeb
 	flow.tobandwidth = configNetwork.linkbpsData
-	log("srv-new-flow", flow.String(), mybid.String())
+	log("srv-new-flow", flow.String(), tio.bid.String())
 	r.flowsfrom.insertFlow(flow)
 
 	return nil

@@ -144,6 +144,7 @@ type ConfigReplicast struct {
 	bidMultiplierPct int
 	bidGapBytes      int
 	solicitedLinkPct int
+	maxBidWait       time.Duration
 	// derived from other config, for convenience
 	durationBidGap    time.Duration
 	durationBidWindow time.Duration
@@ -156,6 +157,7 @@ var configReplicast = ConfigReplicast{
 	bidMultiplierPct: 140,
 	bidGapBytes:      0, // configNetwork.sizeControlPDU,
 	solicitedLinkPct: 90,
+	maxBidWait:       (configNetwork.durationControlPDU + config.timeClusterTrip) * 6, // 3*RTT
 }
 
 //===============================================================

@@ -58,6 +58,9 @@ type gatewayEight struct {
 	tioparent *Tio
 	lastright time.Time
 	requestat time.Time
+	// max bid window delay: controls renegotiation, doubles every miss
+	maxbidwait     time.Duration
+	maxbidwaitprev time.Duration
 }
 
 type serverEight struct {
@@ -186,6 +189,10 @@ func (r *gatewayEight) startNewChunk() {
 
 	r.ngobj = ngobj
 	r.tioparent = tioparent
+
+	// recompute maxbidwait
+	r.maxbidwait, r.maxbidwaitprev = (r.maxbidwait+r.maxbidwaitprev)/2, r.maxbidwait
+
 	r.requestMoreReplicas(ngobj, tioparent, Now)
 }
 
@@ -276,40 +283,34 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 		return nil
 	}
 	//
-	// critical point: filterBestSequence
+	// collected all bid responses - now find the best
 	//
 	r.bids.filterBestSequence(r.chunk, configStorage.numReplicas-rzvcnt)
 	l := len(r.bids.pending)
-	cstr := fmt.Sprintf("chunk#%d", r.chunk.sid)
-	log("enough-bids", r.bids.StringBids())
+	log("filtered-bids", r.bids.StringBids())
 	assert(l > 0 && l <= configStorage.numReplicas-rzvcnt, l)
 
+	incrzvgroup := &RzvGroup{servers: make([]RunnerInterface, l)}
+
+	bid0 := r.bids.pending[0]
+	idletime := bid0.win.left.Sub(Now)
+	cstr := fmt.Sprintf("c#%d", r.chunk.sid)
+	// renegotiate if the closest bid is twice beyond maxwait
+	if idletime >= r.maxbidwait*2 {
+		log("WARNING: abort-retry", cstr, "idle", idletime, "maxwait", r.maxbidwait)
+		r.maxbidwait *= 2
+		r.bids.cleanup()
+		r.accept(ngobj, tioparent, incrzvgroup)
+		r.scheduleMore(tioparent, cstr)
+		return nil
+	}
 	// given to-be-accepted new bids create the corresponding unicast flows
 	// use temp ("incremental") rendezvous group to indicate newly accepted
-	incrzvgroup := &RzvGroup{servers: make([]RunnerInterface, l)}
 	for k := 0; k < l; k++ {
 		bid := r.bids.pending[k]
 		tio := bid.tio
-		assert(tioparent.haschild(tio))
+		tio.bid = bid
 		srv := tio.target
-		assert(tio == tioparent.children[srv])
-
-		assert(ngobj.hasmember(srv))
-		assert(!r.rzvgroup.hasmember(srv))
-
-		// construct unicast flows
-		// gateway => (child tio, unicast flow) => target server
-		// FIXME: delay construction until actual sendata(), see rejectBid()
-		flow := NewFlow(r.realobject(), r.chunk.cid, srv, tio)
-		if tio.flow != flow {
-			log("WARNING: swapping flows in/out of the tio", tio.String(), "out", tio.flow.String(), "in", flow.String())
-			tio.flow = flow
-		}
-		flow.rb = &DummyRateBucket{}
-		flow.tobandwidth = configNetwork.linkbpsData
-		flow.totalbytes = r.chunk.sizeb
-		flow.extension = bid
-		log("gwy-new-flow", flow.String(), bid.String())
 
 		incrzvgroup.servers[k] = srv
 	}
@@ -318,8 +319,54 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 	// generate and send PutAccept
 	r.accept(ngobj, tioparent, incrzvgroup)
 
-	// sort merge
+	// merge-sort new servers
+	r.mergerzv(incrzvgroup)
+	log("updated-rzvgroup", r.String(), r.rzvgroup.String(), cstr)
+
+	newcnt := r.rzvgroup.getCount()
+	assert(newcnt == rzvcnt+l)
+	if newcnt == configStorage.numReplicas {
+		return nil
+	}
+
+	r.scheduleMore(tioparent, cstr)
+	return nil
+}
+
+// construct unicast flows
+// gateway => (child tio, unicast flow) => target server
+func (r *gatewayEight) newflow(srv RunnerInterface, tio *Tio) {
+	flow := NewFlow(r.realobject(), r.chunk.cid, srv, tio)
+	assert(tio.flow == flow)
+	flow.rb = &DummyRateBucket{}
+	flow.tobandwidth = configNetwork.linkbpsData
+	flow.totalbytes = r.chunk.sizeb
+	log("gwy-new-flow", flow.String(), tio.bid.String())
+}
+
+func (r *gatewayEight) scheduleMore(tioparent *Tio, cstr string) {
+	mcastflow := tioparent.flow
+	l := len(r.bids.pending)
+
+	if l > 0 {
+		r.lastright = r.bids.pending[l-1].win.right
+		r.requestat = r.bids.pending[l-1].win.left
+	} else {
+		r.requestat = Now.Add(r.maxbidwait / 4) // FIXME: configReplicast
+		r.lastright = r.requestat
+	}
+	t := mcastflow.timeTxDone.Add(config.timeClusterTrip + configNetwork.durationControlPDU/2)
+	if r.requestat.Before(t) {
+		r.requestat = t
+	}
+	x := r.requestat.Sub(time.Time{})
+	log("more-reps-later", r.String(), cstr, x)
+}
+
+func (r *gatewayEight) mergerzv(incrzvgroup *RzvGroup) {
 	rzv := r.rzvgroup.servers
+	rzvcnt := r.rzvgroup.getCount()
+	l := incrzvgroup.getCount()
 	for k := 0; k < l; k++ {
 		ns := incrzvgroup.servers[k]
 		id := ns.GetID()
@@ -339,29 +386,6 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 			}
 		}
 	}
-	log("updated-rzvgroup", r.String(), r.rzvgroup.String(), cstr)
-
-	newcnt := r.rzvgroup.getCount()
-	assert(newcnt == rzvcnt+l)
-	if newcnt == configStorage.numReplicas {
-		return nil
-	}
-	mcastflow := tioparent.flow
-	//
-	// requestMoreReplicas if required
-	// - in-between the accepted bids
-	// - immediately, if possible
-	// - scheduled at a later time
-	//
-	r.lastright = r.bids.pending[l-1].win.right
-	r.requestat = r.bids.pending[l-1].win.left
-	t := mcastflow.timeTxDone.Add(config.timeClusterTrip + configNetwork.durationControlPDU/2)
-	if r.requestat.Before(t) {
-		r.requestat = t
-	}
-	x := r.requestat.Sub(time.Time{})
-	log("more-reps-later", r.String(), x)
-	return nil
 }
 
 // accept-ng control/stage
@@ -390,19 +414,17 @@ func (r *gatewayEight) accept(ngobj *NgtGroup, tioparent *Tio, incrzvgroup *RzvG
 		// possibly multiple times
 		//
 		acceptev.tiostage = "ACCEPT-NG" // force the pre-allocated tio to execute this event's stage
-		//
-		// FIXME: redundant versus gwy-flow.extension
-		//
 		for k := 0; k < len(r.bids.pending); k++ {
 			bid := r.bids.pending[k]
 			if bid.tio == acceptev.tio {
 				acceptev.bid = bid
+				assert(tio.bid == bid, bid.String())
 				cnt++
 			}
 		}
 		tio.next(acceptev, SmethodDirectInsert)
 	}
-	assert(cnt == incrzvgroup.getCount())
+	assert(cnt == incrzvgroup.getCount(), fmt.Sprintf("%d:%d:%d", cnt, incrzvgroup.getCount(), len(r.bids.pending)))
 	atomic.StoreInt64(&r.NowMcasting, 0)
 
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
@@ -425,14 +447,17 @@ func (r *gatewayEight) sendata() {
 			}
 			flow := tio.flow
 			if flow == nil {
-				continue
+				if tio.bid == nil {
+					continue
+				}
+				r.newflow(srv, tio)
+				flow = tio.flow
 			}
 			assert(flow.tio == tio)
 			if flow.offset >= r.chunk.sizeb {
 				continue
 			}
-			bid, ok := flow.extension.(*PutBid)
-			assert(ok)
+			bid := tio.bid
 			if Now.Before(bid.win.left) {
 				continue
 			}
@@ -473,7 +498,7 @@ func (r *gatewayEight) M8replicack(ev EventInterface) error {
 	assert(r.chunk != nil, "chunk nil,"+tioevent.String()+","+r.rzvgroup.String())
 
 	if r.replicackCommon(tioevent) == ChunkDone {
-		cstr := fmt.Sprintf("chunk#%d", flow.sid)
+		cstr := fmt.Sprintf("c#%d", flow.sid)
 		log(r.String(), cstr, "=>", r.rzvgroup.String())
 		r.bids.cleanup()
 
@@ -624,16 +649,14 @@ func (r *serverEight) M8acceptng(ev EventInterface) error {
 	// accepted
 	gwyflow := tio.flow
 	assert(gwyflow.cid == tioevent.cid)
-	mybid := gwyflow.extension.(*PutBid)
-	// FIXME: gwyflow.extension == tioevent.bid redundant
-	assert(mybid == tioevent.bid, mybid.String()+","+tioevent.String())
-	r.bids.acceptBid(tio, mybid)
+	assert(tio.bid == tioevent.bid, tio.bid.String()+","+tioevent.String())
+	r.bids.acceptBid(tio, tio.bid)
 
 	//new server's flow
 	flow := NewFlow(gwy, tioevent.cid, r.realobject(), tio)
 	flow.totalbytes = tioevent.sizeb
 	flow.tobandwidth = configNetwork.linkbpsData
-	log("srv-new-flow", flow.String(), mybid.String())
+	log("srv-new-flow", flow.String(), tio.bid.String())
 	r.flowsfrom.insertFlow(flow)
 
 	return nil
@@ -660,6 +683,8 @@ func (m *modelEight) newGatewayEight(i int) *gatewayEight {
 	rgwy := &gatewayEight{GatewayMcast: *gwy}
 	rgwy.requestat = TimeNil
 	rgwy.rxcb = rgwy.rxcallbackMcast
+	rgwy.maxbidwait = configReplicast.maxBidWait
+	rgwy.maxbidwaitprev = configReplicast.maxBidWait
 	return rgwy
 }
 
