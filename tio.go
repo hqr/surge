@@ -234,7 +234,11 @@ func (tio *Tio) String() string {
 		return fmt.Sprintf("ERROR: [tio#%s,failed,%#v,%s=>%s]", tioidstr, tio.err, tio.source.String(), tio.target.String())
 	}
 	if tio.index < 0 {
-		return fmt.Sprintf("[tio#%s,init]", tioidstr)
+		if tio.source == nil || tio.target == nil {
+			return fmt.Sprintf("[tio#%s,init]", tioidstr)
+		} else {
+			return fmt.Sprintf("[tio#%s,init,%s=>%s]", tioidstr, tio.source.String(), tio.target.String())
+		}
 	}
 	if tio.err == nil {
 		return fmt.Sprintf("[tio#%s,%d,%s=>%s]", tioidstr, tio.index, tio.source.String(), tio.target.String())

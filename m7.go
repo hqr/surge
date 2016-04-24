@@ -400,9 +400,10 @@ func (r *serverSeven) Run() {
 			}
 
 			log(LogVV, "SRV::rxcallback: chunk data", tioevent.String(), bid.String())
-			// once the entire chunk is received, we can cleanup
-			// the corresponding accepted bids without waiting for them
-			// to self-expire
+			// once the entire chunk is received:
+			// 1) generate ReplicaPutAckEvent inside the common receiveReplicaData()
+			// 2) cleanup the corresponding accepted bids without waiting for them
+			//    to self-expire
 			//
 			if r.receiveReplicaData(tioevent) == ReplicaDone {
 				r.bids.deleteBid(k)

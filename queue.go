@@ -54,6 +54,19 @@ func (q *TxQueue) deleteEvent(k int) {
 	q.fifo = q.fifo[:l-1]
 }
 
+func (q *TxQueue) popEvent() EventInterface {
+	if q.depth() == 0 {
+		return nil
+	}
+	ev := q.fifo[0]
+	q.deleteEvent(0)
+	return ev
+}
+
+func (q *TxQueue) depth() int {
+	return len(q.fifo)
+}
+
 //==================================================================
 //
 // types: Rx queues

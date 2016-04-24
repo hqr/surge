@@ -101,7 +101,7 @@ func (r *RunnerBase) setChannels(peer RunnerInterface, txch chan EventInterface,
 
 func (r *RunnerBase) getChannels(peer RunnerInterface) (chan EventInterface, chan EventInterface) {
 	peerid := peer.GetID()
-	assert(r.eps[peerid] == peer)
+	assert(r.eps[peerid].GetID() == peerid)
 	return r.txchans[peerid], r.rxchans[peerid]
 }
 

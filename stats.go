@@ -181,16 +181,16 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 				spgwy := float64(newgwy) * (float64(time.Millisecond) / float64(elapsed))
 
 				if d.kind == StatsKindByteCount {
-					log(fmt.Sprintf("new-gwy-%s,%d,total-gwy-%s,%s,%s/s, %s", n, newgwy, n, bytesToKMG(mstats.totalgwy[n]), n, bytesMillisToKMGseconds(spgwy)))
+					log(LogV, fmt.Sprintf("new-gwy-%s,%d,total-gwy-%s,%s,%s/s, %s", n, newgwy, n, bytesToKMG(mstats.totalgwy[n]), n, bytesMillisToKMGseconds(spgwy)))
 				} else {
-					log(fmt.Sprintf("new-gwy-%ss,%d,total-gwy-%ss,%d,%ss/ms, %.0f", n, newgwy, n, mstats.totalgwy[n], n, spgwy))
+					log(LogV, fmt.Sprintf("new-gwy-%ss,%d,total-gwy-%ss,%d,%ss/ms, %.0f", n, newgwy, n, mstats.totalgwy[n], n, spgwy))
 				}
 			} else if d.kind == StatsKindSampleCount {
 				avesample := float64(newgwy) / float64(config.numGateways)
-				log(fmt.Sprintf("new-gwy-average-%s,%.1f", n, avesample))
+				log(LogV, fmt.Sprintf("new-gwy-average-%s,%.1f", n, avesample))
 			} else if d.kind == StatsKindPercentage {
 				busygwy := float64(newgwy) / float64(config.numGateways)
-				log(fmt.Sprintf("gwy-%s(%%),%.0f", n, busygwy))
+				log(LogV, fmt.Sprintf("gwy-%s(%%),%.0f", n, busygwy))
 			}
 		}
 
@@ -199,16 +199,16 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 				spsrv := float64(newsrv) * (float64(time.Millisecond) / float64(elapsed))
 
 				if d.kind == StatsKindByteCount {
-					log(fmt.Sprintf("new-srv-%s,%d,total-srv-%s,%s,%s/s, %s", n, newsrv, n, bytesToKMG(mstats.totalsrv[n]), n, bytesMillisToKMGseconds(spsrv)))
+					log(LogV, fmt.Sprintf("new-srv-%s,%d,total-srv-%s,%s,%s/s, %s", n, newsrv, n, bytesToKMG(mstats.totalsrv[n]), n, bytesMillisToKMGseconds(spsrv)))
 				} else {
-					log(fmt.Sprintf("new-srv-%ss,%d,total-srv-%ss,%d,%ss/ms, %.0f", n, newsrv, n, mstats.totalsrv[n], n, spsrv))
+					log(LogV, fmt.Sprintf("new-srv-%ss,%d,total-srv-%ss,%d,%ss/ms, %.0f", n, newsrv, n, mstats.totalsrv[n], n, spsrv))
 				}
 			} else if d.kind == StatsKindSampleCount {
 				avesample := float64(newsrv) / float64(config.numServers)
-				log(fmt.Sprintf("new-srv-average-%s,%.1f", n, avesample))
+				log(LogV, fmt.Sprintf("new-srv-average-%s,%.1f", n, avesample))
 			} else if d.kind == StatsKindPercentage {
 				busysrv := float64(newsrv) / float64(config.numServers)
-				log(fmt.Sprintf("srv-%s(%%),%.0f", n, busysrv))
+				log(LogV, fmt.Sprintf("srv-%s(%%),%.0f", n, busysrv))
 			}
 		}
 	}

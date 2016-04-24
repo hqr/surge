@@ -453,7 +453,6 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 		// pass the targetgroup back, to validate by the mcasting gwy
 		putackev.setOneArg(group)
 	}
-	gwyacktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
 	tio.next(putackev, SmethodWait)
 
 	cstr := ""
@@ -462,6 +461,7 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 	} else {
 		cstr = fmt.Sprintf("c#%d", flow.sid)
 	}
+	gwyacktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
 	log("srv-replica-received", r.String(), cstr, "replica-ack-scheduled", gwyacktime)
 	r.flowsfrom.deleteFlow(gwy)
 	return ReplicaDone

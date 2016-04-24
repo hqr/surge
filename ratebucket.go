@@ -257,3 +257,48 @@ func (rb *DummyRateBucket) below(units int64) bool {
 func (rb *DummyRateBucket) String() string {
 	return "dummy-rb"
 }
+
+//=====================================================================
+// DatagramRateBucket
+//=====================================================================
+// DatagramRateBucket provides a limited link rate semantics
+// to send/receive a packet (a datagram) of a given size
+// The "value" (e.g. max num of bits) this bucket can hold is in the
+// no way limited: that is - assumed to replenish itself instantaneously
+type DatagramRateBucket struct {
+	rate    int64     // units/sec
+	nextime time.Time // next time can send/receive
+}
+
+func NewDatagramRateBucket(r int64) *DatagramRateBucket {
+	return &DatagramRateBucket{r, Now}
+}
+
+func (rb *DatagramRateBucket) use(units int64) bool {
+	if rb.nextime.After(Now) {
+		return false
+	}
+	d := sizeToDuration(int(units), "b", rb.rate, "b")
+	rb.nextime = Now.Add(d)
+	return true
+}
+
+func (rb *DatagramRateBucket) setrate(newrate int64) {
+	rb.rate = newrate
+}
+
+func (rb *DatagramRateBucket) getrate() int64 {
+	return rb.rate
+}
+
+func (rb *DatagramRateBucket) above(units int64) bool {
+	return !rb.below(units)
+}
+
+func (rb *DatagramRateBucket) below(units int64) bool {
+	return rb.nextime.After(Now)
+}
+
+func (rb *DatagramRateBucket) String() string {
+	return fmt.Sprintf("%+v", *rb)
+}
