@@ -38,9 +38,6 @@ func (q *TxQueue) NowIsDone() bool {
 
 func (q *TxQueue) insertEvent(ev EventInterface) {
 	l := len(q.fifo)
-	if l == cap(q.fifo) {
-		log(LogVV, "growing tx queue", q.r.String(), cap(q.fifo))
-	}
 	q.fifo = append(q.fifo, nil)
 	q.fifo[l] = ev
 }
@@ -144,9 +141,6 @@ func (q *RxQueue) NumPendingEvents(exact bool) int64 {
 // caller takes lock
 func (q *RxQueue) insertEvent(ev EventInterface) {
 	l := len(q.pending)
-	if l == cap(q.pending) {
-		log(LogVV, "growing rx queue", q.r.String(), cap(q.pending))
-	}
 	q.pending = append(q.pending, nil)
 	q.pending[l] = ev
 }
@@ -284,10 +278,6 @@ func (q *RxQueue) GetStats(reset bool) NodeStats {
 //==================================================================
 func (q *RxQueueSorted) insertEvent(ev EventInterface) {
 	l := len(q.pending)
-	if l == cap(q.pending) {
-		log(LogV, "growing queue", q.r.String(), cap(q.pending))
-	}
-
 	q.pending = append(q.pending, nil)
 	t := ev.GetTriggerTime()
 	k := 0

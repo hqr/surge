@@ -388,14 +388,40 @@ type ServerUch struct {
 	rb             RateBucketInterface
 }
 
-// NewServerUch constructs ServerUch. The latter embeds RunnerBase and must in turn
-// be embedded
-func NewServerUch(i int, p *Pipeline) *ServerUch {
+// NewServerUchRegChannels constructs ServerUch and in itializes it
+// with Tx and Rx channels to/from all model's gateways.
+// ServerUch embeds RunnerBase and must in turn be embedded
+//
+// (compare with NewServerUchExtraChannels)
+//
+func NewServerUchRegChannels(i int, p *Pipeline) *ServerUch {
 	rbase := RunnerBase{id: i, strtype: "SRV"}
 	srv := &ServerUch{RunnerBase: rbase}
 
 	srv.putpipeline = p
+	//
+	// initPeerChannels() + initCases()
+	//
 	srv.init(config.numGateways)
+
+	srv.disk = NewDisk(srv, configStorage.diskMBps)
+	srv.timeResetStats = Now
+
+	return srv
+}
+
+// (compare with NewServerUchRegChannels)
+func NewServerUchExtraChannels(i int, p *Pipeline) *ServerUch {
+	rbase := RunnerBase{id: i, strtype: "SRV"}
+	srv := &ServerUch{RunnerBase: rbase}
+
+	srv.putpipeline = p
+	//
+	// init only the "peer" (i.e. regular) channels;
+	// the caller will init extra channels followed by initCases()
+	//
+	srv.initPeerChannels(config.numGateways)
+
 	srv.disk = NewDisk(srv, configStorage.diskMBps)
 	srv.timeResetStats = Now
 

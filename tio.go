@@ -177,17 +177,17 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 	// tio's own sources finalizes
 	if r == tio.source && tio.index == tio.pipeline.Count()-1 {
 		tio.fintime = Now
-		log("dostage-tio-done", r.String(), tio.String())
+		log(LogV, "dostage-tio-done", r.String(), tio.String())
 		tio.done = true
 		if tio.parent == nil {
 			if tio.removeWhenDone {
-				log("dostage-tio-done-removed", r.String(), tio.String())
+				log(LogV, "dostage-tio-done-removed", r.String(), tio.String())
 				tio.source.RemoveTio(tio)
 			}
 		} else {
 			assert(tio.parent.haschild(tio), "tioparent="+tio.parent.String()+",child="+tio.String())
 			if tio.removeWhenDone {
-				log("dostage-tio-done-removed", r.String(), tio.String())
+				log("LogV, dostage-tio-done-removed", r.String(), tio.String())
 				delete(tio.parent.children, tio.target)
 				if len(tio.parent.children) == 0 && tio.parent.removeWhenDone {
 					tio.parent.source.RemoveTio(tio.parent)

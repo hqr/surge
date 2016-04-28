@@ -135,3 +135,21 @@ func bytesMillisToMseconds(bytesms float64) string {
 	x := bytesms * 1000.0 / 1024.0 / 1024.0
 	return fmt.Sprintf("%.2f", x)
 }
+
+//
+// given netDelivered time (in the future) when a new complete chunk
+// will have been delivered, compute the required disk queue delay
+//
+func diskdelay(netDelivered time.Time, diskIOdone time.Time) time.Duration {
+	elapsed := Now.Sub(netDelivered) // negative
+	thenIOdone := diskIOdone.Add(elapsed)
+	if thenIOdone.Before(netDelivered) {
+		return 0
+	}
+	diff := thenIOdone.Sub(netDelivered)
+	d1 := configStorage.dskdurationDataChunk * time.Duration(configStorage.maxDiskQueueChunks-1)
+	if diff <= d1 {
+		return 0
+	}
+	return diff - d1
+}

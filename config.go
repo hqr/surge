@@ -186,9 +186,13 @@ func init() {
 	chunksizePtr := flag.Int("chunksize", configStorage.sizeDataChunk, "chunk size (KB)")
 	diskthPtr := flag.Int("diskthroughput", configStorage.diskMBps, "disk throughput (MB/sec)")
 
+	diskQueuePtr := flag.Int("diskqueue", configStorage.maxDiskQueue, "disk queue size (KB)")
+
 	l2framePtr := flag.Int("l2frame", configNetwork.sizeFrame, "L2 frame size (bytes)")
 	linkbpsPtr := flag.Int64("linkbps", configNetwork.linkbps, "Network Link Bandwidth (bits/sec)")
 	transportPtr := flag.String("transport", configNetwork.transportType, "transport type: [default | unicast | multicast]")
+
+	groupsizePtr := flag.Int("groupsize", configReplicast.sizeNgtGroup, "group size: number of servers in a multicast group")
 
 	buildPtr := flag.String("build", build, "build ID (as in: 'git rev-parse'), or any user-defined string to be used as a logfile name suffix")
 	//
@@ -233,6 +237,7 @@ func init() {
 	configStorage.numReplicas = *replicasPtr
 	configStorage.sizeDataChunk = *chunksizePtr
 	configStorage.diskMBps = *diskthPtr
+	configStorage.maxDiskQueue = *diskQueuePtr
 
 	configNetwork.sizeFrame = *l2framePtr
 	configNetwork.linkbps = *linkbpsPtr
@@ -270,6 +275,8 @@ func init() {
 	// Note: MiB effectively, here and in sizeToDuration()
 	//
 	configStorage.diskbps = int64(configStorage.diskMBps) * 1024 * 1024 * 8
+
+	configReplicast.sizeNgtGroup = *groupsizePtr
 }
 
 // NOTE:

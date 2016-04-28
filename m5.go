@@ -389,7 +389,7 @@ func (m *modelFive) NewGateway(i int) RunnerInterface {
 }
 
 func (m *modelFive) NewServer(i int) RunnerInterface {
-	srv := NewServerUch(i, m5.putpipeline)
+	srv := NewServerUchRegChannels(i, m5.putpipeline)
 
 	// receive side ratebucket use()-d directly by remote senders
 	srv.rb = NewRateBucketProtected(

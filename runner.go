@@ -33,6 +33,9 @@ type RunnerInterface interface {
 	setChannels(peer RunnerInterface, txch chan EventInterface, rxch chan EventInterface)
 	getChannels(peer RunnerInterface) (chan EventInterface, chan EventInterface)
 
+	setExtraChannels(peer RunnerInterface, atidx int, txch chan EventInterface, rxch chan EventInterface)
+	getExtraChannels(peer RunnerInterface) (chan EventInterface, chan EventInterface)
+
 	Run()
 	NowIsDone() bool
 	PrepareToStop()
@@ -63,12 +66,18 @@ type RunnerInterface interface {
 const initialTioCnt int = 4
 
 type RunnerBase struct {
-	id          int
-	state       RunnerStateEnum
-	txchans     []chan EventInterface
-	rxchans     []chan EventInterface
-	eps         []RunnerInterface
-	cases       []reflect.SelectCase
+	id    int
+	state RunnerStateEnum
+	// channels
+	txchans      []chan EventInterface
+	rxchans      []chan EventInterface
+	eps          []RunnerInterface
+	extraTxChans []chan EventInterface
+	extraRxChans []chan EventInterface
+	extraEps     []RunnerInterface
+	// cases
+	cases []reflect.SelectCase
+	// more state
 	tios        map[int64]*Tio
 	rxqueue     *RxQueueSorted
 	txqueue     *TxQueue
@@ -95,14 +104,48 @@ func (r *RunnerBase) setChannels(peer RunnerInterface, txch chan EventInterface,
 
 	r.cases[peerid-1] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(rxch)}
 
-	r.rxqueue = NewRxQueueSorted(r, 0)
-	r.txqueue = NewTxQueue(r, 0)
+	if r.rxqueue == nil {
+		r.rxqueue = NewRxQueueSorted(r, 0)
+	}
+	if r.txqueue == nil {
+		r.txqueue = NewTxQueue(r, 0)
+	}
 }
 
 func (r *RunnerBase) getChannels(peer RunnerInterface) (chan EventInterface, chan EventInterface) {
 	peerid := peer.GetID()
 	assert(r.eps[peerid].GetID() == peerid)
 	return r.txchans[peerid], r.rxchans[peerid]
+}
+
+func (r *RunnerBase) setExtraChannels(other RunnerInterface, atidx int, txch chan EventInterface, rxch chan EventInterface) {
+	numPeers := cap(r.txchans) - 1
+
+	assert(r.extraEps[atidx] == nil)
+	assert(r.txchans[numPeers] != nil)
+	assert(r.rxchans[numPeers] != nil)
+
+	r.extraEps[atidx] = other
+	r.extraTxChans[atidx] = txch
+	r.extraRxChans[atidx] = rxch
+
+	assert(!r.cases[numPeers+atidx].Chan.IsValid())
+	r.cases[numPeers+atidx] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(rxch)}
+	assert(r.cases[numPeers+atidx].Chan.IsValid())
+}
+
+func (r *RunnerBase) getExtraChannels(peer RunnerInterface) (chan EventInterface, chan EventInterface) {
+	i := int(0)
+	for ; i < cap(r.extraTxChans); i++ {
+		if r.extraEps[i] == peer {
+			break
+		}
+		assert(r.extraEps[i].GetID() != peer.GetID())
+	}
+	assert(i < cap(r.extraTxChans))
+	assert(r.extraTxChans[i] != nil)
+	assert(r.extraRxChans[i] != nil)
+	return r.extraTxChans[i], r.extraRxChans[i]
 }
 
 // sample Run() for a listening runner
@@ -181,17 +224,38 @@ func (r *RunnerBase) updateTxBytes(ev EventInterface) {
 // RunnerBase private methods that can be used by concrete models' runners
 //==================================================================
 func (r *RunnerBase) init(numPeers int) {
+	r.initPeerChannels(numPeers)
+	r.initCases()
+}
+
+func (r *RunnerBase) initPeerChannels(numPeers int) {
 	r.txchans = make([]chan EventInterface, numPeers+1)
 	r.rxchans = make([]chan EventInterface, numPeers+1)
 	r.eps = make([]RunnerInterface, numPeers+1)
 
-	r.cases = make([]reflect.SelectCase, numPeers+1)
-	r.cases[numPeers] = reflect.SelectCase{Dir: reflect.SelectDefault}
-	r.rxcount = numPeers
-
-	r.txchans[0] = nil // not used
+	// indexed by runner ID, [0] not used
+	r.txchans[0] = nil
 	r.rxchans[0] = nil
 	r.eps[0] = nil
+}
+
+func (r *RunnerBase) initExtraChannels(n int) {
+	r.extraTxChans = make([]chan EventInterface, n)
+	r.extraRxChans = make([]chan EventInterface, n)
+	r.extraEps = make([]RunnerInterface, n)
+}
+
+func (r *RunnerBase) initCases() {
+	numPeers := cap(r.txchans) - 1
+	numExtra := int(0)
+	if r.extraTxChans != nil {
+		numExtra = cap(r.extraTxChans)
+		assert(numExtra == cap(r.extraRxChans))
+		assert(numExtra == cap(r.extraEps))
+	}
+	r.cases = make([]reflect.SelectCase, numPeers+1+numExtra)
+	r.cases[numPeers+numExtra] = reflect.SelectCase{Dir: reflect.SelectDefault}
+	r.rxcount = numPeers + numExtra
 }
 
 func (r *RunnerBase) initios(args ...interface{}) {
@@ -257,7 +321,6 @@ func (r *RunnerBase) receiveEnqueue() (bool, error) {
 				log("ERROR", r.String(), err)
 			}
 		} else if ev != nil {
-			log(LogVVV, "recv-ed", ev.String())
 			if !locked {
 				r.rxqueue.lock()
 				locked = true

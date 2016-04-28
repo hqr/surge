@@ -523,7 +523,7 @@ func (m *modelSeven) NewGateway(i int) RunnerInterface {
 }
 
 func (m *modelSeven) NewServer(i int) RunnerInterface {
-	srv := NewServerUch(i, m7.putpipeline)
+	srv := NewServerUchRegChannels(i, m7.putpipeline)
 	rsrv := &serverSeven{ServerUch: *srv}
 	rsrv.ServerUch.rptr = rsrv
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)

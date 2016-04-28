@@ -148,8 +148,9 @@ func (bid *PutBid) String() string {
 // type BidQueue
 //
 type BidQueue struct {
-	pending []*PutBid
-	r       RunnerInterface
+	pending       []*PutBid
+	r             RunnerInterface
+	sortBy_crleft bool
 }
 
 func NewBidQueue(ri RunnerInterface, size int) *BidQueue {
@@ -159,8 +160,9 @@ func NewBidQueue(ri RunnerInterface, size int) *BidQueue {
 	q := make([]*PutBid, size)
 
 	return &BidQueue{
-		pending: q[0:0],
-		r:       ri,
+		pending:       q[0:0],
+		r:             ri,
+		sortBy_crleft: false,
 	}
 }
 
@@ -177,13 +179,18 @@ func (q *BidQueue) insertBid(bid *PutBid) {
 	k := 0
 	// sort by the left boundary of the bid's time window
 	for ; k < l; k++ {
-		tt := q.pending[k].crleft
-		cc := q.pending[k].crtime
+		tt := q.pending[k].win.left
+		if q.sortBy_crleft {
+			tt = q.pending[k].crleft
+		}
 		if t.Before(tt) {
 			break
 		}
-		if t.Equal(tt) && c.Before(cc) {
-			break
+		if t.Equal(tt) {
+			cc := q.pending[k].crtime
+			if c.Before(cc) {
+				break
+			}
 		}
 	}
 	if k == l {
@@ -660,6 +667,7 @@ type ServerSparseDblrBidQueue struct {
 
 func NewServerSparseDblrBidQueue(ri RunnerInterface, size int) *ServerSparseDblrBidQueue {
 	q := NewServerSparseBidQueue(ri, size)
+	q.sortBy_crleft = true
 	return &ServerSparseDblrBidQueue{*q}
 }
 

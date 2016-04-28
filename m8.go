@@ -699,7 +699,7 @@ func (m *modelEight) NewServer(i int) RunnerInterface {
 }
 
 func (m *modelEight) newServerEight(i int) *serverEight {
-	srv := NewServerUch(i, m8.putpipeline)
+	srv := NewServerUchRegChannels(i, m8.putpipeline)
 	rsrv := &serverEight{ServerUch: *srv}
 	return rsrv
 }

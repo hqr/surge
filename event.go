@@ -231,6 +231,24 @@ func newProxyBidsEvent(srv RunnerInterface, gwy RunnerInterface, group GroupInte
 	return &ProxyBidsEvent{zControlEvent{zEvent{*timedev}, chunkid}, bids, chunksizeb}
 }
 
+// bid-done event, server => proxy
+type BidDoneEvent struct {
+	zControlEvent
+	bid        *PutBid
+	diskIOdone time.Time
+}
+
+func (e *BidDoneEvent) String() string {
+	printid := uqrand(e.cid)
+	return fmt.Sprintf("[BDE %v=>%v,c#%d]", e.source.String(), e.target.String(), printid)
+}
+
+func newBidDoneEvent(srv RunnerInterface, proxy RunnerInterface, bid *PutBid, diskIOdone time.Time) *BidDoneEvent {
+	atnet := configNetwork.durationControlPDU + config.timeClusterTrip
+	timedev := newTimedAnyEvent(srv, atnet, proxy, bid.tio, configNetwork.sizeControlPDU)
+	return &BidDoneEvent{zControlEvent{zEvent{*timedev}, bid.tio.cid}, bid, diskIOdone}
+}
+
 // acks ReplicaPut request, not to confuse with ReplicaPutAck
 type ReplicaPutRequestAckEvent struct {
 	zControlEvent

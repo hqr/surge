@@ -404,7 +404,7 @@ func (m *modelSix) NewGateway(i int) RunnerInterface {
 }
 
 func (m *modelSix) NewServer(i int) RunnerInterface {
-	srv := NewServerUch(i, m6.putpipeline)
+	srv := NewServerUchRegChannels(i, m6.putpipeline)
 
 	// receive side ratebucket use()-d directly by remote senders
 	srv.rb = NewRateBucketProtected(
