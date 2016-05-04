@@ -509,7 +509,7 @@ func (r *ServerUch) GetStats(reset bool) NodeStats {
 	elapsed := int64(Now.Sub(time.Time{})) // run time
 
 	num, _ := r.disk.queueDepth(DqdBuffers)
-	s["disk-queue-depth"] = int64(num)
+	s["disk-frame-bufs"] = int64(num)
 
 	if reset {
 		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, 0)

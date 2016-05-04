@@ -187,7 +187,7 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 		} else {
 			assert(tio.parent.haschild(tio), "tioparent="+tio.parent.String()+",child="+tio.String())
 			if tio.removeWhenDone {
-				log("LogV, dostage-tio-done-removed", r.String(), tio.String())
+				log(LogV, "dostage-tio-done-removed", r.String(), tio.String())
 				delete(tio.parent.children, tio.target)
 				if len(tio.parent.children) == 0 && tio.parent.removeWhenDone {
 					tio.parent.source.RemoveTio(tio.parent)

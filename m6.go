@@ -359,11 +359,11 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 
 	gwy := tioevent.GetSource()
 
-	var diskdelay time.Duration
-	num, duration := r.disk.queueDepth(DqdChunks)
-	if num >= configStorage.maxDiskQueueChunks && duration > configNetwork.netdurationDataChunk {
-		diskdelay = duration - configNetwork.netdurationDataChunk
-	}
+	// assuming (! FIXME) the new chunk has already arrived,
+	// compute disk queue delay with respect to the configured maxDiskQueueChunks
+	diskIOdone := r.disk.lastIOdone
+	delay := diskdelay(Now, diskIOdone)
+
 	f := r.flowsfrom.get(gwy, false)
 	assert(f == nil)
 
@@ -375,9 +375,9 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 	r.flowsfrom.insertFlow(flow)
 
 	// respond to the put-request
-	putreqackev := newReplicaPutRequestAckEvent(r, gwy, flow, tio, diskdelay)
-	if diskdelay > 0 {
-		log("srv-new-delayed-flow", flow.String(), putreqackev.String(), diskdelay)
+	putreqackev := newReplicaPutRequestAckEvent(r, gwy, flow, tio, delay)
+	if delay > 0 {
+		log("srv-new-delayed-flow", flow.String(), putreqackev.String(), delay)
 	} else {
 		log("srv-new-flow", flow.String(), putreqackev.String())
 	}

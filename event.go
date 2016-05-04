@@ -234,19 +234,20 @@ func newProxyBidsEvent(srv RunnerInterface, gwy RunnerInterface, group GroupInte
 // bid-done event, server => proxy
 type BidDoneEvent struct {
 	zControlEvent
-	bid        *PutBid
-	diskIOdone time.Time
+	bid            *PutBid
+	reservedIOdone time.Time
 }
 
 func (e *BidDoneEvent) String() string {
 	printid := uqrand(e.cid)
-	return fmt.Sprintf("[BDE %v=>%v,c#%d]", e.source.String(), e.target.String(), printid)
+	reservedIOdone := fmt.Sprintf("%-12.10v", e.reservedIOdone.Sub(time.Time{}))
+	return fmt.Sprintf("[BDE %v=>%v,c#%d],%s", e.source.String(), e.target.String(), printid, reservedIOdone)
 }
 
-func newBidDoneEvent(srv RunnerInterface, proxy RunnerInterface, bid *PutBid, diskIOdone time.Time) *BidDoneEvent {
+func newBidDoneEvent(srv RunnerInterface, proxy RunnerInterface, bid *PutBid, reservedIOdone time.Time) *BidDoneEvent {
 	atnet := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(srv, atnet, proxy, bid.tio, configNetwork.sizeControlPDU)
-	return &BidDoneEvent{zControlEvent{zEvent{*timedev}, bid.tio.cid}, bid, diskIOdone}
+	return &BidDoneEvent{zControlEvent{zEvent{*timedev}, bid.tio.cid}, bid, reservedIOdone}
 }
 
 // acks ReplicaPut request, not to confuse with ReplicaPutAck

@@ -29,9 +29,9 @@ type serverSevenX struct {
 
 type serverSevenProxy struct {
 	serverSevenX
-	allbids    []*ServerSparseBidQueue
-	diskIOdone []time.Time
-	delayed    *TxQueue
+	allbids        []*ServerSparseBidQueue
+	reservedIOdone []time.Time
+	delayed        *TxQueue
 }
 
 //
@@ -222,12 +222,7 @@ func (r *gatewaySevenX) M7X_replicack(ev EventInterface) error {
 	assert(flow.cid == tioevent.cid)
 	assert(group == r.rzvgroup)
 
-	assert(r.chunk != nil, "chunk nil,"+tioevent.String()+","+r.rzvgroup.String())
-	assert(r.rzvgroup.getCount() == configStorage.numReplicas, "incomplete group,"+r.String()+","+r.rzvgroup.String()+","+tioevent.String())
-	cstr := fmt.Sprintf("c#%d", flow.sid)
-
 	if r.replicackCommon(tioevent) == ChunkDone {
-		log(r.String(), cstr, "=>", r.rzvgroup.String())
 		r.bids.cleanup()
 	}
 
@@ -312,7 +307,7 @@ func (r *serverSevenX) rxcallback(ev EventInterface) int {
 	case *BidDoneEvent:
 		proxy, _ := r.realobject().(*serverSevenProxy)
 		bdoneEvent := ev.(*BidDoneEvent)
-		proxy.handleBidDone(false, bdoneEvent.bid, bdoneEvent.diskIOdone, bdoneEvent.crtime)
+		proxy.handleBidDone(false, bdoneEvent.bid, bdoneEvent.reservedIOdone)
 	default:
 		tio := ev.GetTio()
 		log(LogV, "SRV::rxcallback", ev.String(), r.String())
@@ -330,7 +325,7 @@ func (r *serverSevenX) Run() {
 	// main loop
 	go func() {
 		for r.state == RstateRunning {
-			r.handleDelayed()
+			r.handleTxDelayed()
 			r.receiveEnqueue()
 			r.processPendingEvents(r.rxcallback)
 		}
@@ -343,7 +338,7 @@ func (r *serverSevenX) notifyProxyBidDone(bid *PutBid) {
 	proxy, ok := r.realobject().(*serverSevenProxy)
 	if ok {
 		// self, in place
-		proxy.handleBidDone(true, bid, r.disk.lastIOdone, Now)
+		proxy.handleBidDone(true, bid, r.disk.lastIOdone)
 		return
 	}
 	// resolve proxy
@@ -353,8 +348,14 @@ func (r *serverSevenX) notifyProxyBidDone(bid *PutBid) {
 	assert(thisidx != firstidx)
 	proxy = allServers[firstidx].(*serverSevenProxy)
 
+	// estimate reservedIOdone (and therefore diskdelay) at the time
+	// of the future new bid, that is at the time that equals
+	// last-pending-bid.win.right
+	reservedIOdone := r.futureReservedIOdone()
+
 	// create bid-done event
-	bdoneEvent := newBidDoneEvent(r, proxy, bid, r.disk.lastIOdone)
+	bdoneEvent := newBidDoneEvent(r, proxy, bid, reservedIOdone)
+	log(LogV, "notify-bid-done", bdoneEvent.String())
 
 	// send
 	// FIXME: encapsulate as srv.Send(bdoneEvent, SmethodWait)
@@ -363,7 +364,26 @@ func (r *serverSevenX) notifyProxyBidDone(bid *PutBid) {
 	r.updateTxBytes(bdoneEvent)
 }
 
-func (r *serverSevenX) handleDelayed() {
+func (r *serverSevenX) futureReservedIOdone() time.Time {
+	reservedIOdone := r.disk.lastIOdone
+	l := len(r.bids.pending)
+	if l == 0 {
+		return reservedIOdone
+	}
+
+	for k := 0; k < l; k++ {
+		bid := r.bids.pending[k]
+		thenNow := bid.win.right
+		if thenNow.Before(reservedIOdone) {
+			reservedIOdone = reservedIOdone.Add(configStorage.dskdurationDataChunk)
+		} else {
+			reservedIOdone = thenNow.Add(configStorage.dskdurationDataChunk)
+		}
+	}
+	return reservedIOdone
+}
+
+func (r *serverSevenX) handleTxDelayed() {
 	proxy, ok := r.realobject().(*serverSevenProxy)
 	if !ok {
 		return
@@ -386,7 +406,7 @@ func (r *serverSevenX) handleDelayed() {
 func (r *serverSevenX) handleProxiedBid(bidsev *ProxyBidsEvent) {
 	tio := bidsev.tio
 	bid := bidsev.bids[0]
-	log("SRV::rxcallback:new-proxied-bid", bid.String(), tio.String())
+	log(LogV, "SRV::rxcallback:new-proxied-bid", bid.String(), tio.String())
 	r.bids.insertBid(bid)
 	// new server's flow right away..
 	assert(r.realobject() == tio.target, r.String()+"!="+tio.target.String()+","+tio.String())
@@ -463,19 +483,46 @@ func (r *serverSevenProxy) M7X_request(ev EventInterface) error {
 		newleft = earliestnotify
 	}
 
+	// disk delay is computed and applied here
+	var diskdelay, latency time.Duration
+	for j := 0; j < configStorage.numReplicas; j++ {
+		qj := r.allbids[bestqueues[j]]
+		dj := r.reservedIOdone[bestqueues[j]]
+		sj, delay := r.timeStartWritingNewChunk(qj, dj)
+		diskdelay += delay
+
+		// FIXME: debug-only: estimate chunk latency
+		fj := sj.Add(configStorage.dskdurationDataChunk)
+		lj := fj.Sub(Now)
+		lj += 2 * (configNetwork.durationControlPDU + config.timeClusterTrip)
+		if lj > latency {
+			latency = lj
+		}
+	}
+	diskdelay /= time.Duration(configStorage.numReplicas)
+	newleft = newleft.Add(diskdelay)
+
+	// FIXME: debug, remove
+	cstr := fmt.Sprintf("c#%d", tioproxy.chunksid)
+	log("estimate-late", r.String(), cstr, latency)
+	if latency > (configNetwork.netdurationDataChunk+configStorage.dskdurationDataChunk)*3 {
+		r.logDebug(bestqueues[0:], newleft, diskdelay, cstr)
+	}
+
 	// 4. - create bids for those selected
 	//    - accept the bids right away
 	//    - and send each of these new bids into their corresponding targets
 	bidsev := newProxyBidsEvent(r, gwy, ngobj, tioevent.cid, tioproxy, configStorage.numReplicas, tioevent.sizeb)
 	for j := 0; j < configStorage.numReplicas; j++ {
-		newbid := r.autoAcceptOnBehalf(tioproxy, r.allbids[bestqueues[j]], newleft, ngobj, tioevent.sizeb)
+		qj := r.allbids[bestqueues[j]]
+		newbid := r.autoAcceptOnBehalf(tioproxy, qj, newleft, ngobj, tioevent.sizeb)
 		q := r.allbids[bestqueues[j]]
 		log("proxy-bid", j, gwy.String(), "=>", q.r.String(), newbid.String())
 		bidsev.bids[j] = newbid
 	}
 
 	// 5. execute the pipeline stage vis-à-vis the requesting gateway
-	log("proxy-bidsev", bidsev.String())
+	log(LogV, "proxy-bidsev", bidsev.String())
 	bidsev.tiostage = "BID" // force tio to execute this event's stage
 	tioproxy.next(bidsev, SmethodWait)
 
@@ -493,7 +540,36 @@ func (r *serverSevenProxy) M7X_request(ev EventInterface) error {
 	return nil
 }
 
-func (r *serverSevenProxy) handleBidDone(isproxy bool, bid *PutBid, diskIOdone time.Time, crtime time.Time) {
+func (r *serverSevenProxy) logDebug(bestqueues []int, newleft time.Time, delay time.Duration, cstr string) {
+	log("============= ", r.String(), cstr, " ========================================")
+	for i := 0; i < configReplicast.sizeNgtGroup; i++ {
+		qi := r.allbids[i]
+		di := r.reservedIOdone[i]
+		bidstr := "<nil>"
+		l := len(qi.pending)
+		if l > 0 {
+			bidstr = qi.pending[l-1].String()
+		}
+		s, d := r.timeStartWritingNewChunk(qi, di)
+		log(qi.r.String(), ": ", bidstr, fmt.Sprintf("startW=%-12.10v", s.Sub(time.Time{})), d)
+	}
+	sincestartup := newleft.Sub(time.Time{})
+	ts := fmt.Sprintf("%-12.10v", sincestartup)
+	log("SELECTED:(newleft, delay)", cstr, ts, delay)
+	for j := 0; j < configStorage.numReplicas; j++ {
+		qj := r.allbids[bestqueues[j]]
+		dj := r.reservedIOdone[bestqueues[j]]
+		bidstr := "<nil>"
+		l := len(qj.pending)
+		if l > 0 {
+			bidstr = qj.pending[l-1].String()
+		}
+		s, d := r.timeStartWritingNewChunk(qj, dj)
+		log(qj.r.String(), ": ", bidstr, fmt.Sprintf("startW=%-12.10v", s.Sub(time.Time{})), d)
+	}
+}
+
+func (r *serverSevenProxy) handleBidDone(isproxy bool, bid *PutBid, reservedIOdone time.Time) {
 	srv := bid.tio.target
 	// must be the [0] if the bid is owned by the proxy itself
 	i := 0
@@ -511,6 +587,10 @@ func (r *serverSevenProxy) handleBidDone(isproxy bool, bid *PutBid, diskIOdone t
 		}
 		l := len(qi.pending)
 		k := 0
+		// update reservedIOdone aka lastIOdone
+		r.reservedIOdone[i] = reservedIOdone
+
+		// delete this bid from the local proxy's queue
 		for ; k < l; k++ {
 			bd := qi.pending[k]
 			if bd != bid {
@@ -525,17 +605,13 @@ func (r *serverSevenProxy) handleBidDone(isproxy bool, bid *PutBid, diskIOdone t
 			break
 		}
 		assert(k < l)
-		// update diskIOdone stats for this server
-		// with respect to the time elapsed since this BidDone event was created
-		elapsed := crtime.Sub(Now)
-		r.diskIOdone[i] = diskIOdone.Add(elapsed)
 		break
 	}
 	assert(i < configReplicast.sizeNgtGroup)
 }
 
 //
-// FIXME: honor diskdelay (configStorage.maxDiskQueueChunks) - TODO
+// select the best 3 (or numReplicas) servers for the new put-chunk request
 //
 func (r *serverSevenProxy) selectBestBidQueues(bestqueues []int, bestbids []*PutBid, dummybid *PutBid) {
 	for j := 0; j < configStorage.numReplicas; j++ {
@@ -549,7 +625,7 @@ func (r *serverSevenProxy) selectBestBidQueues(bestqueues []int, bestbids []*Put
 
 			// skip [i] if already used
 			alreadyused := false
-			for k := 0; k < configStorage.numReplicas; k++ {
+			for k := 0; k < j; k++ {
 				if bestqueues[k] == i {
 					alreadyused = true
 					break
@@ -573,13 +649,13 @@ func (r *serverSevenProxy) selectBestBidQueues(bestqueues []int, bestbids []*Put
 			}
 			// estimate time the [i] server will start writing new chunk
 			qi := r.allbids[i]
-			di := r.diskIOdone[i]
-			si := r.timeStartWritingNewChunk(qi, di)
+			di := r.reservedIOdone[i]
+			si, _ := r.timeStartWritingNewChunk(qi, di)
 
 			// estimate time the [j] server will start writing new chunk
 			qj := r.allbids[bestqueues[j]]
-			dj := r.diskIOdone[bestqueues[j]]
-			sj := r.timeStartWritingNewChunk(qj, dj)
+			dj := r.reservedIOdone[bestqueues[j]]
+			sj, _ := r.timeStartWritingNewChunk(qj, dj)
 
 			// compare and decide
 			if si.Before(sj) {
@@ -592,44 +668,48 @@ func (r *serverSevenProxy) selectBestBidQueues(bestqueues []int, bestbids []*Put
 					bestbids[j] = bi
 				}
 			}
+			// FIXME: if si.Equal(sj) compare respective reservedIOdone
 		}
 	}
 }
 
 //
-// given bid queue and estimated time to complete already scheduled chunks (diskIOdone),
+// given bid queue and estimated time to complete already scheduled chunks (reservedIOdone),
 // compute the time when the corresponding server will start writing the new chunk
 //
-func (r *serverSevenProxy) timeStartWritingNewChunk(q *ServerSparseBidQueue, diskIOdone time.Time) time.Time {
-	var ntime, stime time.Time
+func (r *serverSevenProxy) timeStartWritingNewChunk(q *ServerSparseBidQueue, reservedIOdone time.Time) (time.Time, time.Duration) {
+	var ntime, stime, dd time.Time
 
-	// network time, i.e. the time when new chunk gets /there/
+	// network time, i.e. the time to deliver complete new chunk to the server q.r
 	l := len(q.pending)
 	earliestnotify := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip)
 	if l == 0 {
 		ntime = earliestnotify.Add(configNetwork.netdurationDataChunk + config.timeClusterTrip)
+		dd = reservedIOdone
 	} else {
 		lastbid := q.pending[l-1]
 		newleft := lastbid.win.right.Add(configReplicast.durationBidGap + config.timeClusterTrip)
 		if newleft.Before(earliestnotify) {
-			newleft = earliestnotify
+			ntime = earliestnotify.Add(configNetwork.netdurationDataChunk + config.timeClusterTrip)
+			dd = reservedIOdone
+		} else {
+			ntime = newleft.Add(configNetwork.netdurationDataChunk + config.timeClusterTrip)
+
+			// at the ntime all the 'l' chunks that correspond to the q.pending bids
+			// and that are in front of this potential new chunk (bid)
+			// will have to be in the disk queue, therefore:
+			// estimate reservedIOdone timestamp accordingly giving it the most optimal
+			// (minimal) value into the future
+			dd = reservedIOdone.Add(time.Duration(l) * configStorage.dskdurationDataChunk)
 		}
-		ntime = newleft.Add(configNetwork.netdurationDataChunk + config.timeClusterTrip)
 	}
 
-	// adjust diskIOdone with respect to maxDiskQueueChunks
-	delay := diskdelay(ntime, diskIOdone)
-	diskIOdone = diskIOdone.Add(delay)
-
-	// if the new chunk gets delivered after the server finishes already queued writes..
-	// or else
-	if ntime.After(diskIOdone) {
-		stime = ntime
-	} else {
-		elapsed := Now.Sub(ntime) // negative value
-		stime = diskIOdone.Add(elapsed)
-	}
-	return stime
+	// start writing immediately if the new chunk gets delivered *after*
+	// the server will have finished already queued writes:
+	// stime = ntime + delay
+	delay := diskdelay(ntime, dd)
+	stime = ntime.Add(delay)
+	return stime, delay
 }
 
 func (srvproxy *serverSevenProxy) autoAcceptOnBehalf(tioproxy *Tio, bestqueue *ServerSparseBidQueue, newleft time.Time, ngobj GroupInterface, chunksizeb int) *PutBid {
@@ -708,8 +788,8 @@ func (m *modelSevenPrx) NewServer(i int) RunnerInterface {
 	// construct and initialize the group's proxy
 	//
 	allbids := make([]*ServerSparseBidQueue, configReplicast.sizeNgtGroup)
-	diskIOdone := make([]time.Time, configReplicast.sizeNgtGroup)
-	prsrv := &serverSevenProxy{serverSevenX: *rsrv, allbids: allbids, diskIOdone: diskIOdone}
+	reservedIOdone := make([]time.Time, configReplicast.sizeNgtGroup)
+	prsrv := &serverSevenProxy{serverSevenX: *rsrv, allbids: allbids, reservedIOdone: reservedIOdone}
 	prsrv.flowsfrom = NewFlowDir(prsrv, config.numGateways)
 	prsrv.rptr = prsrv
 	allbids[0] = NewServerSparseBidQueue(prsrv, 0)
@@ -728,15 +808,10 @@ func (m *modelSevenPrx) NewServer(i int) RunnerInterface {
 }
 
 func (m *modelSevenPrx) Configure() {
-	configureReplicast(false)
 	// minimal bid multipleir: same exact bid win done by proxy:
 	// no need to increase the "overlapping" chance
 	configReplicast.bidMultiplierPct = 110
-
-	x := (configReplicast.durationBidWindow - configReplicast.minduration) / configNetwork.netdurationFrame
-	if x > 4 {
-		configReplicast.minduration = configNetwork.netdurationDataChunk + configNetwork.netdurationFrame*(x/3)
-	}
+	configureReplicast(false)
 
 	dskdur2netdurPct = configStorage.dskdurationDataChunk * 100 / configNetwork.netdurationDataChunk
 

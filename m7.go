@@ -449,19 +449,15 @@ func (r *serverSeven) M7requestng(ev EventInterface) error {
 	ngobj := tioevent.GetGroup()
 	assert(ngobj.hasmember(r))
 
-	// respond to the put-request with a bid
-	var diskdelay time.Duration
-	num, duration := r.disk.queueDepth(DqdChunks)
-	if num >= configStorage.maxDiskQueueChunks && duration > configNetwork.netdurationDataChunk {
-		d1 := configStorage.dskdurationDataChunk * time.Duration(configStorage.maxDiskQueueChunks-1)
-		if duration-d1 > configNetwork.netdurationDataChunk {
-			diskdelay = duration - d1 - configNetwork.netdurationDataChunk
-		}
-	}
+	// assuming (! FIXME) the new chunk has already arrived,
+	// compute disk queue delay with respect to the configured maxDiskQueueChunks
+	diskIOdone := r.disk.lastIOdone
+	delay := diskdelay(Now, diskIOdone)
+
 	var bid *PutBid
-	bid = r.bids.createBid(tio, diskdelay, nil)
-	if diskdelay > 0 {
-		log("srv-delayed-bid", bid.String(), diskdelay)
+	bid = r.bids.createBid(tio, delay, nil)
+	if delay > 0 {
+		log("srv-delayed-bid", bid.String(), delay)
 	}
 	bidev := newBidEvent(r, gwy, ngobj, tioevent.cid, bid, tio)
 	log("srv-bid", bidev.String())

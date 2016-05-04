@@ -342,11 +342,11 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 
 	tio := tioevent.GetTio()
 	gwy := tioevent.GetSource()
-	var diskdelay time.Duration
-	num, duration := r.disk.queueDepth(DqdChunks)
-	if num >= configStorage.maxDiskQueueChunks && duration > configNetwork.netdurationDataChunk {
-		diskdelay = duration - configNetwork.netdurationDataChunk
-	}
+
+	// assuming (! FIXME) the new chunk has already arrived,
+	// compute disk queue delay with respect to the configured maxDiskQueueChunks
+	diskIOdone := r.disk.lastIOdone
+	delay := diskdelay(Now, diskIOdone)
 
 	f := r.flowsfrom.get(gwy, false)
 	assert(f == nil, fmt.Sprintf("flow %s => %s already exists", gwy.String(), r.String()))
@@ -359,10 +359,10 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 
 	// respond to the put witn RateInit
 	nflows := r.flowsfrom.count()
-	rateinitev := newUchRateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow, tio, diskdelay)
+	rateinitev := newUchRateInitEvent(r, gwy, configNetwork.linkbps/int64(nflows), flow, tio, delay)
 	flow.tobandwidth = rateinitev.tobandwidth
-	if diskdelay > 0 {
-		log("srv-new-delayed-flow", flow.String(), rateinitev.String(), diskdelay)
+	if delay > 0 {
+		log("srv-new-delayed-flow", flow.String(), rateinitev.String(), delay)
 	} else {
 		log("srv-new-flow", flow.String(), rateinitev.String())
 	}

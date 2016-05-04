@@ -143,7 +143,7 @@ func bytesMillisToMseconds(bytesms float64) string {
 func diskdelay(netDelivered time.Time, diskIOdone time.Time) time.Duration {
 	elapsed := Now.Sub(netDelivered) // negative
 	thenIOdone := diskIOdone.Add(elapsed)
-	if thenIOdone.Before(netDelivered) {
+	if !thenIOdone.After(netDelivered) {
 		return 0
 	}
 	diff := thenIOdone.Sub(netDelivered)
@@ -151,5 +151,6 @@ func diskdelay(netDelivered time.Time, diskIOdone time.Time) time.Duration {
 	if diff <= d1 {
 		return 0
 	}
+	// time to wait until there are (maxDiskQueueChunks-1) chunks in the queue
 	return diff - d1
 }

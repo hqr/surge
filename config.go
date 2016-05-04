@@ -319,6 +319,6 @@ func configureReplicast(unicastBidMultiplier bool) {
 		configReplicast.minduration *= time.Duration(configStorage.numReplicas)
 	}
 	if configReplicast.durationBidWindow < configReplicast.minduration {
-		configReplicast.durationBidWindow = configReplicast.minduration + configNetwork.netdurationFrame
+		configReplicast.durationBidWindow = configReplicast.minduration
 	}
 }

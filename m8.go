@@ -600,21 +600,16 @@ func (r *serverEight) M8requestng(ev EventInterface) error {
 		return nil
 	}
 
-	// compute disk-queue related delay
-	var diskdelay time.Duration
-	num, duration := r.disk.queueDepth(DqdChunks)
-	if num >= configStorage.maxDiskQueueChunks && duration > configNetwork.netdurationDataChunk {
-		d1 := configStorage.dskdurationDataChunk * time.Duration(configStorage.maxDiskQueueChunks-1)
-		if duration-d1 > configNetwork.netdurationDataChunk {
-			diskdelay = duration - d1 - configNetwork.netdurationDataChunk
-		}
-	}
+	// assuming (! FIXME) the new chunk has already arrived,
+	// compute disk queue delay with respect to the configured maxDiskQueueChunks
+	diskIOdone := r.disk.lastIOdone
+	delay := diskdelay(Now, diskIOdone)
 
 	var bid *PutBid
 	win := &TimWin{tioevent.winleft, TimeNil}
-	bid = r.bids.createBid(tio, diskdelay, win)
-	if diskdelay > 0 {
-		log("srv-delayed-bid", bid.String(), diskdelay)
+	bid = r.bids.createBid(tio, delay, win)
+	if delay > 0 {
+		log("srv-delayed-bid", bid.String(), delay)
 	}
 	bidev := newBidEvent(r.realobject(), gwy, ngobj, tioevent.cid, bid, tio)
 	bidev.tiostage = "BID" // force tio to execute this event's stage

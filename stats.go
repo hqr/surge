@@ -84,7 +84,7 @@ func (dtors *ModelStatsDescriptors) registerCommonProtoStats() {
 	//   dtors.Register("tio", StatsKindCount, StatsScopeGateway)
 	dtors.Register("rxbusy", StatsKindPercentage, StatsScopeServer) // data + control
 	dtors.Register("diskbusy", StatsKindPercentage, StatsScopeServer)
-	dtors.Register("disk-queue-depth", StatsKindSampleCount, StatsScopeServer)
+	dtors.Register("disk-frame-bufs", StatsKindSampleCount, StatsScopeServer)
 
 	dtors.Register("chunk", StatsKindCount, StatsScopeGateway)
 	dtors.Register("replica", StatsKindCount, StatsScopeGateway)
