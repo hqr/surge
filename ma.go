@@ -678,36 +678,27 @@ func (r *serverSevenProxy) selectBestBidQueues(bestqueues []int, bestbids []*Put
 // compute the time when the corresponding server will start writing the new chunk
 //
 func (r *serverSevenProxy) timeStartWritingNewChunk(q *ServerSparseBidQueue, reservedIOdone time.Time) (time.Time, time.Duration) {
-	var ntime, stime, dd time.Time
+	var ntime, stime time.Time
 
 	// network time, i.e. the time to deliver complete new chunk to the server q.r
 	l := len(q.pending)
 	earliestnotify := Now.Add(configNetwork.durationControlPDU + config.timeClusterTrip)
 	if l == 0 {
 		ntime = earliestnotify.Add(configNetwork.netdurationDataChunk + config.timeClusterTrip)
-		dd = reservedIOdone
 	} else {
 		lastbid := q.pending[l-1]
 		newleft := lastbid.win.right.Add(configReplicast.durationBidGap + config.timeClusterTrip)
 		if newleft.Before(earliestnotify) {
 			ntime = earliestnotify.Add(configNetwork.netdurationDataChunk + config.timeClusterTrip)
-			dd = reservedIOdone
 		} else {
 			ntime = newleft.Add(configNetwork.netdurationDataChunk + config.timeClusterTrip)
-
-			// at the ntime all the 'l' chunks that correspond to the q.pending bids
-			// and that are in front of this potential new chunk (bid)
-			// will have to be in the disk queue, therefore:
-			// estimate reservedIOdone timestamp accordingly giving it the most optimal
-			// (minimal) value into the future
-			dd = reservedIOdone.Add(time.Duration(l) * configStorage.dskdurationDataChunk)
 		}
 	}
 
 	// start writing immediately if the new chunk gets delivered *after*
 	// the server will have finished already queued writes:
 	// stime = ntime + delay
-	delay := diskdelay(ntime, dd)
+	delay := diskdelay(ntime, reservedIOdone)
 	stime = ntime.Add(delay)
 	return stime, delay
 }
