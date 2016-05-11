@@ -487,8 +487,8 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 	} else {
 		cstr = fmt.Sprintf("c#%d", flow.sid)
 	}
-	gwyacktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
-	log("srv-replica-received", r.String(), cstr, "replica-ack-scheduled", gwyacktime)
+	// gwyacktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
+	log("srv-replica-received", r.String(), cstr, "replica-ack-scheduled", fmt.Sprintf("%-12.10v", r.disk.lastIOdone.Sub(time.Time{})), "atd", atdisk)
 	r.flowsfrom.deleteFlow(gwy)
 	return ReplicaDone
 }
