@@ -281,7 +281,6 @@ func newReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow,
 	at := atnet + atdisk
 	timedev := newTimedAnyEvent(srv, at, gwy, tio, configNetwork.sizeControlPDU)
 	assert(flow.cid == tio.cid)
-	assert(flow.repnum == tio.repnum)
 	return &ReplicaPutAckEvent{zControlEvent{zEvent{*timedev}, flow.cid}, flow.repnum}
 }
 

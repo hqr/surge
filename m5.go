@@ -28,10 +28,6 @@
 // The UCH-CCPi pipeline includes 3 control events per each replica of
 // each chunk, details in the code.
 //
-// TODO: configStorage.chunksInFlight
-//       add support for multiple chunks in-flight, with gateways starting
-//       to transmit without waiting for completions
-//
 package surge
 
 import (
@@ -124,12 +120,8 @@ func (r *gatewayFive) Run() {
 		lastRefill := Now
 		for r.state == RstateRunning {
 			if r.chunk == nil {
-				// the gateway does currently one chunk at a time;
-				// configStorage.chunksInFlight > 1 is not supported yet
-				//
-				// if there no chunk in flight (r.chunk == nil)
-				// we must make sure the gateway's rate bucket has
-				// at least sizeControlPDU bits to send the new PUT..
+				// make sure the gateway's rate bucket has
+				// at least sizeControlPDU bits to send
 				if r.rb.above(int64(configNetwork.sizeControlPDU * 8)) {
 					r.startNewChunk()
 				}

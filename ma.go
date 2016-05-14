@@ -294,12 +294,21 @@ func (r *serverSevenX) rxcallback(ev EventInterface) int {
 
 		log(LogVV, "SRV::rxcallback:chunk-data", tioevent.String(), bid.String())
 		// once the entire chunk is received:
-		//    1) insert it into the local disk's queue (see receiveReplicaData)
-		//    2) and generate ReplicaPutAckEvent (see receiveReplicaData)
+		//    1) push it into the disk's local queue (receiveReplicaData)
+		//    2) generate ReplicaPutAckEvent (receiveReplicaData)
 		//    3) delete the bid from the local queue
-		//    4) notify the proxy, to cleanup its local respective allQbids queue
+		//    4) simulate 50% reading if requested via the bid itself
+		//    5) finally, notify the proxy, to cleanup its local respective allQbids queue
 		if r.receiveReplicaData(tioevent) == ReplicaDone {
 			r.bids.deleteBid(k)
+			// read
+			if bid.win.right.Sub(bid.win.left) > configReplicast.durationBidWindow {
+				tio := ev.GetTio()
+				r.disk.lastIOdone = r.disk.lastIOdone.Add(configStorage.dskdurationDataChunk)
+				r.addBusyDuration(configStorage.sizeDataChunk*1024, configStorage.diskbps, DiskBusy)
+				log("read", tio.String(), fmt.Sprintf("%-12.10v", r.disk.lastIOdone.Sub(time.Time{})))
+			}
+
 			r.notifyProxyBidDone(bid)
 		}
 	case *ProxyBidsEvent:
@@ -343,6 +352,8 @@ func (r *serverSevenX) notifyProxyBidDone(bid *PutBid) {
 		assert(q0.r.GetID() == proxy.GetID())
 		assert(bid == q0.pending[0])
 		q0.deleteBid(0)
+
+		proxy.update_reservedIOdone(0, r.disk.lastIOdone)
 		return
 	}
 	// resolve proxy
@@ -446,14 +457,20 @@ func (r *serverSevenProxy) M7X_request(ev EventInterface) error {
 	// FIXME: debug, remove
 	r.logDebug(tioevent, bestqueues[0:], newleft, cstr)
 
-	// 4. - create bids for those selected
+	// 4. - to read or not to read? round robin between selected servers, if 50% reading requested via CLI
+	//    - create bids for those selected
 	//    - accept the bids right away
 	//    - and send each of these new bids into their corresponding targets
 	bidsev := newProxyBidsEvent(r, gwy, ngobj, tioevent.cid, tioproxy, configStorage.numReplicas, tioevent.sizeb)
+	read_j := -1
+	if configStorage.read {
+		read_j = int(tioproxy.cid % int64(configStorage.numReplicas))
+	}
 	chkLatency := time.Duration(0)
 	for j := 0; j < configStorage.numReplicas; j++ {
 		bqj := bestqueues[j]
-		newbid, repLatency := r.autoAcceptOnBehalf(tioevent, bqj, newleft, ngobj)
+		isReader := (read_j == j)
+		newbid, repLatency := r.autoAcceptOnBehalf(tioevent, bqj, newleft, ngobj, isReader)
 		log("proxy-bid", newbid.String(), "ack-estimated", fmt.Sprintf("%-12.10v", r.reservedIOdone[bqj].Sub(time.Time{})), repLatency)
 
 		if repLatency > chkLatency {
@@ -542,7 +559,7 @@ func (r *serverSevenProxy) logDebug(tioevent *McastChunkPutRequestEvent, bestque
 	}
 }
 
-func (r *serverSevenProxy) handleBidDone(bid *PutBid, reservedIOdone time.Time) {
+func (r *serverSevenProxy) handleBidDone(bid *PutBid, reservedIOdone_fromServer time.Time) {
 	srv := bid.tio.target
 	i := 1
 	for ; i < configReplicast.sizeNgtGroup; i++ {
@@ -565,9 +582,10 @@ func (r *serverSevenProxy) handleBidDone(bid *PutBid, reservedIOdone time.Time) 
 		break
 	}
 	assert(i < configReplicast.sizeNgtGroup, srv.String())
-
-	// recompute based on the updated qi
-	r.update_reservedIOdone(i, reservedIOdone)
+	//
+	// recompute the server's disk queue that is tracked by the proxy via reservedIOdone[]
+	//
+	r.update_reservedIOdone(i, reservedIOdone_fromServer)
 }
 
 func (r *serverSevenProxy) update_reservedIOdone(i int, reservedIOdone_fromServer time.Time) {
@@ -682,14 +700,18 @@ func (r *serverSevenProxy) estimateSrvTimes(q *ServerSparseBidQueue, reservedIOd
 	}
 
 	// start writing immediately if the new chunk gets delivered *after*
-	// the server will have finished already queued writes:
-	// stime = ntime + delay
+	// the server will have finished already queued writes,
+	// otherwise finish them off first..
 	delay := diskdelay(ntime, reservedIOdone)
-	stime = ntime.Add(delay)
+	stime = ntime
+	if stime.Before(reservedIOdone) {
+		stime = reservedIOdone
+	}
+	stime = stime.Add(delay)
 	return newleft, stime, delay
 }
 
-func (r *serverSevenProxy) autoAcceptOnBehalf(tioevent *McastChunkPutRequestEvent, bqj int, newleft time.Time, ngobj GroupInterface) (*PutBid, time.Duration) {
+func (r *serverSevenProxy) autoAcceptOnBehalf(tioevent *McastChunkPutRequestEvent, bqj int, newleft time.Time, ngobj GroupInterface, isReader bool) (*PutBid, time.Duration) {
 	qj := r.allQbids[bqj]
 	dj := r.reservedIOdone[bqj]
 	srv := qj.r
@@ -700,6 +722,12 @@ func (r *serverSevenProxy) autoAcceptOnBehalf(tioevent *McastChunkPutRequestEven
 
 	newbid := NewPutBid(tiochild, newleft)
 	newbid.state = bidStateAccepted
+
+	// simulate reading
+	if isReader {
+		newbid.win.right = newbid.win.right.Add(config.timeClusterTrip * 2)
+	}
+
 	tiochild.bid = newbid
 	qj.insertBid(newbid)
 

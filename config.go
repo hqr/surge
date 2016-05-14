@@ -71,7 +71,7 @@ type ConfigStorage struct {
 	sizeDataChunk, sizeMetaChunk int
 	diskMBps                     int
 	maxDiskQueue                 int
-	chunksInFlight               int // TODO: UCH-* models to start next chunk without waiting for ACK..
+	read                         bool // false => 100% write | true => 50% read, 50% write
 	// derived from other config, for convenience
 	dskdurationDataChunk time.Duration
 	dskdurationFrame     time.Duration
@@ -80,12 +80,12 @@ type ConfigStorage struct {
 }
 
 var configStorage = ConfigStorage{
-	numReplicas:    3,
-	sizeDataChunk:  128, // KB
-	sizeMetaChunk:  1,   // KB
-	diskMBps:       400, // MB/sec
-	maxDiskQueue:   256, // KB
-	chunksInFlight: 1,   // TODO: limits total in-flight for a given gateway
+	numReplicas:   3,
+	sizeDataChunk: 128, // KB
+	sizeMetaChunk: 1,   // KB
+	diskMBps:      400, // MB/sec
+	maxDiskQueue:  256, // KB
+	read:          false,
 }
 
 //
@@ -186,6 +186,8 @@ func init() {
 	chunksizePtr := flag.Int("chunksize", configStorage.sizeDataChunk, "chunk size (KB)")
 	diskthPtr := flag.Int("diskthroughput", configStorage.diskMBps, "disk throughput (MB/sec)")
 
+	readPtr := flag.Bool("r", configStorage.read, "read=false(100% write) | true(50/50% read/write)")
+
 	diskQueuePtr := flag.Int("diskqueue", configStorage.maxDiskQueue, "disk queue size (KB)")
 
 	l2framePtr := flag.Int("l2frame", configNetwork.sizeFrame, "L2 frame size (bytes)")
@@ -237,6 +239,7 @@ func init() {
 	configStorage.numReplicas = *replicasPtr
 	configStorage.sizeDataChunk = *chunksizePtr
 	configStorage.diskMBps = *diskthPtr
+	configStorage.read = *readPtr
 	configStorage.maxDiskQueue = *diskQueuePtr
 
 	configNetwork.sizeFrame = *l2framePtr

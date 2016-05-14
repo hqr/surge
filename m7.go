@@ -234,12 +234,21 @@ func (r *gatewaySeven) M7receivebid(ev EventInterface) error {
 	mcastflow := tioparent.flow
 	mcastflow.extension = computedbid
 
+	// to read or not to read? round robin between selected servers, if 50% reading requested via CLI
+	read_k := -1
+	if configStorage.read {
+		read_k = int(r.chunk.cid % int64(configStorage.numReplicas))
+	}
 	// fill in the multicast rendezvous group for chunk data transfer
 	// note that pending[] bids at these point are already "filtered"
 	// to contain only those bids that were selected
 	ids := make([]int, configStorage.numReplicas)
 	for k := 0; k < configStorage.numReplicas; k++ {
 		bid := r.bids.pending[k]
+		if k == read_k {
+			bid.tio.repnum = 50 // FIXME
+			log("read-pre", bid.tio.String())
+		}
 		assert(ngobj.hasmember(bid.tio.target))
 		ids[k] = bid.tio.target.GetID()
 
@@ -401,12 +410,18 @@ func (r *serverSeven) Run() {
 
 			log(LogVV, "SRV::rxcallback: chunk data", tioevent.String(), bid.String())
 			// once the entire chunk is received:
-			// 1) generate ReplicaPutAckEvent inside the common receiveReplicaData()
-			// 2) cleanup the corresponding accepted bids without waiting for them
-			//    to self-expire
-			//
+			//    1) push it into the disk's local queue (receiveReplicaData)
+			//    2) generate ReplicaPutAckEvent (receiveReplicaData)
+			//    3) delete the bid from the local queue without waiting for it to self-expire
+			//    4) simulate 50% reading if requested via the bid itself
 			if r.receiveReplicaData(tioevent) == ReplicaDone {
 				r.bids.deleteBid(k)
+				// read
+				if bid.tio.repnum == 50 {
+					r.disk.lastIOdone = r.disk.lastIOdone.Add(configStorage.dskdurationDataChunk)
+					r.addBusyDuration(configStorage.sizeDataChunk*1024, configStorage.diskbps, DiskBusy)
+					log("read", bid.tio.String(), fmt.Sprintf("%-12.10v", r.disk.lastIOdone.Sub(time.Time{})))
+				}
 			}
 		default:
 			tio := ev.GetTio()

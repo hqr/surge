@@ -467,10 +467,15 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 	if flow.offset < flow.totalbytes {
 		return ReplicaNotDoneYet
 	}
-	//
-	// postpone the ack until after the replica (chunk.sizeb) is written to disk
-	//
+	// persistence policies (important!):
+	// 1) write-through: always postpone the ack until after the replica is fully written
+	// 2) write-back(*): ack immediately if the new replica fits within the disk buffer space;
+	//                   otherwise delay
 	atdisk := r.disk.scheduleWrite(flow.totalbytes)
+	if atdisk < configStorage.dskdurationDataChunk*time.Duration(configStorage.maxDiskQueueChunks) {
+		atdisk = 0
+	}
+
 	r.addBusyDuration(flow.totalbytes, configStorage.diskbps, DiskBusy)
 
 	tio := ev.GetTio()
@@ -487,8 +492,11 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 	} else {
 		cstr = fmt.Sprintf("c#%d", flow.sid)
 	}
-	// gwyacktime := fmt.Sprintf("%-12.10v", putackev.GetTriggerTime().Sub(time.Time{}))
-	log("srv-replica-received", r.String(), cstr, "replica-ack-scheduled", fmt.Sprintf("%-12.10v", r.disk.lastIOdone.Sub(time.Time{})), "atd", atdisk)
+	if atdisk > 0 {
+		log("rep-received-ack-delayed", r.String(), cstr, atdisk)
+	} else {
+		log("rep-received", r.String(), cstr, atdisk)
+	}
 	r.flowsfrom.deleteFlow(gwy)
 	return ReplicaDone
 }

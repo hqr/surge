@@ -53,9 +53,14 @@ func nameLog(n string) {
 		x /= 1024
 		s = "M"
 	}
-	config.LogFile = "/tmp/" + fmt.Sprintf("log-m%s-%dx%d-%v-%d%s-%dMs-%s.csv", n,
+	read := ""
+	if configStorage.read {
+		read = "read50pct-"
+	}
+	config.LogFile = "/tmp/" + fmt.Sprintf("log-m%s-%dx%d-%v-%d%s-%dMs-%s%s.csv", n,
 		config.numGateways, config.numServers, config.timeToRun,
 		x, s, configStorage.diskMBps,
+		read,
 		build)
 }
 
