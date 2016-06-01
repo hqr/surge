@@ -102,11 +102,11 @@ func (r *gatewayFive) Run() {
 		switch ev.(type) {
 		case *UchRateSetEvent:
 			ratesetev := ev.(*UchRateSetEvent)
-			log(LogV, "GWY::rxcallback:", ratesetev.String())
+			log(LogV, "rxcallback:", r.String(), ratesetev.String())
 			r.rateset(ratesetev)
 		default:
 			tio := ev.GetTio()
-			log(LogV, "GWY::rxcallback", tio.String())
+			log(LogV, "rxcallback", r.String(), tio.String())
 			tio.doStage(r)
 			if tio.done {
 				log(LogV, "tio-done", tio.String())
@@ -244,11 +244,11 @@ func (r *serverFive) Run() {
 		switch ev.(type) {
 		case *ReplicaDataEvent:
 			tioevent := ev.(*ReplicaDataEvent)
-			log(LogV, "SRV::rxcallback: replica data", tioevent.String())
+			log(LogVV, "rxcallback: replica data", r.String(), tioevent.String())
 			r.receiveReplicaData(tioevent)
 		default:
 			tio := ev.GetTio()
-			log(LogV, "SRV::rxcallback", tio.String())
+			log(LogV, "rxcallback", r.String(), tio.String())
 			// ev.GetSize() == configNetwork.sizeControlPDU
 			r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, NetControlBusy)
 			tio.doStage(r)

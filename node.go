@@ -60,7 +60,7 @@ type GatewayCommon struct {
 }
 
 func NewGatewayCommon(i int, p *Pipeline) *GatewayCommon {
-	rbase := RunnerBase{id: i, strtype: "GWY"}
+	rbase := RunnerBase{id: i, strtype: GWY}
 	gwy := &GatewayCommon{RunnerBase: rbase}
 
 	gwy.putpipeline = p
@@ -351,7 +351,6 @@ func (r *GatewayMcast) selectNgtGroup(cid int64, prevgroupid int) int {
 //
 func (r *GatewayMcast) rxcallbackMcast(ev EventInterface) int {
 	tio := ev.GetTio()
-	log(LogV, "GWY::rxcallback", tio.String())
 	tio.doStage(r.realobject(), ev)
 	if tio.done {
 		log(LogV, "tio-done", tio.String())
@@ -395,7 +394,7 @@ type ServerUch struct {
 // (compare with NewServerUchExtraChannels)
 //
 func NewServerUchRegChannels(i int, p *Pipeline) *ServerUch {
-	rbase := RunnerBase{id: i, strtype: "SRV"}
+	rbase := RunnerBase{id: i, strtype: SRV}
 	srv := &ServerUch{RunnerBase: rbase}
 
 	srv.putpipeline = p
@@ -412,7 +411,7 @@ func NewServerUchRegChannels(i int, p *Pipeline) *ServerUch {
 
 // (compare with NewServerUchRegChannels)
 func NewServerUchExtraChannels(i int, p *Pipeline) *ServerUch {
-	rbase := RunnerBase{id: i, strtype: "SRV"}
+	rbase := RunnerBase{id: i, strtype: SRV}
 	srv := &ServerUch{RunnerBase: rbase}
 
 	srv.putpipeline = p

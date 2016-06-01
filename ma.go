@@ -291,8 +291,6 @@ func (r *serverSevenX) rxcallback(ev EventInterface) int {
 				log(LogBoth, s, k)
 			}
 		}
-
-		log(LogVV, "SRV::rxcallback:chunk-data", tioevent.String(), bid.String())
 		// once the entire chunk is received:
 		//    1) push it into the disk's local queue (receiveReplicaData)
 		//    2) generate ReplicaPutAckEvent (receiveReplicaData)
@@ -320,7 +318,7 @@ func (r *serverSevenX) rxcallback(ev EventInterface) int {
 		proxy.handleBidDone(bdoneEvent.bid, bdoneEvent.reservedIOdone)
 	default:
 		tio := ev.GetTio()
-		log(LogV, "SRV::rxcallback", ev.String(), r.String())
+		log(LogV, "rxcallback", r.String(), ev.String())
 		r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, NetControlBusy)
 
 		tio.doStage(r.realobject(), ev)
@@ -397,7 +395,7 @@ func (r *serverSevenX) handleTxDelayed() {
 func (r *serverSevenX) handleProxiedBid(bidsev *ProxyBidsEvent) {
 	tio := bidsev.tio
 	bid := bidsev.bids[0]
-	log(LogV, "SRV::rxcallback:new-proxied-bid", bid.String(), tio.String())
+	log(LogV, "new-proxied-bid", bid.String(), tio.String())
 	r.bids.insertBid(bid)
 	// new server's flow right away..
 	assert(r.realobject() == tio.target, r.String()+"!="+tio.target.String()+","+tio.String())
@@ -441,7 +439,10 @@ func (r *serverSevenProxy) M7X_request(ev EventInterface) error {
 	for j := 0; j < configStorage.numReplicas; j++ {
 		bestqueues[j] = -1
 	}
-	r.selectBestQueues(bestqueues[0:], cstr)
+	// TODO; need better multi-objective optimization than
+	//       this current idle-win mechanism
+	// r.selectBestQueues(bestqueues[0:], cstr)
+	r.gatewayBestBidQueues(bestqueues)
 
 	// 3. compute the new "left" for the selected with respect to the maximum diskdelay required
 	//    (network-wise, mcast data transfer must have identical reservations from all the selected servesr)

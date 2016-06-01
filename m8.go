@@ -541,8 +541,6 @@ func (r *serverEight) Run() {
 					log(LogBoth, s, k)
 				}
 			}
-
-			log(LogVV, "SRV::rxcallback: chunk data", tioevent.String(), bid.String())
 			// once the entire replica is received, we can cleanup
 			// the corresponding accepted bids without waiting for them
 			// to self-expire
@@ -553,7 +551,7 @@ func (r *serverEight) Run() {
 			}
 		default:
 			tio := ev.GetTio()
-			log(LogV, "SRV::rxcallback", ev.String(), r.String())
+			log(LogV, "rxcallback", r.String(), ev.String())
 			// ev.GetSize() == configNetwork.sizeControlPDU
 			r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, NetControlBusy)
 

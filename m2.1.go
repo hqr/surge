@@ -54,7 +54,7 @@ func (r *gatewayTwoDotOne) Run() {
 
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) int {
-		log(LogV, "GWY rxcallback", r.String(), ev.String())
+		log(LogV, "rxcallback", r.String(), ev.String())
 		return 0
 	}
 
@@ -72,7 +72,7 @@ func (r *serverTwoDotOne) Run() {
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) int {
 		assert(r == ev.GetTarget())
-		log(LogV, "SRV rxcallback", r.String(), ev.String())
+		log(LogV, "rxcallback", r.String(), ev.String())
 		return 0
 	}
 
@@ -88,13 +88,13 @@ func (r *serverTwoDotOne) Run() {
 // modelTwoDotOne interface methods
 //
 func (m *modelTwoDotOne) NewGateway(i int) RunnerInterface {
-	gwy := &gatewayTwoDotOne{RunnerBase{id: i, strtype: "GWY"}}
+	gwy := &gatewayTwoDotOne{RunnerBase{id: i, strtype: GWY}}
 	gwy.init(config.numServers)
 	return gwy
 }
 
 func (m *modelTwoDotOne) NewServer(i int) RunnerInterface {
-	srv := &serverTwoDotOne{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
+	srv := &serverTwoDotOne{RunnerBase: RunnerBase{id: i, strtype: SRV}}
 	srv.init(config.numGateways)
 	return srv
 }

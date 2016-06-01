@@ -141,7 +141,7 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 		r := allNodes[ij]
 		oneIterNodeStats[ij] = r.GetStats(true)
 	}
-
+	var newrxbytes string
 	for n := range mdtors.x {
 		d := mdtors.x[n]
 		newgwy, newsrv := int64(0), int64(0)
@@ -162,6 +162,9 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 				} else if scope == StatsScopeServer {
 					newsrv += val
 					mstats.totalsrv[n] += val
+					if strings.Contains(n, "rxbytes") {
+						newrxbytes += fmt.Sprintf("%d,", val)
+					}
 				}
 			} else if d.kind == StatsKindPercentage {
 				// StatsKindPercentage implies averaging done elsewhere, e.g.
@@ -173,6 +176,9 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 					newsrv += val
 				}
 			}
+		}
+		if len(newrxbytes) > 0 {
+			log(fmt.Sprintf("new-srv-%s,%s", n, strings.TrimSuffix(newrxbytes, ",")))
 		}
 
 		// log one iteration

@@ -91,11 +91,11 @@ func (r *gatewaySix) Run() {
 		switch ev.(type) {
 		case *UchDingAimdEvent:
 			dingev := ev.(*UchDingAimdEvent)
-			log(LogV, "GWY::rxcallback", dingev.String())
+			log(LogV, "rxcallback", r.String(), dingev.String())
 			r.ding(dingev)
 		default:
 			tio := ev.GetTio()
-			log(LogV, "GWY::rxcallback", tio.String())
+			log(LogV, "rxcallback", r.String(), tio.String())
 			tio.doStage(r)
 			if tio.done {
 				log(LogV, "tio-done", tio.String())
@@ -210,14 +210,13 @@ func (r *serverSix) Run() {
 		switch ev.(type) {
 		case *ReplicaDataEvent:
 			dataev := ev.(*ReplicaDataEvent)
-			log(LogV, "SRV::rxcallback: replica data", dataev.String())
 			gwy := ev.GetSource()
 			flow := r.flowsfrom.get(gwy, true)
 			flow.tobandwidth = dataev.tobandwidth
 			r.receiveReplicaData(dataev)
 		default:
 			tio := ev.GetTio()
-			log(LogV, "SRV::rxcallback", tio.String())
+			log(LogV, "rxcallback", r.String(), tio.String())
 			// ev.GetSize() == configNetwork.sizeControlPDU
 			r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, NetControlBusy)
 			tio.doStage(r)

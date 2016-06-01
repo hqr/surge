@@ -72,7 +72,7 @@ func (r *gatewayThree) Run() {
 
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) int {
-		log(LogV, "GWY rxcallback", r.String(), ev.String())
+		log(LogV, "rxcallback", r.String(), ev.String())
 
 		// validate that we got response from the right target
 		id := ev.GetSource().GetID()
@@ -145,7 +145,7 @@ func (r *serverThree) Run() {
 	// event handling is a NOP in this model
 	rxcallback := func(ev EventInterface) int {
 		assert(r == ev.GetTarget())
-		log(LogV, "SRV rxcallback", r.String(), ev.String())
+		log(LogV, "rxcallback", r.String(), ev.String())
 
 		realevent, ok := ev.(*TimedUniqueEvent)
 		assert(ok)
@@ -177,7 +177,7 @@ func (r *serverThree) Run() {
 //
 func (m *modelThree) NewGateway(i int) RunnerInterface {
 	gwy := &gatewayThree{
-		RunnerBase:      RunnerBase{id: i, strtype: "GWY"},
+		RunnerBase:      RunnerBase{id: i, strtype: GWY},
 		waitingResponse: nil,
 	}
 	gwy.init(config.numServers)
@@ -187,7 +187,7 @@ func (m *modelThree) NewGateway(i int) RunnerInterface {
 }
 
 func (m *modelThree) NewServer(i int) RunnerInterface {
-	srv := &serverThree{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
+	srv := &serverThree{RunnerBase: RunnerBase{id: i, strtype: SRV}}
 	srv.init(config.numGateways)
 	return srv
 }

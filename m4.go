@@ -67,7 +67,6 @@ func (r *gatewayFour) Run() {
 	rxcallback := func(ev EventInterface) int {
 		tioevent := ev.(*TimedAnyEvent)
 		tio := tioevent.GetTio()
-		log(LogVV, "GWY rxcallback", tio.String())
 		tio.doStage(r)
 
 		if tio.done {
@@ -147,8 +146,6 @@ func (r *serverFour) Run() {
 	rxcallback := func(ev EventInterface) int {
 		tioevent := ev.(*TimedAnyEvent)
 		tio := tioevent.GetTio()
-		log(LogVV, "SRV rxcallback", tio.String())
-
 		tio.doStage(r)
 
 		return 0
@@ -197,14 +194,14 @@ func (r *serverFour) M4putxfer(ev EventInterface) error {
 // modelFour interface methods
 //
 func (m *modelFour) NewGateway(i int) RunnerInterface {
-	gwy := &gatewayFour{RunnerBase{id: i, strtype: "GWY"}, 0}
+	gwy := &gatewayFour{RunnerBase{id: i, strtype: GWY}, 0}
 	gwy.init(config.numServers)
 	gwy.initios()
 	return gwy
 }
 
 func (m *modelFour) NewServer(i int) RunnerInterface {
-	srv := &serverFour{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
+	srv := &serverFour{RunnerBase: RunnerBase{id: i, strtype: SRV}}
 	srv.init(config.numGateways)
 	return srv
 }

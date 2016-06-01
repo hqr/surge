@@ -13,6 +13,8 @@ import (
 
 // constants
 const maxModels int = 16
+const GWY = "I"
+const SRV = "T"
 
 // each model self-registers at startup
 type ModelName string

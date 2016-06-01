@@ -100,13 +100,13 @@ func (r *serverOne) Run() {
 //
 //==================================================================
 func (m *modelOne) NewGateway(i int) RunnerInterface {
-	gwy := &gatewayOne{RunnerBase{id: i, strtype: "GWY"}}
+	gwy := &gatewayOne{RunnerBase{id: i, strtype: GWY}}
 	gwy.init(config.numServers)
 	return gwy
 }
 
 func (m *modelOne) NewServer(i int) RunnerInterface {
-	srv := &serverOne{RunnerBase: RunnerBase{id: i, strtype: "SRV"}}
+	srv := &serverOne{RunnerBase: RunnerBase{id: i, strtype: SRV}}
 	srv.init(config.numGateways)
 	return srv
 }

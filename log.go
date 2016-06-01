@@ -8,7 +8,7 @@
 // Each call to log() produces a separate line with system time
 // printed at its left.
 // For example:
-//     9.913299ms  :srv-replica-received,[SRV#76],chunk#10860
+//     9.913299ms  :srv-replica-received,[T#76],chunk#10860
 // translates as follows:
 // At the system (simulated, modeled) time that was precisely
 // 9.913299ms from the start of the benchmark, the server #76 reports

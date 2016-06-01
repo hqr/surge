@@ -52,7 +52,7 @@ func (r *gatewayNine) rxcallbackNine(ev EventInterface) int {
 	switch ev.(type) {
 	case *LateRejectBidEvent:
 		rjev := ev.(*LateRejectBidEvent)
-		log("GWY::rxcallback", rjev.String())
+		log("rxcallback", r.String(), rjev.String())
 		r.rejectBid(rjev)
 	default:
 		// execute generic tio.doStage() pipeline
