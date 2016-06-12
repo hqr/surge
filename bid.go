@@ -17,10 +17,12 @@ package surge
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
 const initialBidQueueSize int = 16
+const maxBidQueueSize int = 32
 
 type bidStateEnum int
 
@@ -148,20 +150,33 @@ func (bid *PutBid) String() string {
 // type BidQueue
 //
 type BidQueue struct {
-	pending       []*PutBid
-	r             RunnerInterface
+	pending []*PutBid
+	r       RunnerInterface
+	// statistics
+	counts     []int64 // counts[i] = n means the queue contained i bids n times
+	boltzstate int64   // average(counts[])
+	updtime    time.Time
+	curcnt     int
+	// aux sorting
 	sortBy_crleft bool
 }
 
-func NewBidQueue(ri RunnerInterface, size int) *BidQueue {
+func NewBidQueue(ri RunnerInterface, size int, docounts bool) *BidQueue {
+	var counts []int64
 	if size == 0 {
 		size = initialBidQueueSize
 	}
 	q := make([]*PutBid, size)
+	if docounts {
+		counts = make([]int64, maxBidQueueSize)
+	}
 
 	return &BidQueue{
 		pending:       q[0:0],
 		r:             ri,
+		counts:        counts,
+		updtime:       time.Time{},
+		curcnt:        0,
 		sortBy_crleft: false,
 	}
 }
@@ -174,6 +189,8 @@ func (q *BidQueue) insertBid(bid *PutBid) {
 	}
 
 	q.pending = append(q.pending, nil)
+	q.updCounts()
+
 	t := bid.win.left
 	c := bid.crtime
 	k := 0
@@ -201,6 +218,33 @@ func (q *BidQueue) insertBid(bid *PutBid) {
 	q.pending[k] = bid
 }
 
+func (q *BidQueue) updCounts() {
+	if q.counts == nil {
+		return
+	}
+	l := len(q.pending)
+	assert(l < cap(q.counts))
+	ticks := int64(Now.Sub(q.updtime))
+	q.counts[q.curcnt] += ticks
+
+	q.curcnt = l
+	q.updtime = Now
+}
+
+func (q *BidQueue) addCounts(reset bool, total []int64) {
+	if q.counts == nil {
+		return
+	}
+	for i := 0; i < maxBidQueueSize; i++ {
+		total[i] += atomic.LoadInt64(&q.counts[i])
+	}
+	if reset {
+		for i := 0; i < len(q.counts); i++ {
+			atomic.StoreInt64(&q.counts[i], 0)
+		}
+	}
+}
+
 func (q *BidQueue) deleteBid(k int) {
 	l := len(q.pending)
 	if k < l-1 {
@@ -208,6 +252,7 @@ func (q *BidQueue) deleteBid(k int) {
 	}
 	q.pending[l-1] = nil
 	q.pending = q.pending[:l-1]
+	q.updCounts()
 }
 
 func (q *BidQueue) findBid(by bidFindEnum, val interface{}) (int, *PutBid) {
@@ -248,6 +293,7 @@ type ServerBidQueueInterface interface {
 	acceptBid(replytio *Tio, computedbid *PutBid) (*PutBid, bidStateEnum)
 	// BidQueue methods
 	findBid(by bidFindEnum, val interface{}) (int, *PutBid)
+	// avgDepth()
 	deleteBid(k int)
 	StringBids() string
 }
@@ -283,7 +329,7 @@ type ServerRegBidQueue struct {
 }
 
 func NewServerRegBidQueue(ri RunnerInterface, size int) *ServerRegBidQueue {
-	q := NewBidQueue(ri, size)
+	q := NewBidQueue(ri, size, true)
 	return &ServerRegBidQueue{*q, 0}
 }
 
@@ -387,6 +433,7 @@ func (q *ServerRegBidQueue) insertBid(bid *PutBid) {
 	}
 	q.pending = append(q.pending, nil)
 	q.pending[l] = bid
+	q.updCounts()
 }
 
 // cancelBid is called in the server's receive path, to handle
@@ -563,7 +610,7 @@ type ServerSparseBidQueue struct {
 }
 
 func NewServerSparseBidQueue(ri RunnerInterface, size int) *ServerSparseBidQueue {
-	q := NewBidQueue(ri, size)
+	q := NewBidQueue(ri, size, true)
 	return &ServerSparseBidQueue{*q}
 }
 
@@ -804,7 +851,7 @@ type GatewayBidQueue struct {
 
 func NewGatewayBidQueue(ri RunnerInterface) *GatewayBidQueue {
 	size := configReplicast.sizeNgtGroup
-	q := NewBidQueue(ri, size)
+	q := NewBidQueue(ri, size, false)
 	return &GatewayBidQueue{BidQueue: *q}
 }
 

@@ -84,6 +84,7 @@ func init() {
 
 	d := NewStatsDescriptors("8")
 	d.registerCommonProtoStats()
+	d.Register("bidepth", StatsKindSampleCount, StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "Replicast-H: multicast control with unicast data delivery"
@@ -653,6 +654,17 @@ func (r *serverEight) M8acceptng(ev EventInterface) error {
 	r.flowsfrom.insertFlow(flow)
 
 	return nil
+}
+func (r *serverEight) GetStats(reset bool) NodeStats {
+	s := r.ServerUch.GetStats(reset)
+
+	// FIXME: debug, temp
+	q, _ := r.bids.(*ServerSparseBidQueue)
+	assert(reset)
+	q.addCounts(true, boltzcounts)
+	s["bidepth"] = 0
+
+	return s
 }
 
 //==================================================================

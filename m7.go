@@ -77,6 +77,7 @@ func init() {
 
 	d := NewStatsDescriptors("7")
 	d.registerCommonProtoStats()
+	d.Register("bidepth", StatsKindSampleCount, StatsScopeServer)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "Basic Replicast(tm)"
@@ -512,6 +513,18 @@ func (r *serverSeven) M7acceptng(ev EventInterface) error {
 	r.flowsfrom.insertFlow(flow)
 
 	return nil
+}
+
+func (r *serverSeven) GetStats(reset bool) NodeStats {
+	s := r.ServerUch.GetStats(reset)
+
+	// FIXME: debug, temp
+	q, _ := r.bids.(*ServerRegBidQueue)
+	assert(reset)
+	q.addCounts(true, boltzcounts)
+	s["bidepth"] = 0
+
+	return s
 }
 
 //==================================================================

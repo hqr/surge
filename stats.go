@@ -2,8 +2,10 @@ package surge
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -61,6 +63,11 @@ var mdtors *ModelStatsDescriptors
 var mstats ModelStats
 var mdtsortednames []string
 var oneIterNodeStats []NodeStats
+
+// FIXME: debug, temp
+var boltzcounts []int64
+var boltzlogthm []float64
+var boltzwmutex *sync.Mutex
 
 //=================================================================================
 // init
@@ -124,6 +131,10 @@ func (mstats *ModelStats) init(mname ModelName) {
 		mdtsortednames = append(mdtsortednames, n)
 	}
 	sort.Strings(mdtsortednames)
+
+	boltzcounts = make([]int64, maxBidQueueSize)
+	boltzlogthm = make([]float64, maxBidQueueSize)
+	boltzwmutex = &sync.Mutex{}
 }
 
 //============================== stats =============================================
@@ -134,6 +145,39 @@ func (mstats *ModelStats) init(mname ModelName) {
 //
 // results of the last timeStatsIval iteration folded into => mstats
 //
+func (mstats *ModelStats) logBoltz() {
+	sc := "boltzcounts,"
+	sl := "boltzlogthm,"
+	maxi := 0
+	assert(cap(boltzcounts) == maxBidQueueSize)
+	for i := 0; i < maxBidQueueSize; i++ {
+		if boltzcounts[i] > 0 {
+			maxi = i
+		}
+	}
+	var n int64
+	for i := 0; i <= maxi; i++ {
+		n += boltzcounts[i]
+	}
+	for i := 0; i <= maxi; i++ {
+		if boltzcounts[i] == 0 {
+			boltzlogthm[i] = -100.0
+			continue
+		}
+		boltzlogthm[i] = math.Log(float64(boltzcounts[i]) / float64(n))
+	}
+	for i := 0; i <= maxi; i++ {
+		sc += fmt.Sprintf("%d,", boltzcounts[i])
+		sl += fmt.Sprintf("%.2f,", boltzlogthm[i])
+	}
+	log(strings.TrimSuffix(sc, ","))
+	log(strings.TrimSuffix(sl, ","))
+
+	for i := 0; i <= maxi; i++ {
+		boltzcounts[i] = 0
+	}
+}
+
 func (mstats *ModelStats) update(elapsed time.Duration) {
 	mstats.iter++
 	mstats.lastUpdateTs = Now
@@ -141,8 +185,16 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 		r := allNodes[ij]
 		oneIterNodeStats[ij] = r.GetStats(true)
 	}
+	_, ok := mdtors.x["bidepth"]
+	if ok {
+		mstats.logBoltz()
+	}
+
 	var newrxbytes string
 	for n := range mdtors.x {
+		if n == "bidepth" {
+			continue
+		}
 		d := mdtors.x[n]
 		newgwy, newsrv := int64(0), int64(0)
 		for ij := 0; ij < config.numGateways+config.numServers; ij++ {
@@ -178,7 +230,7 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 			}
 		}
 		if len(newrxbytes) > 0 {
-			log(fmt.Sprintf("new-srv-%s,%s", n, strings.TrimSuffix(newrxbytes, ",")))
+			log(LogV, fmt.Sprintf("new-srv-%s,%s", n, strings.TrimSuffix(newrxbytes, ",")))
 		}
 
 		// log one iteration
