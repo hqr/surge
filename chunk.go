@@ -16,12 +16,12 @@ type Chunk struct {
 	sid     int64 // short id
 	gateway RunnerInterface
 	crtime  time.Time // creation time
-	sizeb   int       // bytes
+	sizeb   int64     // bytes
 }
 
 func NewChunk(gwy RunnerInterface, sizebytes int) *Chunk {
 	uqid, printid := uqrandom64(gwy.GetID())
-	return &Chunk{cid: uqid, sid: printid, gateway: gwy, crtime: Now, sizeb: sizebytes}
+	return &Chunk{cid: uqid, sid: printid, gateway: gwy, crtime: Now, sizeb: int64(sizebytes)}
 }
 
 func (chunk *Chunk) String() string {

@@ -5,11 +5,36 @@ import (
 	"time"
 )
 
-type applyCallback func(gwy RunnerInterface, flow *Flow)
+type applyCallback func(gwy RunnerInterface, flow FlowInterface)
 
 //========================================================================
 //
-// type Flow
+// type FlowInterface
+//
+//========================================================================
+type FlowInterface interface {
+	String() string
+	setOneArg(a interface{})
+	unicast() bool
+
+	// more accessors
+	GetCid() int64
+	GetSid() int64
+	GetTio() TioInterface
+	GetRb() RateBucketInterface
+	GetRepnum() int
+
+	getbw() int64
+	setbw(bw int64)
+	getoffset() int64
+	setoffset(ev *ReplicaDataEvent)
+	incoffset(add int)
+	bytesToWrite(ev *ReplicaDataEvent) int
+}
+
+//========================================================================
+//
+// type Flow (short-lived: duration = <control> <one chunk> <ack>)
 //
 //========================================================================
 type Flow struct {
@@ -18,20 +43,14 @@ type Flow struct {
 	togroup     GroupInterface
 	cid         int64
 	sid         int64
-	tio         *Tio
+	tio         TioInterface
 	rb          RateBucketInterface // refill at the tobandwidth rate
 	tobandwidth int64               // bits/sec
 	timeTxDone  time.Time           // time the last byte of the current packet is sent
 	extension   interface{}         // protocol-specific flow extension
-	repnum      int                 // replica num
-	offset      int
-	totalbytes  int
-}
-
-// (container) unidirectional unicast flows between this node and multiple other nodes
-type FlowDir struct {
-	node  RunnerInterface
-	flows map[RunnerInterface]*Flow
+	offset      int64
+	totalbytes  int64
+	repnum      int // replica num
 }
 
 //========================================================================
@@ -48,8 +67,8 @@ func NewFlow(f RunnerInterface, chunkid int64, args ...interface{}) *Flow {
 		flow.setOneArg(args[i])
 	}
 	// must be the flow initiating tio
-	if flow.tio.flow == nil {
-		flow.tio.flow = flow
+	if flow.tio.GetFlow() == nil {
+		flow.tio.SetFlow(flow)
 	}
 	return flow
 }
@@ -58,8 +77,8 @@ func (flow *Flow) setOneArg(a interface{}) {
 	switch a.(type) {
 	case int:
 		flow.repnum = a.(int)
-	case *Tio:
-		flow.tio = a.(*Tio)
+	case TioInterface:
+		flow.tio = a.(TioInterface)
 	case RunnerInterface:
 		flow.to = a.(RunnerInterface)
 	case GroupInterface:
@@ -90,11 +109,78 @@ func (flow *Flow) String() string {
 	return fmt.Sprintf("[flow %s=>%s[%s],offset=%d,bw=%sGbps]", f, t, cstr, flow.offset, bwstr)
 }
 
+func (flow *Flow) getbw() int64                   { return flow.tobandwidth }
+func (flow *Flow) setbw(bw int64)                 { flow.tobandwidth = bw }
+func (flow *Flow) getoffset() int64               { return flow.offset }
+func (flow *Flow) setoffset(ev *ReplicaDataEvent) { flow.offset = ev.offset }
+func (flow *Flow) incoffset(add int)              { flow.offset += int64(add) }
+func (flow *Flow) GetCid() int64                  { return flow.cid }
+func (flow *Flow) GetSid() int64                  { return flow.sid }
+func (flow *Flow) GetTio() TioInterface           { return flow.tio.GetTio() }
+func (flow *Flow) GetRb() RateBucketInterface     { return flow.rb }
+func (flow *Flow) GetRepnum() int                 { return flow.repnum }
+
+func (flow *Flow) bytesToWrite(ev *ReplicaDataEvent) int {
+	if flow.offset < flow.totalbytes {
+		return 0
+	}
+	return int(flow.totalbytes)
+}
+
+//========================================================================
 //
-// FlowDir
+// type FlowLong (long-lived unicast flow)
 //
+//========================================================================
+type FlowLong struct {
+	from        RunnerInterface
+	to          RunnerInterface
+	rb          RateBucketInterface // refill at the tobandwidth rate
+	tobandwidth int64               // bits/sec
+	offset      int64               // transmitted bytes
+	timeTxDone  time.Time           // time the last byte of the current packet is sent
+}
+
+func (flow *FlowLong) setOneArg(a interface{}) {
+}
+
+func (flow *FlowLong) unicast() bool {
+	return true
+}
+
+func (flow *FlowLong) String() string {
+	f := flow.from.String()
+	bwstr := fmt.Sprintf("%.2f", float64(flow.tobandwidth)/1000.0/1000.0/1000.0)
+	t := flow.to.String()
+	return fmt.Sprintf("[flow-long %s=>%s[%s],bw=%sGbps]", f, t, bwstr)
+}
+
+func (flow *FlowLong) getbw() int64               { return flow.tobandwidth }
+func (flow *FlowLong) setbw(bw int64)             { flow.tobandwidth = bw }
+func (flow *FlowLong) GetRb() RateBucketInterface { return flow.rb }
+func (flow *FlowLong) incoffset(add int)          { flow.offset += int64(add) }
+
+// FIXME: remove from interface
+func (flow *FlowLong) getoffset() int64                      { return 0 }
+func (flow *FlowLong) setoffset(ev *ReplicaDataEvent)        { assert(false) }
+func (flow *FlowLong) GetCid() int64                         { return 0 }
+func (flow *FlowLong) GetSid() int64                         { return 0 }
+func (flow *FlowLong) GetTio() TioInterface                  { return nil }
+func (flow *FlowLong) GetRepnum() int                        { return 0 }
+func (flow *FlowLong) bytesToWrite(ev *ReplicaDataEvent) int { return 0 }
+
+//========================================================================
+//
+// FlowDir - container: unidirectional flows many-others => myself
+//
+//========================================================================
+type FlowDir struct {
+	node  RunnerInterface
+	flows map[RunnerInterface]FlowInterface
+}
+
 func NewFlowDir(r RunnerInterface, num int) *FlowDir {
-	flows := make(map[RunnerInterface]*Flow, num)
+	flows := make(map[RunnerInterface]FlowInterface, num)
 	return &FlowDir{r, flows}
 }
 
@@ -116,7 +202,7 @@ func (fdir *FlowDir) count() int {
 	return len(fdir.flows)
 }
 
-func (fdir *FlowDir) get(r RunnerInterface, mustexist bool) *Flow {
+func (fdir *FlowDir) get(r RunnerInterface, mustexist bool) FlowInterface {
 	flow, ok := fdir.flows[r]
 	if ok {
 		return flow

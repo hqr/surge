@@ -62,16 +62,16 @@ func (r *gatewayNine) rxcallbackNine(ev EventInterface) int {
 }
 
 func (r *gatewayNine) rejectBid(rjev *LateRejectBidEvent) {
-	tio := rjev.GetTio()
-	tioparent := tio.parent
-	mcastflow := tioparent.flow
+	tio := rjev.GetTio().(*TioRr)
+	tioparent := tio.GetParent().(*TioRr)
+	mcastflow := tioparent.GetFlow().(*Flow)
 	srv := rjev.GetSource()
 	bid := rjev.bid
 
 	assert(tioparent == r.tioparent)
 	assert(bid.state == bidStateRejected)
 	assert(tioparent.haschild(tio))
-	assert(srv == tio.target)
+	assert(srv == tio.GetTarget())
 	assert(bid.win.left.After(Now), "rejected bid is already in progress"+bid.String())
 
 	r.bids.rejectBid(bid, srv)
@@ -137,7 +137,7 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 	gwy := tioevent.GetSource()
 	ngobj := tioevent.GetGroup()
 	assert(ngobj.hasmember(r))
-	tio := tioevent.GetTio()
+	tio := tioevent.GetTio().(*TioRr)
 
 	rzvgroup := tioevent.rzvgroup
 	if !rzvgroup.hasmember(r) {
@@ -147,8 +147,8 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 	}
 
 	// accepted?
-	gwyflow := tio.flow
-	assert(gwyflow.cid == tioevent.cid)
+	gwyflow := tio.GetFlow()
+	assert(gwyflow.GetCid() == tioevent.cid)
 	assert(tio.bid == tioevent.bid, tioevent.String()+","+tioevent.bid.String())
 	log("srv-accept=accept", tioevent.String(), tio.bid.String())
 	rjbid, state := r.bids.acceptBid(tio, tio.bid)
@@ -169,7 +169,7 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 	// new server flow
 	flow := NewFlow(gwy, tioevent.cid, r, tio)
 	flow.totalbytes = tioevent.sizeb
-	flow.tobandwidth = configNetwork.linkbpsData
+	flow.setbw(configNetwork.linkbpsData)
 	log("srv-new-flow", flow.String(), tio.bid.String())
 	r.flowsfrom.insertFlow(flow)
 
@@ -221,7 +221,7 @@ type LateRejectBidEvent struct {
 
 func newLateRejectBidEvent(srv RunnerInterface, bid *PutBid) *LateRejectBidEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
-	timedev := newTimedAnyEvent(srv, at, bid.tio.source, bid.tio, configNetwork.sizeControlPDU)
+	timedev := newTimedAnyEvent(srv, at, bid.tio.GetSource(), bid.tio, configNetwork.sizeControlPDU)
 
 	return &LateRejectBidEvent{zControlEvent{zEvent{*timedev}, bid.tio.cid}, bid}
 }

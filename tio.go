@@ -32,6 +32,40 @@ import (
 // and executed, tio.done is set to true.
 // Strict ordering of (passing through) the pipeline stages is enforced..
 //
+type TioInterface interface {
+	// accessors
+	haschild(tiochild TioInterface) bool
+
+	// more accessors
+	GetStage() (string, int)
+	GetSource() RunnerInterface
+	GetID() int64
+	GetSid() int64
+	GetCid() int64
+	GetChunkSid() int64
+	GetTarget() RunnerInterface
+	GetParent() TioInterface
+	GetFlow() FlowInterface
+	SetFlow(flow FlowInterface)
+	GetTioChild(tgt RunnerInterface) TioInterface
+	addTioChild(tiochild TioInterface)
+	hasChildren() bool
+	GetNumTioChildren() int
+	DelTioChild(tgt RunnerInterface)
+	GetRepnum() int
+	IsInit() bool
+	Done() bool
+	RemoveWhenDone() bool
+	GetTio() TioInterface
+
+	// real stuff
+	nextAnon(when time.Duration, tgt RunnerInterface)
+	next(newev EventInterface, sendhow SendMethodEnum)
+	doStage(r RunnerInterface, args ...interface{}) error
+	abort()
+	String() string
+}
+
 type Tio struct {
 	id       int64
 	sid      int64 // short id for logs
@@ -47,16 +81,34 @@ type Tio struct {
 
 	cid            int64
 	chunksid       int64
-	parent         *Tio
-	flow           *Flow
-	children       map[RunnerInterface]*Tio
-	repnum         int
+	parent         TioInterface
+	flow           FlowInterface
+	children       map[RunnerInterface]TioInterface
 	target         RunnerInterface
+	rtio           TioInterface
+	repnum         int
 	removeWhenDone bool
-	bid            *PutBid
 }
 
-func newTio(src RunnerInterface, p *Pipeline, args []interface{}) *Tio {
+// resource reservations -- bids
+type TioRr struct {
+	Tio
+	bid *PutBid
+}
+
+// long flow -- track offset in the IO itself
+type TioOffset struct {
+	Tio
+	offset     int64
+	totalbytes int64
+}
+
+//===============================================================================
+//
+// c-tors
+//
+//================================================================================
+func NewTio(src RunnerInterface, p *Pipeline, args ...interface{}) *Tio {
 	assert(p.Count() > 0)
 	uqid, printid := uqrandom64(src.GetID())
 	tio := &Tio{
@@ -66,19 +118,22 @@ func newTio(src RunnerInterface, p *Pipeline, args []interface{}) *Tio {
 		index:          -1,
 		source:         src,
 		removeWhenDone: true}
+
+	tio.init(args)
+	tio.rtio = tio
+	return tio
+}
+
+func (tio *Tio) init(args []interface{}) {
 	for i := 0; i < len(args); i++ {
 		tio.setOneArg(args[i])
 	}
 	// linkage
 	if tio.parent == nil {
 		tio.source.AddTio(tio) // see RemoveTio below
-		return tio
+		return
 	}
-	if tio.parent.children == nil {
-		tio.parent.children = make(map[RunnerInterface]*Tio, 2)
-	}
-	tio.parent.children[tio.target] = tio
-	return tio
+	tio.parent.addTioChild(tio)
 }
 
 func (tio *Tio) setOneArg(a interface{}) {
@@ -90,26 +145,124 @@ func (tio *Tio) setOneArg(a interface{}) {
 		tio.repnum = a.(*PutReplica).num
 		tio.cid = a.(*PutReplica).chunk.cid
 		tio.chunksid = a.(*PutReplica).chunk.sid
-	case *Tio:
+	case TioInterface:
 		assert(tio.parent == nil)
-		tio.parent = a.(*Tio)
+		tio.parent = a.(TioInterface)
 	case RunnerInterface:
 		tio.target = a.(RunnerInterface)
-	case *Flow:
-		tio.flow = a.(*Flow)
+	case FlowInterface:
+		tio.flow = a.(FlowInterface)
+	case bool:
+		tio.removeWhenDone = a.(bool)
 	default:
 		assert(false, fmt.Sprintf("unexpected type: %#v", a))
 	}
 }
 
-func (tioparent *Tio) haschild(tiochild *Tio) bool {
-	return tioparent.children[tiochild.target] == tiochild
+func NewTioRr(src RunnerInterface, p *Pipeline, args ...interface{}) *TioRr {
+	uqid, printid := uqrandom64(src.GetID())
+	tio := &Tio{
+		id:             uqid,
+		sid:            printid,
+		pipeline:       p,
+		index:          -1,
+		source:         src,
+		removeWhenDone: true}
+	tiorr := &TioRr{*tio, nil}
+	tiorr.init(args)
+	tiorr.rtio = tiorr
+	return tiorr
 }
 
-func (tioparent *Tio) getchild(srv RunnerInterface) *Tio {
-	tiochild, ok := tioparent.children[srv]
-	assert(ok, "tiochild does not exist: "+tioparent.String()+" for: "+srv.String())
-	return tiochild
+func (tio *TioRr) init(args []interface{}) {
+	for i := 0; i < len(args); i++ {
+		tio.setOneArg(args[i])
+	}
+	// linkage
+	if tio.parent == nil {
+		tio.source.AddTio(tio) // see RemoveTio below
+		return
+	}
+	tio.parent.addTioChild(tio)
+}
+
+func NewTioOffset(src RunnerInterface, p *Pipeline, args ...interface{}) *TioOffset {
+	uqid, printid := uqrandom64(src.GetID())
+	tio := &Tio{
+		id:             uqid,
+		sid:            printid,
+		pipeline:       p,
+		index:          -1,
+		source:         src,
+		removeWhenDone: true}
+	tiof := &TioOffset{*tio, 0, 0}
+	tiof.init(args)
+	tiof.rtio = tiof
+	return tiof
+}
+
+func (tio *TioOffset) init(args []interface{}) {
+	for i := 0; i < len(args); i++ {
+		tio.setOneArg(args[i])
+
+		replica, ok := args[i].(*PutReplica)
+		if ok {
+			tio.totalbytes = replica.chunk.sizeb
+		}
+	}
+	// linkage
+	if tio.parent == nil {
+		tio.source.AddTio(tio) // see RemoveTio below
+		return
+	}
+	assert(tio.totalbytes > 0)
+	tio.parent.addTioChild(tio)
+}
+
+//===============================================================================
+//
+// methods
+//
+//================================================================================
+func (tio *Tio) GetID() int64                                 { return tio.id }
+func (tio *Tio) GetSid() int64                                { return tio.sid }
+func (tio *Tio) GetCid() int64                                { return tio.cid }
+func (tio *Tio) GetSource() RunnerInterface                   { return tio.source }
+func (tio *Tio) GetChunkSid() int64                           { return tio.chunksid }
+func (tio *Tio) GetTarget() RunnerInterface                   { return tio.target }
+func (tio *Tio) GetParent() TioInterface                      { return tio.parent.GetTio() }
+func (tio *Tio) GetFlow() FlowInterface                       { return tio.flow }
+func (tio *Tio) SetFlow(flow FlowInterface)                   { tio.flow = flow }
+func (tio *Tio) GetTioChild(tgt RunnerInterface) TioInterface { return tio.children[tgt].GetTio() }
+
+func (tio *Tio) GetNumTioChildren() int          { return len(tio.children) }
+func (tio *Tio) DelTioChild(tgt RunnerInterface) { delete(tio.children, tgt) }
+func (tio *Tio) GetRepnum() int                  { return tio.repnum }
+func (tio *Tio) IsInit() bool                    { return tio.index == -1 }
+func (tio *Tio) Done() bool                      { return tio.done }
+func (tio *Tio) RemoveWhenDone() bool            { return tio.removeWhenDone }
+func (tio *Tio) GetTio() TioInterface            { return tio.rtio }
+
+func (tioparent *Tio) hasChildren() bool {
+	if tioparent.children == nil {
+		return false
+	}
+	return len(tioparent.children) > 0
+}
+func (tioparent *Tio) addTioChild(tiochild TioInterface) {
+	if tioparent.children == nil {
+		tioparent.children = make(map[RunnerInterface]TioInterface, 2)
+	}
+	tioparent.children[tiochild.GetTarget()] = tiochild
+}
+
+func (tioparent *Tio) haschild(tiochild TioInterface) bool {
+	tgt := tiochild.GetTarget()
+	child, ok := tioparent.children[tgt]
+	if !ok {
+		return false
+	}
+	return child.GetTio() == tiochild.GetTio()
 }
 
 func (tio *Tio) GetStage() (string, int) {
@@ -165,7 +318,7 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 		tioevent = args[0].(EventInterface)
 	}
 	assert(r == tioevent.GetTarget(), r.String()+"!="+tioevent.GetTarget().String())
-	assert(tio == tioevent.GetTio())
+	assert(tio.GetTio() == tioevent.GetTio())
 
 	stage := tio.pipeline.GetStage(tio.index)
 	assert(tio.index == stage.index)
@@ -185,12 +338,13 @@ func (tio *Tio) doStage(r RunnerInterface, args ...interface{}) error {
 				tio.source.RemoveTio(tio)
 			}
 		} else {
-			assert(tio.parent.haschild(tio), "tioparent="+tio.parent.String()+",child="+tio.String())
+			tioparent := tio.GetParent()
+			assert(tioparent.haschild(tio), "tioparent="+tioparent.String()+",child="+tio.String())
 			if tio.removeWhenDone {
 				log(LogV, "dostage-tio-done-removed", r.String(), tio.String())
-				delete(tio.parent.children, tio.target)
-				if len(tio.parent.children) == 0 && tio.parent.removeWhenDone {
-					tio.parent.source.RemoveTio(tio.parent)
+				tioparent.DelTioChild(tio.target)
+				if !tioparent.hasChildren() && tioparent.RemoveWhenDone() {
+					tioparent.GetSource().RemoveTio(tioparent)
 				}
 			}
 		}
@@ -214,14 +368,15 @@ func (tio *Tio) abort() {
 		tio.children = nil
 		tio.source.RemoveTio(tio)
 	} else {
-		if tio.parent.children != nil {
-			delete(tio.parent.children, tio.target)
+		if tio.GetParent().hasChildren() {
+			// delete(tio.parent.children, tio.target)
+			tio.GetParent().DelTioChild(tio.target)
 		}
 	}
 }
 
 func (tio *Tio) String() string {
-	tioidstr := fmt.Sprintf("%d", tio.sid)
+	tioidstr := fmt.Sprintf("%d", tio.GetSid())
 	if tio.repnum != 0 {
 		tioidstr += fmt.Sprintf("(c#%d(%d))", tio.chunksid, tio.repnum)
 	} else if tio.cid != 0 {

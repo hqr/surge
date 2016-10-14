@@ -240,9 +240,9 @@ func (q *RxQueue) NowIsDone() bool {
 	if !q.busyidletick.Equal(Now) {
 		// FIXME: redefine or remove
 		if realpendingdepth > 1 {
-			atomic.AddInt64(&q.busycnt, int64(1))
+			atomic.AddInt64(&q.busycnt, 1)
 		} else {
-			atomic.AddInt64(&q.idlecnt, int64(1))
+			atomic.AddInt64(&q.idlecnt, 1)
 		}
 		q.busyidletick = Now
 	}

@@ -149,17 +149,17 @@ func (r *gatewaySeven) startNewChunk() {
 	assert(len(targets) == configReplicast.sizeNgtGroup)
 
 	// new IO request and new multicast flow
-	tioparent := r.putpipeline.NewTio(r, r.chunk)
+	tioparent := NewTioRr(r, r.putpipeline, r.chunk)
 	mcastflow := NewFlow(r, r.chunk.cid, tioparent, ngobj)
 
 	// children tios; each server must see its own copy of
 	// the message
 	for _, srv := range targets {
-		r.putpipeline.NewTio(r, tioparent, r.chunk, mcastflow, srv)
+		NewTioRr(r, r.putpipeline, tioparent, r.chunk, mcastflow, srv)
 	}
-	assert(len(tioparent.children) == ngobj.getCount(), fmt.Sprintf("%d != %d", len(tioparent.children), ngobj.getCount()))
+	assert(tioparent.GetNumTioChildren() == ngobj.getCount(), fmt.Sprintf("%d != %d", len(tioparent.children), ngobj.getCount()))
 
-	mcastflow.tobandwidth = int64(0)
+	mcastflow.setbw(0)
 	mcastflow.totalbytes = r.chunk.sizeb
 	mcastflow.rb = &DummyRateBucket{}
 
@@ -175,14 +175,14 @@ func (r *gatewaySeven) startNewChunk() {
 	//
 	atomic.StoreInt64(&r.NowMcasting, 1)
 	for _, srv := range targets {
-		tio := tioparent.children[srv]
+		tio := tioparent.GetTioChild(srv)
 		ev := newMcastChunkPutRequestEvent(r, ngobj, r.chunk, srv, tio)
 		tio.next(ev, SmethodDirectInsert)
 	}
 	atomic.StoreInt64(&r.NowMcasting, 0)
 
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
-	mcastflow.rb.use(int64(configNetwork.sizeControlPDU * 8))
+	mcastflow.GetRb().use(int64(configNetwork.sizeControlPDU * 8))
 	mcastflow.timeTxDone = Now.Add(configNetwork.durationControlPDU)
 
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
@@ -198,8 +198,8 @@ func (r *gatewaySeven) startNewChunk() {
 // The pipeline itself is declared at the top of this model.
 func (r *gatewaySeven) M7receivebid(ev EventInterface) error {
 	tioevent := ev.(*BidEvent)
-	tiochild := tioevent.GetTio()
-	tioparent := tiochild.parent
+	tiochild := tioevent.GetTio().(*TioRr)
+	tioparent := tiochild.GetParent().(*TioRr)
 	assert(tioparent.haschild(tiochild))
 	log(LogVV, r.String(), "::M7receivebid()", tioevent.String())
 	srv := tioevent.GetSource()
@@ -231,7 +231,7 @@ func (r *gatewaySeven) M7receivebid(ev EventInterface) error {
 		return nil
 	}
 
-	mcastflow := tioparent.flow
+	mcastflow := tioparent.GetFlow().(*Flow)
 	mcastflow.extension = computedbid
 
 	// to read or not to read? round robin between selected servers, if 50% reading requested via CLI
@@ -249,10 +249,10 @@ func (r *gatewaySeven) M7receivebid(ev EventInterface) error {
 			bid.tio.repnum = 50 // FIXME
 			log("read-pre", bid.tio.String())
 		}
-		assert(ngobj.hasmember(bid.tio.target))
-		ids[k] = bid.tio.target.GetID()
+		assert(ngobj.hasmember(bid.tio.GetTarget()))
+		ids[k] = bid.tio.GetTarget().GetID()
 
-		assert(r.eps[ids[k]] == bid.tio.target)
+		assert(r.eps[ids[k]] == bid.tio.GetTarget())
 	}
 	sort.Ints(ids)
 	for k := 0; k < configStorage.numReplicas; k++ {
@@ -263,13 +263,13 @@ func (r *gatewaySeven) M7receivebid(ev EventInterface) error {
 	assert(r.rzvgroup.getCount() == configStorage.numReplicas)
 
 	r.accept(ngobj, tioparent)
-	mcastflow.tobandwidth = configNetwork.linkbpsData
+	mcastflow.setbw(configNetwork.linkbpsData)
 	return nil
 }
 
 // accept-ng control/stage
-func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
-	assert(len(tioparent.children) == ngobj.getCount())
+func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *TioRr) {
+	assert(tioparent.GetNumTioChildren() == ngobj.getCount())
 
 	targets := ngobj.getmembers()
 
@@ -286,15 +286,15 @@ func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
 	//
 	atomic.StoreInt64(&r.NowMcasting, 1)
 	for _, srv := range targets {
-		tio := tioparent.children[srv]
+		tio := tioparent.GetTioChild(srv)
 		acceptev := newMcastChunkPutAcceptEvent(r, ngobj, r.chunk, r.rzvgroup, tio)
 		tio.next(acceptev, SmethodDirectInsert)
 	}
 	atomic.StoreInt64(&r.NowMcasting, 0)
 
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
-	mcastflow := tioparent.flow
-	mcastflow.rb.use(int64(configNetwork.sizeControlPDU * 8))
+	mcastflow := tioparent.GetFlow().(*Flow)
+	mcastflow.GetRb().use(int64(configNetwork.sizeControlPDU * 8))
 	mcastflow.timeTxDone = Now.Add(configNetwork.durationControlPDU)
 
 	atomic.AddInt64(&r.txbytestats, int64(configNetwork.sizeControlPDU))
@@ -302,10 +302,10 @@ func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
 	for _, srv := range targets {
 		// cleanup child tios that weren't accepted
 		if !r.rzvgroup.hasmember(srv) {
-			delete(tioparent.children, srv)
+			tioparent.DelTioChild(srv)
 		}
 	}
-	assert(len(tioparent.children) == r.rzvgroup.getCount())
+	assert(tioparent.GetNumTioChildren() == r.rzvgroup.getCount())
 }
 
 // M7replicack is invoked by the generic tio-processing code when
@@ -315,17 +315,17 @@ func (r *gatewaySeven) accept(ngobj *NgtGroup, tioparent *Tio) {
 // The pipeline itself is declared at the top of this model.
 func (r *gatewaySeven) M7replicack(ev EventInterface) error {
 	tioevent := ev.(*ReplicaPutAckEvent)
-	tio := ev.GetTio()
-	tioparent := tio.parent
+	tio := ev.GetTio().(*TioRr)
+	tioparent := tio.GetParent().(*TioRr)
 	assert(tioparent.haschild(tio))
 	group := tioevent.GetGroup()
-	flow := tio.flow
-	assert(flow.cid == tioevent.cid)
+	flow := tio.GetFlow().(*Flow)
+	assert(flow.GetCid() == tioevent.cid)
 	assert(group == r.rzvgroup)
 
 	assert(r.chunk != nil, "chunk nil,"+tioevent.String()+","+r.rzvgroup.String())
 	assert(r.rzvgroup.getCount() == configStorage.numReplicas, "incomplete group,"+r.String()+","+r.rzvgroup.String()+","+tioevent.String())
-	cstr := fmt.Sprintf("c#%d", flow.sid)
+	cstr := fmt.Sprintf("c#%d", flow.GetSid())
 
 	if r.replicackCommon(tioevent) == ChunkDone {
 		log(r.String(), cstr, "=>", r.rzvgroup.String())
@@ -338,16 +338,17 @@ func (r *gatewaySeven) M7replicack(ev EventInterface) error {
 // send data periodically walks all pending IO requests and transmits
 // data (for the in-progress chunks), when permitted
 func (r *gatewaySeven) sendata() {
-	frsize := configNetwork.sizeFrame
-	for _, tioparent := range r.tios {
-		mcastflow := tioparent.flow
+	frsize := int64(configNetwork.sizeFrame)
+	for _, tioparentint := range r.tios {
+		tioparent := tioparentint.(*TioRr)
+		mcastflow := tioparent.GetFlow().(*Flow)
 		if mcastflow.timeTxDone.After(Now) {
 			continue
 		}
-		if mcastflow.offset >= r.chunk.sizeb {
+		if mcastflow.getoffset() >= r.chunk.sizeb {
 			continue
 		}
-		assert(mcastflow.tobandwidth == configNetwork.linkbpsData)
+		assert(mcastflow.getbw() == configNetwork.linkbpsData)
 
 		computedbid := mcastflow.extension.(*PutBid)
 		if computedbid == nil {
@@ -356,25 +357,25 @@ func (r *gatewaySeven) sendata() {
 		if Now.Before(computedbid.win.left) {
 			continue
 		}
-		if mcastflow.offset+frsize > r.chunk.sizeb {
-			frsize = r.chunk.sizeb - mcastflow.offset
+		if mcastflow.getoffset()+frsize > r.chunk.sizeb {
+			frsize = r.chunk.sizeb - mcastflow.getoffset()
 		}
 
-		mcastflow.offset += frsize
-		newbits := int64(frsize * 8)
+		mcastflow.incoffset(int(frsize))
+		newbits := frsize * 8
 
 		targets := r.rzvgroup.getmembers()
 
 		// multicast via SmethodDirectInsert
 		atomic.StoreInt64(&r.NowMcasting, 1)
 		for _, srv := range targets {
-			tio := tioparent.children[srv]
-			ev := newMcastChunkDataEvent(r, r.rzvgroup, r.chunk, mcastflow, frsize, tio)
+			tio := tioparent.GetTioChild(srv)
+			ev := newMcastChunkDataEvent(r, r.rzvgroup, r.chunk, mcastflow, int(frsize), tio)
 			srv.Send(ev, SmethodDirectInsert)
 		}
 		atomic.StoreInt64(&r.NowMcasting, 0)
 
-		d := time.Duration(newbits) * time.Second / time.Duration(mcastflow.tobandwidth)
+		d := time.Duration(newbits) * time.Second / time.Duration(mcastflow.getbw())
 		mcastflow.timeTxDone = Now.Add(d)
 		atomic.AddInt64(&r.txbytestats, int64(frsize))
 	}
@@ -422,11 +423,10 @@ func (r *serverSeven) Run() {
 				}
 			}
 		default:
-			tio := ev.GetTio()
 			log(LogV, "rxcallback", r.String(), ev.String())
-			// ev.GetSize() == configNetwork.sizeControlPDU
 			r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, NetControlBusy)
 
+			tio := ev.GetTio()
 			tio.doStage(r, ev)
 		}
 
@@ -456,9 +456,9 @@ func (r *serverSeven) M7requestng(ev EventInterface) error {
 	log(r.String(), "::M7requestng()", ev.String())
 
 	tioevent := ev.(*McastChunkPutRequestEvent)
-	tio := tioevent.GetTio()
+	tio := tioevent.GetTio().(*TioRr)
 	gwy := tioevent.GetSource()
-	assert(tio.source == gwy)
+	assert(tio.GetSource() == gwy)
 	ngobj := tioevent.GetGroup()
 	assert(ngobj.hasmember(r))
 
@@ -493,21 +493,21 @@ func (r *serverSeven) M7acceptng(ev EventInterface) error {
 	gwy := tioevent.GetSource()
 	ngobj := tioevent.GetGroup()
 	assert(ngobj.hasmember(r))
-	tio := tioevent.GetTio()
+	tio := tioevent.GetTio().(*TioRr)
 
 	rzvgroup := tioevent.rzvgroup
 	if !rzvgroup.hasmember(r) {
 		r.bids.cancelBid(tio)
 		return nil
 	}
-	gwyflow := tio.flow
+	gwyflow := tio.GetFlow().(*Flow)
 	computedbid := gwyflow.extension.(*PutBid)
 	r.bids.acceptBid(tio, computedbid)
 
 	//new server's flow
 	flow := NewFlow(gwy, tioevent.cid, r, tio)
 	flow.totalbytes = tioevent.sizeb
-	flow.tobandwidth = configNetwork.linkbpsData
+	flow.setbw(configNetwork.linkbpsData)
 	log("srv-new-flow", flow.String(), computedbid.String())
 	r.flowsfrom.insertFlow(flow)
 

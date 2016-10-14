@@ -66,11 +66,11 @@ func (r *gatewayFour) Run() {
 
 	rxcallback := func(ev EventInterface) int {
 		tioevent := ev.(*TimedAnyEvent)
-		tio := tioevent.GetTio()
+		tio := tioevent.GetTio().(*Tio)
 		tio.doStage(r)
 
-		if tio.done {
-			atomic.AddInt64(&r.tiostats, int64(1))
+		if tio.Done() {
+			atomic.AddInt64(&r.tiostats, 1)
 			outstanding--
 		}
 
@@ -88,7 +88,7 @@ func (r *gatewayFour) Run() {
 				tgt := r.selectRandomPeer(0)
 				assert(tgt != nil)
 
-				tio := m4.pipeline.NewTio(r, tgt)
+				tio := NewTio(r, m4.pipeline, tgt)
 				outstanding++
 				at := clusterTripPlusRandom()
 				tio.nextAnon(at, tgt)

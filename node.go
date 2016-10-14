@@ -78,10 +78,10 @@ func (r *GatewayCommon) realobject() RunnerInterface {
 
 func (r *GatewayCommon) replicackCommon(tioevent *ReplicaPutAckEvent) int {
 	tio := tioevent.GetTio()
-	flow := tio.flow
+	flow := tio.GetFlow()
 
 	log(LogV, "::replicack()", flow.String(), tioevent.String())
-	atomic.AddInt64(&r.replicastats, int64(1))
+	atomic.AddInt64(&r.replicastats, 1)
 
 	r.numreplicas++
 	log("replica-acked", flow.String(), "num-acked", r.numreplicas, "by", tioevent.GetSource().String())
@@ -91,7 +91,7 @@ func (r *GatewayCommon) replicackCommon(tioevent *ReplicaPutAckEvent) int {
 	chunklatency := Now.Sub(r.chunk.crtime)
 	x := int64(chunklatency) / 1000
 	log("chunk-done", r.chunk.String(), "latency", chunklatency, x)
-	atomic.AddInt64(&r.chunkstats, int64(1))
+	atomic.AddInt64(&r.chunkstats, 1)
 	r.chunk = nil
 	return ChunkDone
 }
@@ -212,11 +212,11 @@ func (r *GatewayUch) startNewReplica(num int) {
 
 	log("gwy-new-flow", flow.String())
 
-	ev := newReplicaPutRequestEvent(r.realobject(), tgt, r.replica, flow.tio)
+	ev := newReplicaPutRequestEvent(r.realobject(), tgt, r.replica, flow.GetTio())
 
-	flow.tio.next(ev, SmethodWait)
+	flow.GetTio().next(ev, SmethodWait)
 	r.rb.use(int64(configNetwork.sizeControlPDU * 8))
-	flow.rb.use(int64(configNetwork.sizeControlPDU * 8))
+	flow.GetRb().use(int64(configNetwork.sizeControlPDU * 8))
 	flow.timeTxDone = Now.Add(configNetwork.durationControlPDU)
 }
 
@@ -227,17 +227,17 @@ func (r *GatewayUch) startNewReplica(num int) {
 func (r *GatewayUch) sendata() {
 	rep := r.replica
 	for _, tio := range r.tios {
-		flow := tio.flow
-		srv := tio.target
+		flow := tio.GetFlow().(*Flow)
+		srv := tio.GetTarget()
 		assert(flow.to == srv)
-		if flow.tobandwidth == 0 || flow.offset >= r.chunk.sizeb {
+		if flow.getbw() == 0 || flow.getoffset() >= r.chunk.sizeb {
 			continue
 		}
-		frsize := configNetwork.sizeFrame
-		if flow.offset+frsize > r.chunk.sizeb {
-			frsize = r.chunk.sizeb - flow.offset
+		frsize := int64(configNetwork.sizeFrame)
+		if flow.getoffset()+frsize > r.chunk.sizeb {
+			frsize = r.chunk.sizeb - flow.getoffset()
 		}
-		newbits := int64(frsize * 8)
+		newbits := frsize * 8
 		// check with the gateway's egress link implemented as ratebucket
 		if r.rb.below(newbits) {
 			continue
@@ -247,7 +247,7 @@ func (r *GatewayUch) sendata() {
 			continue
 		}
 		// check with the flow's own ratebucket
-		if flow.rb.below(newbits) {
+		if flow.GetRb().below(newbits) {
 			continue
 		}
 
@@ -260,20 +260,20 @@ func (r *GatewayUch) sendata() {
 			}
 		}
 
-		flow.offset += frsize
-		ev := newReplicaDataEvent(r.realobject(), srv, rep.chunk.cid, rep.num, flow, frsize)
+		flow.incoffset(int(frsize))
+		ev := newReplicaDataEvent(r.realobject(), srv, rep.chunk.cid, rep.num, flow, int(frsize))
 
 		// transmit given the current flow's bandwidth
-		d := time.Duration(newbits) * time.Second / time.Duration(flow.tobandwidth)
+		d := time.Duration(newbits) * time.Second / time.Duration(flow.getbw())
 		flow.timeTxDone = Now.Add(d)
 		ok := r.Send(ev, SmethodWait)
 		assert(ok)
 		// starting next replica without waiting for the current one's completion
-		if flow.offset >= flow.totalbytes {
+		if flow.getoffset() >= flow.totalbytes {
 			r.finishStartReplica(flow)
 		} else {
-			flow.rb.use(newbits)
-			flow.tobandwidth = flow.rb.getrate()
+			flow.GetRb().use(newbits)
+			flow.setbw(flow.GetRb().getrate())
 			r.rb.use(newbits)
 		}
 	}
@@ -283,11 +283,11 @@ func (r *GatewayUch) sendata() {
 // when all the required configStorage.numReplicas copies are fully stored
 func (r *GatewayUch) finishStartReplica(flow *Flow) {
 	log("replica-fully-transmitted", flow.String(), r.replica.String())
-	flow.tobandwidth = 0
-	tio := flow.tio
-	assert(flow.repnum == tio.repnum)
-	if tio.repnum < configStorage.numReplicas {
-		r.startNewReplica(tio.repnum + 1)
+	flow.setbw(0)
+	tio := flow.GetTio()
+	assert(flow.GetRepnum() == tio.GetRepnum())
+	if tio.GetRepnum() < configStorage.numReplicas {
+		r.startNewReplica(tio.GetRepnum() + 1)
 	}
 }
 
@@ -297,10 +297,10 @@ func (r *GatewayUch) finishStartReplica(flow *Flow) {
 func (r *GatewayUch) replicack(ev EventInterface) error {
 	tioevent := ev.(*ReplicaPutAckEvent)
 	tio := tioevent.GetTio()
-	flow := tio.flow
-	assert(flow.cid == tioevent.cid)
-	assert(flow.cid == tio.cid)
-	assert(flow.repnum == tioevent.num)
+	flow := tio.GetFlow().(*Flow)
+	assert(flow.GetCid() == tioevent.cid)
+	assert(flow.GetCid() == tio.GetCid())
+	assert(flow.GetRepnum() == tioevent.num)
 
 	r.replicackCommon(tioevent)
 	return nil
@@ -352,9 +352,9 @@ func (r *GatewayMcast) selectNgtGroup(cid int64, prevgroupid int) int {
 func (r *GatewayMcast) rxcallbackMcast(ev EventInterface) int {
 	tio := ev.GetTio()
 	tio.doStage(r.realobject(), ev)
-	if tio.done {
+	if tio.Done() {
 		log(LogV, "tio-done", tio.String())
-		atomic.AddInt64(&r.tiostats, int64(1))
+		atomic.AddInt64(&r.tiostats, 1)
 	}
 	return ev.GetSize()
 }
@@ -439,7 +439,7 @@ func (r *ServerUch) GetRateBucket() RateBucketInterface {
 // each received event of the type (*ReplicaPutAckEvent). The event itself
 // carries (or rather, is modeled to carry) a full or partial frame, that is,
 // up to configNetwork.sizeFrame bytes.  In addition
-// to taking care of the flow.offset and receive side statistics, the routine
+// to taking care of the flow.getoffset() and receive side statistics, the routine
 // may generate an ACK acknowledging receiption of the full replica.
 // Delivery of this ACK is accomplished via the corresponding tio that controls
 // passage of the stages in accordance with the modeled IO pipeline.
@@ -448,37 +448,36 @@ func (r *ServerUch) GetRateBucket() RateBucketInterface {
 //
 func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 	gwy := ev.GetSource()
-	flow := r.flowsfrom.get(gwy, true)
+	flowint := r.flowsfrom.get(gwy, true)
 	group := ev.GetGroup()
 
-	log(LogV, "srv-recv-data", flow.String(), ev.String())
-	assert(flow.cid == ev.cid)
-	assert(group != nil || flow.repnum == ev.num)
+	assert(flowint.GetCid() == ev.cid)
+	assert(group != nil || flowint.GetRepnum() == ev.num)
+	log(LogV, "srv-recv-data", flowint.String(), ev.String())
 
-	// flow.tobandwidth == configNetwork.linkbpsData
-	r.addBusyDuration(ev.GetSize(), flow.tobandwidth, NetDataBusy)
+	r.addBusyDuration(ev.GetSize(), flowint.getbw(), NetDataBusy)
+	x := flowint.getoffset()
+	flowint.setoffset(ev)
+	x = flowint.getoffset() - x
+	assert(x <= int64(configNetwork.sizeFrame), fmt.Sprintf("FATAL: out of order:%d:%s", ev.offset, flowint.String()))
 
-	x := ev.offset - flow.offset
-	assert(x <= configNetwork.sizeFrame, fmt.Sprintf("FATAL: out of order:%d:%s", ev.offset, flow.String()))
-
-	flow.offset = ev.offset
-
-	if flow.offset < flow.totalbytes {
+	wb := flowint.bytesToWrite(ev)
+	if wb == 0 {
 		return ReplicaNotDoneYet
 	}
 	// persistence policies (important!):
 	// 1) write-through: always postpone the ack until after the replica is fully written
 	// 2) write-back(*): ack immediately if the new replica fits within the disk buffer space;
 	//                   otherwise delay
-	atdisk := r.disk.scheduleWrite(flow.totalbytes)
+	atdisk := r.disk.scheduleWrite(wb)
 	if atdisk < configStorage.dskdurationDataChunk*time.Duration(configStorage.maxDiskQueueChunks) {
 		atdisk = 0
 	}
 
-	r.addBusyDuration(flow.totalbytes, configStorage.diskbps, DiskBusy)
+	r.addBusyDuration(wb, configStorage.diskbps, DiskBusy)
 
 	tio := ev.GetTio()
-	putackev := newReplicaPutAckEvent(r.realobject(), gwy, flow, tio, atdisk)
+	putackev := newReplicaPutAckEvent(r.realobject(), gwy, tio, atdisk)
 	if group != nil {
 		// pass the targetgroup back, to validate by the mcasting gwy
 		putackev.setOneArg(group)
@@ -486,10 +485,10 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 	tio.next(putackev, SmethodWait)
 
 	cstr := ""
-	if flow.repnum != 0 {
-		cstr = fmt.Sprintf("c#%d(%d)", flow.sid, flow.repnum)
+	if tio.GetRepnum() != 0 {
+		cstr = fmt.Sprintf("c#%d(%d)", tio.GetChunkSid(), tio.GetRepnum())
 	} else {
-		cstr = fmt.Sprintf("c#%d", flow.sid)
+		cstr = fmt.Sprintf("c#%d", tio.GetChunkSid())
 	}
 	if atdisk > 0 {
 		log("rep-received-ack-delayed", r.String(), cstr, atdisk)

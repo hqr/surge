@@ -67,10 +67,6 @@ func (p *Pipeline) IndexOf(name string) int {
 	return -1
 }
 
-func (p *Pipeline) NewTio(src RunnerInterface, args ...interface{}) *Tio {
-	return newTio(src, p, args)
-}
-
 func (p *Pipeline) String() string {
 	if len(p.pslice) == 0 {
 		return "<nil>"

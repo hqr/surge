@@ -47,8 +47,8 @@ type RunnerInterface interface {
 	GetStats(reset bool) NodeStats
 	GetRateBucket() RateBucketInterface
 
-	AddTio(tio *Tio)
-	RemoveTio(tio *Tio)
+	AddTio(tio TioInterface)
+	RemoveTio(tio TioInterface)
 
 	String() string
 
@@ -78,7 +78,7 @@ type RunnerBase struct {
 	// cases
 	cases []reflect.SelectCase
 	// more state
-	tios        map[int64]*Tio
+	tios        map[int64]TioInterface
 	rxqueue     *RxQueueSorted
 	txqueue     *TxQueue
 	strtype     string // log
@@ -263,19 +263,19 @@ func (r *RunnerBase) initios(args ...interface{}) {
 	if len(args) > 0 {
 		cnt = args[0].(int)
 	}
-	r.tios = make(map[int64]*Tio, cnt)
+	r.tios = make(map[int64]TioInterface, cnt)
 }
 
-func (r *RunnerBase) AddTio(tio *Tio) {
-	_, ok := r.tios[tio.id]
+func (r *RunnerBase) AddTio(tio TioInterface) {
+	_, ok := r.tios[tio.GetID()]
 	assert(!ok, r.String()+": tio already exists: "+tio.String())
-	r.tios[tio.id] = tio
+	r.tios[tio.GetID()] = tio
 }
 
-func (r *RunnerBase) RemoveTio(tio *Tio) {
-	_, ok := r.tios[tio.id]
+func (r *RunnerBase) RemoveTio(tio TioInterface) {
+	_, ok := r.tios[tio.GetID()]
 	assert(ok, r.String()+": tio does not exist: "+tio.String())
-	delete(r.tios, tio.id)
+	delete(r.tios, tio.GetID())
 }
 
 func (r *RunnerBase) selectRandomPeer(maxload int) RunnerInterface {

@@ -124,20 +124,20 @@ func (r *gatewaySevenX) startNewChunk() {
 	firstidx := (ngid - 1) * configReplicast.sizeNgtGroup
 	srvproxy := allServers[firstidx]
 
-	tioparent := r.putpipeline.NewTio(r, r.chunk)
+	tioparent := NewTioRr(r, r.putpipeline, r.chunk)
 	mcastflow := NewFlow(r, r.chunk.cid, tioparent, ngobj)
 
-	var tioproxy *Tio
+	var tioproxy *TioRr
 	// children tios; each server must work via its own peer-to-peer cmd
 	for _, srv := range targets {
-		tiochild := r.putpipeline.NewTio(r, tioparent, r.chunk, mcastflow, srv)
+		tiochild := NewTioRr(r, r.putpipeline, tioparent, r.chunk, mcastflow, srv)
 		if srv == srvproxy {
 			tioproxy = tiochild
 		}
 	}
 	assert(tioproxy != nil)
 
-	mcastflow.tobandwidth = configNetwork.linkbpsControl
+	mcastflow.setbw(configNetwork.linkbpsControl)
 	mcastflow.totalbytes = r.chunk.sizeb
 	mcastflow.rb = NewDatagramRateBucket(configNetwork.linkbpsControl)
 
@@ -158,7 +158,7 @@ func (r *gatewaySevenX) startNewChunk() {
 func (r *gatewaySevenX) M7X_receivebid(ev EventInterface) error {
 	bidsev := ev.(*ProxyBidsEvent)
 	assert(len(bidsev.bids) == configStorage.numReplicas)
-	tioproxy := bidsev.GetTio()
+	tioproxy := bidsev.GetTio().(*TioRr)
 	tioparent := tioproxy.parent
 	log(r.String(), "::M7X_receivebid()", bidsev.String())
 	proxy := bidsev.GetSource()
@@ -166,7 +166,7 @@ func (r *gatewaySevenX) M7X_receivebid(ev EventInterface) error {
 	ngobj, ok := group.(*NgtGroup)
 	assert(ok)
 	assert(ngobj.hasmember(proxy))
-	mcastflow := tioparent.flow
+	mcastflow := tioparent.GetFlow().(*Flow)
 
 	// fill in the multicast rendezvous group for chunk data transfer
 	// note that pending[] bids at these point are already "filtered"
@@ -180,10 +180,10 @@ func (r *gatewaySevenX) M7X_receivebid(ev EventInterface) error {
 		} else {
 			assert(t.Equal(bid.win.left))
 		}
-		assert(ngobj.hasmember(bid.tio.target))
-		ids[k] = bid.tio.target.GetID()
+		assert(ngobj.hasmember(bid.tio.GetTarget()))
+		ids[k] = bid.tio.GetTarget().GetID()
 
-		assert(r.eps[ids[k]] == bid.tio.target)
+		assert(r.eps[ids[k]] == bid.tio.GetTarget())
 	}
 	mcastflow.extension = &t
 	sort.Ints(ids)
@@ -197,13 +197,13 @@ func (r *gatewaySevenX) M7X_receivebid(ev EventInterface) error {
 	targets := ngobj.getmembers()
 	for _, srv := range targets {
 		if !r.rzvgroup.hasmember(srv) {
-			delete(tioparent.children, srv)
+			tioparent.DelTioChild(srv)
 		}
 	}
-	assert(len(tioparent.children) == r.rzvgroup.getCount())
+	assert(tioparent.GetNumTioChildren() == r.rzvgroup.getCount())
 
-	mcastflow.tobandwidth = configNetwork.linkbpsData
-	mcastflow.rb.setrate(configNetwork.linkbpsData)
+	mcastflow.setbw(configNetwork.linkbpsData)
+	mcastflow.GetRb().setrate(configNetwork.linkbpsData)
 	return nil
 }
 
@@ -215,11 +215,11 @@ func (r *gatewaySevenX) M7X_receivebid(ev EventInterface) error {
 func (r *gatewaySevenX) M7X_replicack(ev EventInterface) error {
 	tioevent := ev.(*ReplicaPutAckEvent)
 	tio := ev.GetTio()
-	tioparent := tio.parent
+	tioparent := tio.GetParent()
 	assert(tioparent.haschild(tio))
 	group := tioevent.GetGroup()
-	flow := tio.flow
-	assert(flow.cid == tioevent.cid)
+	flow := tio.GetFlow()
+	assert(flow.GetCid() == tioevent.cid)
 	assert(group == r.rzvgroup)
 
 	if r.replicackCommon(tioevent) == ChunkDone {
@@ -232,10 +232,11 @@ func (r *gatewaySevenX) M7X_replicack(ev EventInterface) error {
 // send data periodically walks all pending IO requests and transmits
 // data (for the in-progress chunks), when permitted
 func (r *gatewaySevenX) sendata() {
-	frsize := configNetwork.sizeFrame
+	frsize := int64(configNetwork.sizeFrame)
 	targets := r.rzvgroup.getmembers()
-	for _, tioparent := range r.tios {
-		mcastflow := tioparent.flow
+	for _, tioparentint := range r.tios {
+		tioparent := tioparentint.(*TioRr)
+		mcastflow := tioparent.GetFlow().(*Flow)
 		pt := mcastflow.extension.(*time.Time)
 		if pt == nil {
 			continue
@@ -244,25 +245,25 @@ func (r *gatewaySevenX) sendata() {
 		if t.After(Now) {
 			continue
 		}
-		if mcastflow.offset >= r.chunk.sizeb {
+		if mcastflow.getoffset() >= r.chunk.sizeb {
 			continue
 		}
-		assert(mcastflow.tobandwidth == configNetwork.linkbpsData)
+		assert(mcastflow.getbw() == configNetwork.linkbpsData)
 
-		if mcastflow.offset+frsize > r.chunk.sizeb {
-			frsize = r.chunk.sizeb - mcastflow.offset
+		if mcastflow.getoffset()+frsize > r.chunk.sizeb {
+			frsize = r.chunk.sizeb - mcastflow.getoffset()
 		}
-		if !mcastflow.rb.use(int64(frsize * 8)) {
+		if !mcastflow.GetRb().use(frsize * 8) {
 			continue
 		}
 
-		mcastflow.offset += frsize
+		mcastflow.incoffset(int(frsize))
 
 		// multicast via SmethodDirectInsert
 		atomic.StoreInt64(&r.NowMcasting, 1)
 		for _, srv := range targets {
-			tio := tioparent.children[srv]
-			ev := newMcastChunkDataEvent(r, r.rzvgroup, r.chunk, mcastflow, frsize, tio)
+			tio := tioparent.GetTioChild(srv).(*TioRr)
+			ev := newMcastChunkDataEvent(r, r.rzvgroup, r.chunk, mcastflow, int(frsize), tio)
 			srv.Send(ev, SmethodDirectInsert)
 		}
 		atomic.StoreInt64(&r.NowMcasting, 0)
@@ -301,7 +302,7 @@ func (r *serverSevenX) rxcallback(ev EventInterface) int {
 			r.bids.deleteBid(k)
 			// read
 			if bid.win.right.Sub(bid.win.left) > configReplicast.durationBidWindow {
-				tio := ev.GetTio()
+				tio := ev.GetTio().(*TioRr)
 				r.disk.lastIOdone = r.disk.lastIOdone.Add(configStorage.dskdurationDataChunk)
 				r.addBusyDuration(configStorage.sizeDataChunk*1024, configStorage.diskbps, DiskBusy)
 				log("read", tio.String(), fmt.Sprintf("%-12.10v", r.disk.lastIOdone.Sub(time.Time{})))
@@ -317,7 +318,7 @@ func (r *serverSevenX) rxcallback(ev EventInterface) int {
 		bdoneEvent := ev.(*BidDoneEvent)
 		proxy.handleBidDone(bdoneEvent.bid, bdoneEvent.reservedIOdone)
 	default:
-		tio := ev.GetTio()
+		tio := ev.GetTio().(*TioRr)
 		log(LogV, "rxcallback", r.String(), ev.String())
 		r.addBusyDuration(configNetwork.sizeControlPDU, configNetwork.linkbpsControl, NetControlBusy)
 
@@ -387,21 +388,21 @@ func (r *serverSevenX) handleTxDelayed() {
 	}
 	ev := proxy.delayed.popEvent()
 	tioevent := ev.(*McastChunkPutRequestEvent)
-	tioproxy := tioevent.GetTio()
+	tioproxy := tioevent.GetTio().(*TioRr)
 	log(r.String(), "do-handle-delayed", tioevent.String(), tioproxy.String())
 	proxy.M7X_request(ev)
 }
 
 func (r *serverSevenX) handleProxiedBid(bidsev *ProxyBidsEvent) {
-	tio := bidsev.tio
+	tio := bidsev.GetTio()
 	bid := bidsev.bids[0]
 	log(LogV, "new-proxied-bid", bid.String(), tio.String())
 	r.bids.insertBid(bid)
 	// new server's flow right away..
-	assert(r.realobject() == tio.target, r.String()+"!="+tio.target.String()+","+tio.String())
-	flow := NewFlow(tio.source, bidsev.cid, r.realobject(), tio)
+	assert(r.realobject() == tio.GetTarget(), r.String()+"!="+tio.GetTarget().String()+","+tio.String())
+	flow := NewFlow(tio.GetSource(), bidsev.cid, r.realobject(), tio)
 	flow.totalbytes = bidsev.sizeb
-	flow.tobandwidth = configNetwork.linkbpsData
+	flow.setbw(configNetwork.linkbpsData)
 	log("srv-new-flow", flow.String(), bid.String())
 	r.flowsfrom.insertFlow(flow)
 }
@@ -419,7 +420,7 @@ func (r *serverSevenProxy) M7X_request(ev EventInterface) error {
 	//
 	tioevent := ev.(*McastChunkPutRequestEvent)
 	txbits := int64((configStorage.numReplicas + 1) * configNetwork.sizeControlPDU)
-	tioproxy := tioevent.GetTio()
+	tioproxy := tioevent.GetTio().(*TioRr)
 	if r.rb.below(txbits) {
 		r.delayed.insertEvent(tioevent)
 		log(r.String(), "::M7X_request()", "delay", tioevent.String(), r.delayed.depth())
@@ -430,7 +431,7 @@ func (r *serverSevenProxy) M7X_request(ev EventInterface) error {
 
 	cstr := fmt.Sprintf("c#%d", tioproxy.chunksid)
 	gwy := tioevent.GetSource()
-	assert(tioproxy.source == gwy)
+	assert(tioproxy.GetSource() == gwy)
 	ngobj := tioevent.GetGroup()
 	assert(ngobj.hasmember(r))
 
@@ -489,9 +490,10 @@ func (r *serverSevenProxy) M7X_request(ev EventInterface) error {
 	tioproxy.next(bidsev, SmethodWait)
 
 	// 6. force children tios to have the same stage as the proxy's
-	tioparent := tioproxy.parent
+	tioparent := tioproxy.GetParent().(*TioRr)
 	_, index := tioproxy.GetStage()
-	for _, tiochild := range tioparent.children {
+	for _, tiochildint := range tioparent.children {
+		tiochild := tiochildint.(*TioRr)
 		if tiochild != tioproxy {
 			tiochild.index = index
 		}
@@ -561,7 +563,7 @@ func (r *serverSevenProxy) logDebug(tioevent *McastChunkPutRequestEvent, bestque
 }
 
 func (r *serverSevenProxy) handleBidDone(bid *PutBid, reservedIOdone_fromServer time.Time) {
-	srv := bid.tio.target
+	srv := bid.tio.GetTarget()
 	i := 1
 	for ; i < configReplicast.sizeNgtGroup; i++ {
 		qi := r.allQbids[i]
@@ -716,9 +718,9 @@ func (r *serverSevenProxy) autoAcceptOnBehalf(tioevent *McastChunkPutRequestEven
 	qj := r.allQbids[bqj]
 	dj := r.reservedIOdone[bqj]
 	srv := qj.r
-	tioproxy := tioevent.GetTio()
-	tioparent := tioproxy.parent
-	tiochild := tioparent.children[srv]
+	tioproxy := tioevent.GetTio().(*TioRr)
+	tioparent := tioproxy.GetParent().(*TioRr)
+	tiochild := tioparent.GetTioChild(srv).(*TioRr)
 	chkCreated := tioevent.GetCreationTime()
 
 	newbid := NewPutBid(tiochild, newleft)
@@ -832,7 +834,7 @@ func (m *modelSevenPrx) NewServer(i int) RunnerInterface {
 func (m *modelSevenPrx) Configure() {
 	// minimal bid multipleir: same exact bid win done by proxy:
 	// no need to increase the "overlapping" chance
-	configReplicast.bidMultiplierPct = 110
+	configReplicast.bidMultiplierPct = 140
 	configureReplicast(false)
 
 	dskdur2netdurPct = configStorage.dskdurationDataChunk * 100 / configNetwork.netdurationDataChunk

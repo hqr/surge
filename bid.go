@@ -93,11 +93,11 @@ type PutBid struct {
 	crtime time.Time    // this bid creation time
 	crleft time.Time    // win.left at creation time
 	win    TimWin       // time window reserved for requesting gateway
-	tio    *Tio         // associated IO request from the gateway
+	tio    *TioRr       // associated IO request from the gateway
 	state  bidStateEnum // bid state
 }
 
-func NewPutBid(io *Tio, begin time.Time, args ...interface{}) *PutBid {
+func NewPutBid(io *TioRr, begin time.Time, args ...interface{}) *PutBid {
 	// TODO: fixed-size chunk
 	end := begin.Add(configReplicast.durationBidWindow)
 	bid := &PutBid{
@@ -138,7 +138,7 @@ func (bid *PutBid) stringState() string {
 
 func (bid *PutBid) String() string {
 	var s string
-	if bid.tio.target != nil {
+	if bid.tio.GetTarget() != nil {
 		s = bid.stringState()
 	}
 	return fmt.Sprintf("[%s%s:%s]", s, bid.tio.String(), bid.win.String())
@@ -216,11 +216,11 @@ func (q *BidQueue) findBid(by bidFindEnum, val interface{}) (int, *PutBid) {
 		var cmpval interface{}
 		switch by {
 		case bidFindServer:
-			cmpval = q.pending[k].tio.target
+			cmpval = q.pending[k].tio.GetTarget()
 		case bidFindGateway:
-			cmpval = q.pending[k].tio.source
+			cmpval = q.pending[k].tio.GetSource()
 		case bidFindChunk:
-			cmpval = q.pending[k].tio.cid
+			cmpval = q.pending[k].tio.GetCid()
 		case bidFindState:
 			cmpval = q.pending[k].state
 		}
@@ -243,9 +243,9 @@ func (q *BidQueue) StringBids() string {
 // interface ServerBidQueueInterface
 //=====================================================================
 type ServerBidQueueInterface interface {
-	createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid
-	cancelBid(replytio *Tio)
-	acceptBid(replytio *Tio, computedbid *PutBid) (*PutBid, bidStateEnum)
+	createBid(tio *TioRr, diskdelay time.Duration, rwin *TimWin) *PutBid
+	cancelBid(replytio *TioRr)
+	acceptBid(replytio *TioRr, computedbid *PutBid) (*PutBid, bidStateEnum)
 	// BidQueue methods
 	findBid(by bidFindEnum, val interface{}) (int, *PutBid)
 	deleteBid(k int)
@@ -309,7 +309,7 @@ func NewServerRegBidQueue(ri RunnerInterface, size int) *ServerRegBidQueue {
 //
 // More comments inside.
 //
-func (q *ServerRegBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid {
+func (q *ServerRegBidQueue) createBid(tio *TioRr, diskdelay time.Duration, rwin *TimWin) *PutBid {
 	assert(rwin == nil)
 	q.expire()
 
@@ -391,10 +391,10 @@ func (q *ServerRegBidQueue) insertBid(bid *PutBid) {
 
 // cancelBid is called in the server's receive path, to handle
 // a non-accepted (canceled) bid
-func (q *ServerRegBidQueue) cancelBid(replytio *Tio) {
+func (q *ServerRegBidQueue) cancelBid(replytio *TioRr) {
 	q.expire()
 
-	cid := replytio.cid
+	cid := replytio.GetCid()
 	k, bid := q.findBid(bidFindChunk, cid)
 
 	assert(bid != nil, "failed to find bid,"+q.r.String()+","+replytio.String())
@@ -440,10 +440,10 @@ func (q *ServerRegBidQueue) cancelBid(replytio *Tio) {
 // the newly accepted bid while simultaneously trying to extend the time
 // window of its next canceled reservation, if exists.
 //
-func (q *ServerRegBidQueue) acceptBid(replytio *Tio, computedbid *PutBid) (*PutBid, bidStateEnum) {
+func (q *ServerRegBidQueue) acceptBid(replytio *TioRr, computedbid *PutBid) (*PutBid, bidStateEnum) {
 	q.expire()
 
-	cid := replytio.cid
+	cid := replytio.GetCid()
 	k, bid := q.findBid(bidFindChunk, cid)
 	assert(bid != nil)
 
@@ -588,7 +588,7 @@ func (q *ServerSparseBidQueue) newleft(diskdelay time.Duration, rwin *TimWin) ti
 	return newleft
 }
 
-func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid {
+func (q *ServerSparseBidQueue) createBid(tio *TioRr, diskdelay time.Duration, rwin *TimWin) *PutBid {
 	newleft := q.newleft(diskdelay, rwin)
 
 	// try to insert the new bid between existing ones
@@ -597,10 +597,10 @@ func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin
 		bid := q.pending[k]
 		// FIXME: remove asserts
 		assert(bid.tio != tio, bid.String()+","+tio.String()+","+bid.tio.String())
-		assert(bid.tio.source != tio.source, tio.String()+","+bid.String()+","+bid.tio.source.String())
+		assert(bid.tio.GetSource() != tio.GetSource(), tio.String()+","+bid.String()+","+bid.tio.GetSource().String())
 		if k < l-1 {
 			assert(bid.tio != q.pending[k+1].tio)
-			assert(bid.tio.source != q.pending[k+1].tio.source, tio.String()+","+q.StringBids()+","+bid.tio.source.String())
+			assert(bid.tio.GetSource() != q.pending[k+1].tio.GetSource(), tio.String()+","+q.StringBids()+","+bid.tio.GetSource().String())
 		}
 		if newleft.Before(bid.win.left) {
 			if bid.win.left.Sub(newleft) >= configReplicast.durationBidWindow+configReplicast.durationBidGap {
@@ -629,8 +629,8 @@ func (q *ServerSparseBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin
 	return bid
 }
 
-func (q *ServerSparseBidQueue) cancelBid(replytio *Tio) {
-	cid := replytio.cid
+func (q *ServerSparseBidQueue) cancelBid(replytio *TioRr) {
+	cid := replytio.GetCid()
 	k, bid := q.findBid(bidFindChunk, cid)
 
 	assert(bid != nil, "failed to find bid,"+q.r.String()+","+replytio.String())
@@ -641,8 +641,8 @@ func (q *ServerSparseBidQueue) cancelBid(replytio *Tio) {
 	log(LogV, "cancel-del", replytio.String(), bid.String())
 }
 
-func (q *ServerSparseBidQueue) acceptBid(replytio *Tio, mybid *PutBid) (*PutBid, bidStateEnum) {
-	cid := replytio.cid
+func (q *ServerSparseBidQueue) acceptBid(replytio *TioRr, mybid *PutBid) (*PutBid, bidStateEnum) {
+	cid := replytio.GetCid()
 	_, bid := q.findBid(bidFindChunk, cid)
 	assert(bid != nil, "WARNING: failed to find bid,"+q.r.String()+","+replytio.String())
 
@@ -697,7 +697,7 @@ func (q *ServerSparseDblrBidQueue) newleft(rwin *TimWin, crtime time.Time) time.
 // Allow double-booking if:
 // - diskdelay == 0, and
 // - the most recent (the latest) outstanding tentative bid has not been double-booked yet, and
-func (q *ServerSparseDblrBidQueue) createBid(tio *Tio, diskdelay time.Duration, rwin *TimWin) *PutBid {
+func (q *ServerSparseDblrBidQueue) createBid(tio *TioRr, diskdelay time.Duration, rwin *TimWin) *PutBid {
 	if diskdelay > 0 {
 		return q.ServerSparseBidQueue.createBid(tio, diskdelay, rwin)
 	}
@@ -736,8 +736,8 @@ func (q *ServerSparseDblrBidQueue) createBid(tio *Tio, diskdelay time.Duration, 
 }
 
 // override base cancelBid() in order to log successful double-bookings..
-func (q *ServerSparseDblrBidQueue) cancelBid(replytio *Tio) {
-	cid := replytio.cid
+func (q *ServerSparseDblrBidQueue) cancelBid(replytio *TioRr) {
+	cid := replytio.GetCid()
 	k, bid := q.findBid(bidFindChunk, cid)
 
 	assert(bid != nil, "failed to find bid,"+q.r.String()+","+replytio.String())
@@ -753,8 +753,8 @@ func (q *ServerSparseDblrBidQueue) cancelBid(replytio *Tio) {
 	q.deleteBid(k)
 }
 
-func (q *ServerSparseDblrBidQueue) acceptBid(replytio *Tio, mybid *PutBid) (*PutBid, bidStateEnum) {
-	cid := replytio.cid
+func (q *ServerSparseDblrBidQueue) acceptBid(replytio *TioRr, mybid *PutBid) (*PutBid, bidStateEnum) {
+	cid := replytio.GetCid()
 	k, bid := q.findBid(bidFindChunk, cid)
 	assert(bid != nil, "WARNING: failed to find bid,"+q.r.String()+","+replytio.String())
 	assert(bid.tio == replytio)
@@ -808,8 +808,8 @@ func NewGatewayBidQueue(ri RunnerInterface) *GatewayBidQueue {
 	return &GatewayBidQueue{BidQueue: *q}
 }
 
-func (q *GatewayBidQueue) receiveBid(tio *Tio, bid *PutBid) int {
-	assert(q.r == tio.source)
+func (q *GatewayBidQueue) receiveBid(tio *TioRr, bid *PutBid) int {
+	assert(q.r == tio.GetSource())
 	assert(len(q.pending) < configReplicast.sizeNgtGroup)
 
 	q.insertBid(bid)
@@ -884,8 +884,9 @@ func (q *GatewayBidQueue) findBestIntersection(chunk *Chunk) *PutBid {
 	assert(l == configStorage.numReplicas)
 	log(LogV, "gwy-best-bids", q.r.String(), chunk.String(), q.StringBids())
 
-	tioparent := q.pending[0].tio.parent
-	assert(tioparent.cid == q.pending[0].tio.cid)
+	tioint := q.pending[0].tio.GetParent()
+	tioparent := tioint.(*TioRr)
+	assert(tioparent.cid == q.pending[0].tio.GetCid())
 	computedbid := &PutBid{
 		crtime: Now,
 		win:    TimWin{begin, end},

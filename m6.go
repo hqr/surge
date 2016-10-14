@@ -94,12 +94,12 @@ func (r *gatewaySix) Run() {
 			log(LogV, "rxcallback", r.String(), dingev.String())
 			r.ding(dingev)
 		default:
-			tio := ev.GetTio()
+			tio := ev.GetTio().(*Tio)
 			log(LogV, "rxcallback", r.String(), tio.String())
 			tio.doStage(r)
-			if tio.done {
+			if tio.Done() {
 				log(LogV, "tio-done", tio.String())
-				atomic.AddInt64(&r.tiostats, int64(1))
+				atomic.AddInt64(&r.tiostats, 1)
 			}
 		}
 		return ev.GetSize()
@@ -132,18 +132,19 @@ func (r *gatewaySix) Run() {
 // Note that RateBucketAIMD is used here for the gateways flows..
 //
 func (r *gatewaySix) ding(dingev *UchDingAimdEvent) {
-	tio := dingev.GetTio()
-	assert(tio.source == r)
+	tio := dingev.GetTio().(*Tio)
+	assert(tio.GetSource() == r)
 
-	flow := tio.flow
-	assert(flow != nil, "FATAL: gwy-ding non-existing flow:"+tio.String()+":"+dingev.String())
-	if flow.offset >= flow.totalbytes {
+	flowint := tio.GetFlow()
+	assert(flowint != nil, "FATAL: gwy-ding non-existing flow:"+tio.String()+":"+dingev.String())
+	flow := flowint.(*Flow)
+	if flow.getoffset() >= flow.totalbytes {
 		return
 	}
 	log("gwy-got-dinged", flow.String())
-	rb := flow.rb.(*RateBucketAIMD)
+	rb := flow.GetRb().(*RateBucketAIMD)
 	rb.ding()
-	flow.tobandwidth = rb.getrate()
+	flow.setbw(rb.getrate())
 }
 
 //=========================
@@ -153,14 +154,15 @@ func (r *gatewaySix) M6putreqack(ev EventInterface) error {
 	tioevent := ev.(*ReplicaPutRequestAckEvent)
 	log(LogV, r.String(), "::M6putreqack()", tioevent.String())
 
-	tio := tioevent.GetTio()
-	assert(tio.source == r)
+	tio := tioevent.GetTio().(*Tio)
+	assert(tio.GetSource() == r)
 
-	flow := tio.flow
-	assert(flow != nil, "FATAL: M6putreqack non-existing flow:"+tio.String()+":"+tioevent.String())
-	assert(flow.cid == tio.cid)
+	flowint := tio.GetFlow()
+	assert(flowint != nil, "FATAL: M6putreqack non-existing flow:"+tio.String()+":"+tioevent.String())
+	flow := flowint.(*Flow)
+	assert(flow.GetCid() == tio.GetCid())
 
-	flow.tobandwidth = flow.rb.getrate()
+	flow.setbw(flow.GetRb().getrate())
 	return nil
 }
 
@@ -176,10 +178,10 @@ func (r *gatewaySix) newflow(t interface{}, args ...interface{}) *Flow {
 	repnum := args[0].(int)
 	assert(repnum == r.replica.num)
 
-	tio := r.putpipeline.NewTio(r, r.replica, tgt)
+	tio := NewTio(r, r.putpipeline, r.replica, tgt)
 	flow := NewFlow(r, r.chunk.cid, tgt, repnum, tio)
 
-	flow.tobandwidth = 0 // transmit upon further notice
+	flow.setbw(0) // transmit upon further notice
 	flow.totalbytes = r.chunk.sizeb
 
 	flow.rb = NewRateBucketAIMD(
@@ -211,8 +213,9 @@ func (r *serverSix) Run() {
 		case *ReplicaDataEvent:
 			dataev := ev.(*ReplicaDataEvent)
 			gwy := ev.GetSource()
-			flow := r.flowsfrom.get(gwy, true)
-			flow.tobandwidth = dataev.tobandwidth
+			flowint := r.flowsfrom.get(gwy, true)
+			flow := flowint.(*Flow)
+			flow.setbw(dataev.tobandwidth)
 			r.receiveReplicaData(dataev)
 		default:
 			tio := ev.GetTio()
@@ -269,9 +272,10 @@ func (r *serverSix) aimdCheckRxQueueFuture() {
 		}
 		if dingall {
 			gwy = ev.GetSource()
-			flow := r.flowsfrom.get(gwy, true)
+			flowint := r.flowsfrom.get(gwy, true)
+			flow := flowint.(*Flow)
 			r.dingOne(gwy)
-			flow.extension = flow.offset + frsize // prevoffset
+			flow.extension = flow.getoffset() + int64(frsize) // prevoffset
 			continue
 		}
 		t := ev.GetTriggerTime()
@@ -291,11 +295,12 @@ func (r *serverSix) aimdCheckRxQueueFuture() {
 		return
 	}
 	if linkoverage >= configAIMD.linkoverage {
-		flow := r.flowsfrom.get(gwy, true)
-		prevoffset := flow.extension.(int)
-		if flow.offset+3*frsize < flow.totalbytes && prevoffset+frsize < flow.offset {
+		flowint := r.flowsfrom.get(gwy, true)
+		flow := flowint.(*Flow)
+		prevoffset := flow.extension.(int64)
+		if flow.getoffset()+int64(3*frsize) < flow.totalbytes && prevoffset+int64(frsize) < flow.getoffset() {
 			r.dingOne(gwy)
-			flow.extension = flow.offset + frsize // prevoffset
+			flow.extension = flow.getoffset() + int64(frsize) // prevoffset
 		}
 	}
 }
@@ -307,16 +312,17 @@ func (r *serverSix) aimdCheckTotalBandwidth() {
 	dingall := false
 	frsize := configNetwork.sizeFrame
 
-	for gwy, flow := range fdir.flows {
-		if flow.totalbytes-flow.offset < 2*configNetwork.sizeFrame {
+	for gwy, flowint := range fdir.flows {
+		flow := flowint.(*Flow)
+		if flow.totalbytes-flow.getoffset() < int64(2*configNetwork.sizeFrame) {
 			continue
 		}
 		if dingall {
 			r.dingOne(gwy)
-			flow.extension = flow.offset + frsize // prevoffset
+			flow.extension = flow.getoffset() + int64(frsize) // prevoffset
 			continue
 		}
-		totalcurbw += flow.tobandwidth
+		totalcurbw += flow.getbw()
 		nflows++
 	}
 	if dingall || nflows <= 1 {
@@ -328,15 +334,16 @@ func (r *serverSix) aimdCheckTotalBandwidth() {
 		return
 	}
 	// do some dinging and keep computing the resulting bw while doing so
-	for gwy, flow := range fdir.flows {
-		if flow.totalbytes-flow.offset < 2*configNetwork.sizeFrame {
+	for gwy, flowint := range fdir.flows {
+		flow := flowint.(*Flow)
+		if flow.totalbytes-flow.getoffset() < int64(2*configNetwork.sizeFrame) {
 			continue
 		}
-		prevoffset := flow.extension.(int)
-		if flow.offset+3*frsize < flow.totalbytes && prevoffset+frsize < flow.offset {
+		prevoffset := flow.extension.(int64)
+		if flow.getoffset()+int64(3*frsize) < flow.totalbytes && prevoffset+int64(frsize) < flow.getoffset() {
 			r.dingOne(gwy)
-			flow.extension = flow.offset + frsize // prevoffset
-			totalfutbw -= flow.tobandwidth / int64(configAIMD.bwDiv)
+			flow.extension = flow.getoffset() + int64(frsize) // prevoffset
+			totalfutbw -= flow.getbw() / int64(configAIMD.bwDiv)
 			if totalfutbw <= configNetwork.linkbps {
 				break
 			}
@@ -345,10 +352,10 @@ func (r *serverSix) aimdCheckTotalBandwidth() {
 }
 
 func (r *serverSix) dingOne(gwy RunnerInterface) {
-	flow := r.flowsfrom.get(gwy, true)
-	dingev := newUchDingAimdEvent(r, gwy, flow, flow.tio)
+	flowint := r.flowsfrom.get(gwy, true)
+	dingev := newUchDingAimdEvent(r, gwy, flowint, flowint.GetTio())
 
-	log("srv-send-ding", flow.String())
+	log("srv-send-ding", flowint.String())
 	r.Send(dingev, SmethodWait)
 }
 
@@ -369,7 +376,7 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 	//new server's flow
 	tio := tioevent.GetTio()
 	flow := NewFlow(gwy, tioevent.cid, r, tioevent.num, tio)
-	flow.extension = int(0) // prevoffset
+	flow.extension = int64(0) // prevoffset
 	flow.totalbytes = tioevent.sizeb
 	r.flowsfrom.insertFlow(flow)
 
@@ -432,11 +439,11 @@ type UchDingAimdEvent struct {
 	num int // replica num
 }
 
-func newUchDingAimdEvent(srv RunnerInterface, gwy RunnerInterface, flow *Flow, tio *Tio) *UchDingAimdEvent {
+func newUchDingAimdEvent(srv RunnerInterface, gwy RunnerInterface, flow FlowInterface, tio TioInterface) *UchDingAimdEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(srv, at, gwy, tio, configNetwork.sizeControlPDU)
 
-	return &UchDingAimdEvent{zControlEvent{zEvent{*timedev}, flow.cid}, flow.repnum}
+	return &UchDingAimdEvent{zControlEvent{zEvent{*timedev}, flow.GetCid()}, flow.GetRepnum()}
 }
 
 func (e *UchDingAimdEvent) String() string {
