@@ -59,6 +59,7 @@ func (r *gatewayB) finishInit() {
 	w := 2 // FIXME: hardcoded
 	r.cmdwinsize = w
 
+	// preallocate, to avoid runtime allocations & GC
 	chunk := make([]*Chunk, w)
 	r.replica = make([]*PutReplica, w)
 	r.event = make(map[int64]*ReplicaPutRequestEvent, w)
@@ -101,6 +102,7 @@ func (r *gatewayB) Run() {
 				if !r.ack[tid] {
 					continue
 				}
+				// putreqev renewal
 				putreqev, ok := r.event[tid]
 				assert(ok)
 				putreqev.crtime = Now
@@ -108,7 +110,10 @@ func (r *gatewayB) Run() {
 				putreqev.tiostage = "WRITE-BEGIN" // force tio to execute this event's stage
 				r.ack[tid] = false
 
+				// tio renewal
 				tio.offset = 0
+				_, printid := uqrandom64(r.GetID())
+				tio.chunksid = printid
 				tio.next(putreqev, SmethodWait)
 				r.rb.use(int64(configNetwork.sizeControlPDU * 8))
 				r.flow.timeTxDone = Now.Add(configNetwork.durationControlPDU)
@@ -125,10 +130,16 @@ func (r *gatewayB) Run() {
 
 func (r *gatewayB) MBwriteack(ev EventInterface) error {
 	tio := ev.GetTio()
-	log("::MBwriteack", tio.String())
-	r.ack[tio.GetID()] = true
+	tid := tio.GetID()
+	r.ack[tid] = true
+
 	atomic.AddInt64(&r.replicastats, 1)
 	atomic.AddInt64(&r.chunkstats, 1)
+
+	putreqev, _ := r.event[tid]
+	chunklatency := Now.Sub(putreqev.GetCreationTime())
+	x := int64(chunklatency) / 1000
+	log("chunk-done", tio.String(), "latency", chunklatency, x)
 
 	return nil
 }
@@ -139,7 +150,8 @@ func (r *gatewayB) sendata() {
 	}
 	for _, tioint := range r.tios {
 		tio := tioint.(*TioOffset)
-		if tio.IsInit() {
+		tid := tio.GetID()
+		if r.ack[tid] {
 			continue
 		}
 		if tio.offset >= tio.totalbytes {

@@ -327,9 +327,9 @@ func (q *RxQueueSorted) processPendingEvents(rxcallback processEventCb) int {
 			if diff > config.timeIncStep && diff > time.Nanosecond*10 {
 				eventsPastDeadline++
 				if diff >= config.timeClusterTrip && diff >= time.Microsecond {
-					log(LogBoth, "WARNING: past trigger time", diff, eventsPastDeadline)
+					log(LogBoth, "WARNING: past trigger time", diff, ev.String(), eventsPastDeadline)
 				} else {
-					log("WARNING: past trigger time", diff, eventsPastDeadline)
+					log("WARNING: past trigger time", diff, ev.String(), eventsPastDeadline)
 				}
 			}
 		}
