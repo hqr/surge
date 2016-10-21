@@ -108,11 +108,14 @@ type ConfigNetwork struct {
 	netdurationFrame     time.Duration
 }
 
+// NOTE:
+// one way to get rid of "past deadline"/"past trigger" warnings (if any)
+// would be to bump sizeControlPDU up to, e.g. 9000
 var configNetwork = ConfigNetwork{
 	linkbps: 10 * 1000 * 1000 * 1000, // bits/sec
 
 	sizeFrame:      9000, // L2 frame size (bytes)
-	sizeControlPDU: 300,  // control PDU size (bytes); note that unicast use 100bytes instead
+	sizeControlPDU: 300,  // control PDU size (bytes); note that unicast use 100B default; see note above
 	overheadpct:    1,    // L2 + L3 + L4 + L5 + arp, etc. overhead (%)
 
 	transportType: transportTypeDefault, // transportType* const above

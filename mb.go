@@ -56,7 +56,7 @@ func (r *gatewayB) finishInit() {
 	target := allServers[r.GetID()-1]
 	r.flow = &FlowLong{from: r, to: target, rb: r.rb, tobandwidth: configNetwork.linkbps}
 
-	w := 2 // FIXME: hardcoded
+	w := 16 // FIXME: hardcoded
 	r.cmdwinsize = w
 
 	// preallocate, to avoid runtime allocations & GC
@@ -90,6 +90,9 @@ func (r *gatewayB) Run() {
 
 	go func() {
 		for r.state == RstateRunning {
+			r.receiveEnqueue()
+			r.processPendingEvents(r.rxcallbackB)
+
 			if r.rb.below(int64(configNetwork.sizeControlPDU * 8)) {
 				continue
 			}
@@ -119,8 +122,6 @@ func (r *gatewayB) Run() {
 				r.flow.timeTxDone = Now.Add(configNetwork.durationControlPDU)
 				break
 			}
-			r.receiveEnqueue()
-			r.processPendingEvents(r.rxcallbackB)
 
 			r.sendata()
 		}
