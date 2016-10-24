@@ -56,7 +56,7 @@ func (r *gatewayB) finishInit() {
 	target := allServers[r.GetID()-1]
 	r.flow = &FlowLong{from: r, to: target, rb: r.rb, tobandwidth: configNetwork.linkbps}
 
-	w := 16 // FIXME: hardcoded
+	w := configNetwork.cmdWindowSz
 	r.cmdwinsize = w
 
 	// preallocate, to avoid runtime allocations & GC

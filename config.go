@@ -104,6 +104,7 @@ type ConfigNetwork struct {
 	durationControlPDU   time.Duration
 	linkbpsControl       int64
 	linkbpsData          int64
+	cmdWindowSz          int   // cmd Window size in number of chunks.
 	netdurationDataChunk time.Duration
 	netdurationFrame     time.Duration
 }
@@ -117,6 +118,8 @@ var configNetwork = ConfigNetwork{
 	sizeFrame:      9000, // L2 frame size (bytes)
 	sizeControlPDU: 300,  // control PDU size (bytes); note that unicast use 100B default; see note above
 	overheadpct:    1,    // L2 + L3 + L4 + L5 + arp, etc. overhead (%)
+
+	cmdWindowSz:	2,
 
 	transportType: transportTypeDefault, // transportType* const above
 }
@@ -197,6 +200,8 @@ func init() {
 	linkbpsPtr := flag.Int64("linkbps", configNetwork.linkbps, "Network Link Bandwidth (bits/sec)")
 	transportPtr := flag.String("transport", configNetwork.transportType, "transport type: [default | unicast | multicast]")
 
+	cmdWindowSzPtr := flag.Int("cmdwindowsz", configNetwork.cmdWindowSz, "Command window size in unit of chunks")
+
 	groupsizePtr := flag.Int("groupsize", configReplicast.sizeNgtGroup, "group size: number of servers in a multicast group")
 
 	buildPtr := flag.String("build", build, "build ID (as in: 'git rev-parse'), or any user-defined string to be used as a logfile name suffix")
@@ -248,6 +253,7 @@ func init() {
 	configNetwork.sizeFrame = *l2framePtr
 	configNetwork.linkbps = *linkbpsPtr
 	configNetwork.transportType = *transportPtr
+	configNetwork.cmdWindowSz = *cmdWindowSzPtr
 
 	build = *buildPtr
 	//

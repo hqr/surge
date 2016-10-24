@@ -101,7 +101,8 @@ func configLog(partial bool) {
 		float64(configNetwork.linkbps)/gigb,
 		float64(configNetwork.linkbpsControl)/gigb,
 		float64(configNetwork.linkbpsData)/gigb)
-	s3 := fmt.Sprintf("\t    {sizeFrame:%vB sizeControlPDU:%vB}", configNetwork.sizeFrame, configNetwork.sizeControlPDU)
+	s3 := fmt.Sprintf("\t    {sizeFrame:%vB sizeControlPDU:%vB, cmdWindowSz:%v}", configNetwork.sizeFrame,
+                configNetwork.sizeControlPDU, configNetwork.cmdWindowSz)
 	s4 := fmt.Sprintf("\t    {durationControlPDU:%v netdurationFrame:%v netdurationDataChunk:%v}",
 		configNetwork.durationControlPDU, configNetwork.netdurationFrame, configNetwork.netdurationDataChunk)
 	s5 := fmt.Sprintf("\t    {sizeDataChunk:%vKB dskdurationDataChunk:%v diskbps:%.1fGbps}",
