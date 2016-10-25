@@ -49,9 +49,13 @@ func (d *Disk) handler() {
 	// time required to write one chunk.
 	sleepTime := configStorage.dskdurationDataChunk
 
+	nextWakeup := Now.Add(sleepTime)
 	for d.stopHandler == false {
 		// Sleep for one chunk write time
 		time.Sleep(sleepTime)
+		if nextWakeup.After(Now) {
+			continue
+		}
 
 		// Smulate the write of one chunk
 		d.qMutex.Lock()
@@ -61,6 +65,7 @@ func (d *Disk) handler() {
 			d.pendingwbytes = pendingwbytes
 		}
 		d.qMutex.Unlock()
+		nextWakeup = Now.Add(sleepTime)
 	}
 }
 
