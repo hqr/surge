@@ -207,12 +207,13 @@ func (r *serverB) rxcallbackB(ev EventInterface) int {
 
 func (r *serverB) Run() {
 	r.state = RstateRunning
-
 	go func() {
+		r.disk.Start()
 		for r.state == RstateRunning {
 			r.receiveEnqueue()
 			r.processPendingEvents(r.rxcallbackB)
 		}
+		r.disk.Stop()
 
 		r.closeTxChannels()
 	}()
