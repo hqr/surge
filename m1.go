@@ -20,11 +20,11 @@ type modelOne struct {
 }
 
 type gatewayOne struct {
-	RunnerBase
+	NodeRunnerBase
 }
 
 type serverOne struct {
-	RunnerBase
+	NodeRunnerBase
 }
 
 //
@@ -99,14 +99,14 @@ func (r *serverOne) Run() {
 // ModelInterface methods
 //
 //==================================================================
-func (m *modelOne) NewGateway(i int) RunnerInterface {
-	gwy := &gatewayOne{RunnerBase{id: i, strtype: GWY}}
+func (m *modelOne) NewGateway(i int) NodeRunnerInterface {
+	gwy := &gatewayOne{NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: GWY}}
 	gwy.init(config.numServers)
 	return gwy
 }
 
-func (m *modelOne) NewServer(i int) RunnerInterface {
-	srv := &serverOne{RunnerBase: RunnerBase{id: i, strtype: SRV}}
+func (m *modelOne) NewServer(i int) NodeRunnerInterface {
+	srv := &serverOne{NodeRunnerBase: NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}}
 	srv.init(config.numGateways)
 	return srv
 }

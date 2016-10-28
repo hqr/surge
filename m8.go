@@ -290,7 +290,7 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 	log("filtered-bids", r.bids.StringBids())
 	assert(l > 0 && l <= configStorage.numReplicas-rzvcnt, l)
 
-	incrzvgroup := &RzvGroup{servers: make([]RunnerInterface, l)}
+	incrzvgroup := &RzvGroup{servers: make([]NodeRunnerInterface, l)}
 
 	bid0 := r.bids.pending[0]
 	idletime := bid0.win.left.Sub(Now)
@@ -335,7 +335,7 @@ func (r *gatewayEight) M8receivebid(ev EventInterface) error {
 
 // construct unicast flows
 // gateway => (child tio, unicast flow) => target server
-func (r *gatewayEight) newflow(srv RunnerInterface, tio *TioRr) {
+func (r *gatewayEight) newflow(srv NodeRunnerInterface, tio *TioRr) {
 	flow := NewFlow(r.realobject(), r.chunk.cid, srv, tio)
 	assert(tio.GetFlow() == flow)
 	flow.rb = &DummyRateBucket{}
@@ -663,7 +663,7 @@ func (r *serverEight) M8acceptng(ev EventInterface) error {
 // modelEight interface methods
 //
 //==================================================================
-func (m *modelEight) NewGateway(i int) RunnerInterface {
+func (m *modelEight) NewGateway(i int) NodeRunnerInterface {
 	rgwy := m.newGatewayEight(i)
 	rgwy.rptr = rgwy // realobject
 	bids := NewGatewayBidQueue(rgwy)
@@ -684,7 +684,7 @@ func (m *modelEight) newGatewayEight(i int) *gatewayEight {
 	return rgwy
 }
 
-func (m *modelEight) NewServer(i int) RunnerInterface {
+func (m *modelEight) NewServer(i int) NodeRunnerInterface {
 	rsrv := m.newServerEight(i)
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)
 

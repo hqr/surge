@@ -48,9 +48,9 @@ var allNamesSorted []string
 var Now = time.Time{}
 var TimeNil = time.Time{}.Add(time.Hour * 10000)
 
-var allGateways []RunnerInterface
-var allServers []RunnerInterface
-var allNodes []RunnerInterface // a union of the previous two, for common ops
+var allGateways []NodeRunnerInterface
+var allServers []NodeRunnerInterface
+var allNodes []NodeRunnerInterface // a union of the previous two, for common ops
 
 var eventsPastDeadline = 0
 
@@ -64,9 +64,9 @@ func __init() {
 	allModels = make(map[ModelName]ModelInterface, maxModels)
 	allModelProps = make(map[ModelName]map[string]interface{}, maxModels)
 
-	allGateways = make([]RunnerInterface, config.numGateways)
-	allServers = make([]RunnerInterface, config.numServers)
-	allNodes = make([]RunnerInterface, config.numGateways+config.numServers)
+	allGateways = make([]NodeRunnerInterface, config.numGateways)
+	allServers = make([]NodeRunnerInterface, config.numServers)
+	allNodes = make([]NodeRunnerInterface, config.numGateways+config.numServers)
 
 	if config.srand == 0 {
 		rand.Seed(time.Now().UTC().UnixNano())
@@ -80,8 +80,8 @@ func __init() {
 // all models implement the following interfaces
 //
 type ModelInterface interface {
-	NewGateway(id int) RunnerInterface
-	NewServer(id int) RunnerInterface
+	NewGateway(id int) NodeRunnerInterface
+	NewServer(id int) NodeRunnerInterface
 	Configure() // model can optionally change global config and/or prepare to run
 }
 

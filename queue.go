@@ -18,10 +18,10 @@ const initialQueueSize int = 64
 //==================================================================
 type TxQueue struct {
 	fifo []EventInterface
-	r    RunnerInterface
+	r    NodeRunnerInterface
 }
 
-func NewTxQueue(ri RunnerInterface, size int) *TxQueue {
+func NewTxQueue(ri NodeRunnerInterface, size int) *TxQueue {
 	if size == 0 {
 		size = initialQueueSize
 	}
@@ -77,7 +77,7 @@ type RxQueue struct {
 	idlecnt          int64
 	busyidletick     time.Time
 	realpendingdepth int64
-	r                RunnerInterface
+	r                NodeRunnerInterface
 }
 
 type RxQueueSorted struct {
@@ -89,7 +89,7 @@ type RxQueueSorted struct {
 // c-tors
 //
 //==================================================================
-func NewRxQueue(ri RunnerInterface, size int) *RxQueue {
+func NewRxQueue(ri NodeRunnerInterface, size int) *RxQueue {
 	if size == 0 {
 		size = initialQueueSize
 	}
@@ -107,7 +107,7 @@ func NewRxQueue(ri RunnerInterface, size int) *RxQueue {
 	}
 }
 
-func NewRxQueueSorted(ri RunnerInterface, size int) *RxQueueSorted {
+func NewRxQueueSorted(ri NodeRunnerInterface, size int) *RxQueueSorted {
 	q := NewRxQueue(ri, size)
 	return &RxQueueSorted{*q}
 }
@@ -253,7 +253,7 @@ func (q *RxQueue) NowIsDone() bool {
 //
 // generic "event" and "rxchannelbusy" d-tors/stats
 //
-func (q *RxQueue) GetStats(reset bool) NodeStats {
+func (q *RxQueue) GetStats(reset bool) RunnerStats {
 	var b, i int64
 	s := make(map[string]int64, 8)
 	if reset {

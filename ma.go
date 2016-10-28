@@ -765,7 +765,7 @@ func (r *serverSevenProxy) autoAcceptOnBehalf(tioevent *McastChunkPutRequestEven
 // modelSevenPrx interface methods
 //
 //==================================================================
-func (m *modelSevenPrx) NewGateway(i int) RunnerInterface {
+func (m *modelSevenPrx) NewGateway(i int) NodeRunnerInterface {
 	gwy := NewGatewayMcast(i, mA.putpipeline)
 
 	// rate bucket: Tx, control bandwidth
@@ -781,7 +781,7 @@ func (m *modelSevenPrx) NewGateway(i int) RunnerInterface {
 
 // FIXME: add receive side *control* bw ratebucket to prevent
 //        Rx bursts beyond linkbpsControl
-func (m *modelSevenPrx) NewServer(i int) RunnerInterface {
+func (m *modelSevenPrx) NewServer(i int) NodeRunnerInterface {
 	// first, init only the regular to/from gateways' channels
 	srv := NewServerUchExtraChannels(i, mA.putpipeline)
 

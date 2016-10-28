@@ -217,7 +217,7 @@ func (r *gatewayFive) M5replicack(ev EventInterface) error {
 // flow factory interface impl - notice model-specific ratebucket
 //
 func (r *gatewayFive) newflow(t interface{}, args ...interface{}) *Flow {
-	tgt := t.(RunnerInterface)
+	tgt := t.(NodeRunnerInterface)
 	repnum := args[0].(int)
 	assert(repnum == r.replica.num)
 
@@ -284,7 +284,7 @@ func (r *serverFive) Run() {
 // note: two possible implementations: rerate() and rerateInverseProportional()
 //
 func (r *serverFive) rerate(nflows int) {
-	applyCallback := func(gwy RunnerInterface, flowint FlowInterface) {
+	applyCallback := func(gwy NodeRunnerInterface, flowint FlowInterface) {
 		flow := flowint.(*Flow)
 		bytesinflight := flow.getbw() * int64(config.timeClusterTrip) / int64(time.Second) / 8
 		if flow.totalbytes-flow.getoffset() <= int64(configNetwork.sizeFrame+int(bytesinflight)) {
@@ -371,7 +371,7 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 // modelFive interface methods
 //
 //==================================================================
-func (m *modelFive) NewGateway(i int) RunnerInterface {
+func (m *modelFive) NewGateway(i int) NodeRunnerInterface {
 	gwy := NewGatewayUch(i, m5.putpipeline)
 	gwy.rb = NewRateBucket(
 		configNetwork.maxratebucketval, // maxval
@@ -383,7 +383,7 @@ func (m *modelFive) NewGateway(i int) RunnerInterface {
 	return rgwy
 }
 
-func (m *modelFive) NewServer(i int) RunnerInterface {
+func (m *modelFive) NewServer(i int) NodeRunnerInterface {
 	srv := NewServerUchRegChannels(i, m5.putpipeline)
 
 	// receive side ratebucket use()-d directly by remote senders
@@ -414,7 +414,7 @@ type UchRateSetEvent struct {
 	num         int   // replica num
 }
 
-func newUchRateSetEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, flow FlowInterface, tio TioInterface, args ...interface{}) *UchRateSetEvent {
+func newUchRateSetEvent(srv NodeRunnerInterface, gwy NodeRunnerInterface, rate int64, flow FlowInterface, tio TioInterface, args ...interface{}) *UchRateSetEvent {
 	var diskdelay time.Duration
 	if len(args) > 0 {
 		diskdelay = args[0].(time.Duration)
@@ -435,7 +435,7 @@ type UchRateInitEvent struct {
 	UchRateSetEvent
 }
 
-func newUchRateInitEvent(srv RunnerInterface, gwy RunnerInterface, rate int64, flow FlowInterface, tio TioInterface, diskdelay time.Duration) *UchRateInitEvent {
+func newUchRateInitEvent(srv NodeRunnerInterface, gwy NodeRunnerInterface, rate int64, flow FlowInterface, tio TioInterface, diskdelay time.Duration) *UchRateInitEvent {
 	ev := newUchRateSetEvent(srv, gwy, rate, flow, tio, diskdelay)
 	return &UchRateInitEvent{*ev}
 }

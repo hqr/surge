@@ -105,7 +105,7 @@ func (r *gatewayNine) rejectBid(rjev *LateRejectBidEvent) {
 	log("gwy-post-reject-more", r.String(), x)
 }
 
-func (r *gatewayNine) remrzv(rzvgroup *RzvGroup, srv RunnerInterface) {
+func (r *gatewayNine) remrzv(rzvgroup *RzvGroup, srv NodeRunnerInterface) {
 	cnt := rzvgroup.getCount()
 	for k := 0; k < cnt; k++ {
 		if rzvgroup.servers[k] == srv {
@@ -181,7 +181,7 @@ func (r *serverNine) M9acceptng(ev EventInterface) error {
 // modelNine interface methods
 //
 //==================================================================
-func (m *modelNine) NewGateway(i int) RunnerInterface {
+func (m *modelNine) NewGateway(i int) NodeRunnerInterface {
 	gwy := m8.newGatewayEight(i)
 	rgwy := &gatewayNine{gatewayEight: *gwy}
 	rgwy.putpipeline = m9.putpipeline
@@ -192,7 +192,7 @@ func (m *modelNine) NewGateway(i int) RunnerInterface {
 	return rgwy
 }
 
-func (m *modelNine) NewServer(i int) RunnerInterface {
+func (m *modelNine) NewServer(i int) NodeRunnerInterface {
 	srv := m8.newServerEight(i)
 	srv.putpipeline = m9.putpipeline
 
@@ -219,7 +219,7 @@ type LateRejectBidEvent struct {
 	bid *PutBid
 }
 
-func newLateRejectBidEvent(srv RunnerInterface, bid *PutBid) *LateRejectBidEvent {
+func newLateRejectBidEvent(srv NodeRunnerInterface, bid *PutBid) *LateRejectBidEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(srv, at, bid.tio.GetSource(), bid.tio, configNetwork.sizeControlPDU)
 

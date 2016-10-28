@@ -519,7 +519,7 @@ func (r *serverSeven) M7acceptng(ev EventInterface) error {
 // modelSeven interface methods
 //
 //==================================================================
-func (m *modelSeven) NewGateway(i int) RunnerInterface {
+func (m *modelSeven) NewGateway(i int) NodeRunnerInterface {
 	gwy := NewGatewayMcast(i, m7.putpipeline)
 	gwy.rb = &DummyRateBucket{}
 
@@ -531,7 +531,7 @@ func (m *modelSeven) NewGateway(i int) RunnerInterface {
 	return rgwy
 }
 
-func (m *modelSeven) NewServer(i int) RunnerInterface {
+func (m *modelSeven) NewServer(i int) NodeRunnerInterface {
 	srv := NewServerUchRegChannels(i, m7.putpipeline)
 	rsrv := &serverSeven{ServerUch: *srv}
 	rsrv.ServerUch.rptr = rsrv

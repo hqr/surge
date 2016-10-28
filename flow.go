@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-type applyCallback func(gwy RunnerInterface, flow FlowInterface)
+type applyCallback func(gwy NodeRunnerInterface, flow FlowInterface)
 
 //========================================================================
 //
@@ -38,8 +38,8 @@ type FlowInterface interface {
 //
 //========================================================================
 type Flow struct {
-	from        RunnerInterface
-	to          RunnerInterface
+	from        NodeRunnerInterface
+	to          NodeRunnerInterface
 	togroup     GroupInterface
 	cid         int64
 	sid         int64
@@ -56,7 +56,7 @@ type Flow struct {
 //========================================================================
 // c-tors and helpers
 //========================================================================
-func NewFlow(f RunnerInterface, chunkid int64, args ...interface{}) *Flow {
+func NewFlow(f NodeRunnerInterface, chunkid int64, args ...interface{}) *Flow {
 	printid := uqrand(chunkid)
 	flow := &Flow{
 		from: f,
@@ -79,8 +79,8 @@ func (flow *Flow) setOneArg(a interface{}) {
 		flow.repnum = a.(int)
 	case TioInterface:
 		flow.tio = a.(TioInterface)
-	case RunnerInterface:
-		flow.to = a.(RunnerInterface)
+	case NodeRunnerInterface:
+		flow.to = a.(NodeRunnerInterface)
 	case GroupInterface:
 		flow.togroup = a.(GroupInterface)
 	default:
@@ -133,8 +133,8 @@ func (flow *Flow) bytesToWrite(ev *ReplicaDataEvent) int {
 //
 //========================================================================
 type FlowLong struct {
-	from        RunnerInterface
-	to          RunnerInterface
+	from        NodeRunnerInterface
+	to          NodeRunnerInterface
 	rb          RateBucketInterface // refill at the tobandwidth rate
 	tobandwidth int64               // bits/sec
 	offset      int64               // transmitted bytes
@@ -175,12 +175,12 @@ func (flow *FlowLong) bytesToWrite(ev *ReplicaDataEvent) int { return 0 }
 //
 //========================================================================
 type FlowDir struct {
-	node  RunnerInterface
-	flows map[RunnerInterface]FlowInterface
+	node  NodeRunnerInterface
+	flows map[NodeRunnerInterface]FlowInterface
 }
 
-func NewFlowDir(r RunnerInterface, num int) *FlowDir {
-	flows := make(map[RunnerInterface]FlowInterface, num)
+func NewFlowDir(r NodeRunnerInterface, num int) *FlowDir {
+	flows := make(map[NodeRunnerInterface]FlowInterface, num)
 	return &FlowDir{r, flows}
 }
 
@@ -194,7 +194,7 @@ func (fdir *FlowDir) insertFlow(flow *Flow) {
 	}
 }
 
-func (fdir *FlowDir) deleteFlow(r RunnerInterface) {
+func (fdir *FlowDir) deleteFlow(r NodeRunnerInterface) {
 	delete(fdir.flows, r)
 }
 
@@ -202,7 +202,7 @@ func (fdir *FlowDir) count() int {
 	return len(fdir.flows)
 }
 
-func (fdir *FlowDir) get(r RunnerInterface, mustexist bool) FlowInterface {
+func (fdir *FlowDir) get(r NodeRunnerInterface, mustexist bool) FlowInterface {
 	flow, ok := fdir.flows[r]
 	if ok {
 		return flow

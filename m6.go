@@ -174,7 +174,7 @@ func (r *gatewaySix) M6replicack(ev EventInterface) error {
 // flow factory interface impl - notice model-specific ratebucket
 //
 func (r *gatewaySix) newflow(t interface{}, args ...interface{}) *Flow {
-	tgt := t.(RunnerInterface)
+	tgt := t.(NodeRunnerInterface)
 	repnum := args[0].(int)
 	assert(repnum == r.replica.num)
 
@@ -252,7 +252,7 @@ func (r *serverSix) Run() {
 }
 
 func (r *serverSix) aimdCheckRxQueueFuture() {
-	var gwy RunnerInterface
+	var gwy NodeRunnerInterface
 	linktime := TimeNil
 	linkoverage := 0
 	dingall := false
@@ -351,7 +351,7 @@ func (r *serverSix) aimdCheckTotalBandwidth() {
 	}
 }
 
-func (r *serverSix) dingOne(gwy RunnerInterface) {
+func (r *serverSix) dingOne(gwy NodeRunnerInterface) {
 	flowint := r.flowsfrom.get(gwy, true)
 	dingev := newUchDingAimdEvent(r, gwy, flowint, flowint.GetTio())
 
@@ -397,7 +397,7 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 // modelSix interface methods
 //
 //==================================================================
-func (m *modelSix) NewGateway(i int) RunnerInterface {
+func (m *modelSix) NewGateway(i int) NodeRunnerInterface {
 	gwy := NewGatewayUch(i, m6.putpipeline)
 	gwy.rb = NewRateBucket(
 		configNetwork.maxratebucketval, // maxval
@@ -409,7 +409,7 @@ func (m *modelSix) NewGateway(i int) RunnerInterface {
 	return rgwy
 }
 
-func (m *modelSix) NewServer(i int) RunnerInterface {
+func (m *modelSix) NewServer(i int) NodeRunnerInterface {
 	srv := NewServerUchRegChannels(i, m6.putpipeline)
 
 	// receive side ratebucket use()-d directly by remote senders
@@ -439,7 +439,7 @@ type UchDingAimdEvent struct {
 	num int // replica num
 }
 
-func newUchDingAimdEvent(srv RunnerInterface, gwy RunnerInterface, flow FlowInterface, tio TioInterface) *UchDingAimdEvent {
+func newUchDingAimdEvent(srv NodeRunnerInterface, gwy NodeRunnerInterface, flow FlowInterface, tio TioInterface) *UchDingAimdEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(srv, at, gwy, tio, configNetwork.sizeControlPDU)
 

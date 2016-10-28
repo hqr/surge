@@ -20,11 +20,11 @@ type modelTwoDotOne struct {
 }
 
 type gatewayTwoDotOne struct {
-	RunnerBase
+	NodeRunnerBase
 }
 
 type serverTwoDotOne struct {
-	RunnerBase
+	NodeRunnerBase
 }
 
 //
@@ -58,7 +58,7 @@ func (r *gatewayTwoDotOne) Run() {
 		return 0
 	}
 
-	go m21.run(&r.RunnerBase, rxcallback)
+	go m21.run(&r.NodeRunnerBase, rxcallback)
 }
 
 //==================================================================
@@ -76,7 +76,7 @@ func (r *serverTwoDotOne) Run() {
 		return 0
 	}
 
-	go m21.run(&r.RunnerBase, rxcallback)
+	go m21.run(&r.NodeRunnerBase, rxcallback)
 }
 
 //==================================================================
@@ -87,14 +87,14 @@ func (r *serverTwoDotOne) Run() {
 //
 // modelTwoDotOne interface methods
 //
-func (m *modelTwoDotOne) NewGateway(i int) RunnerInterface {
-	gwy := &gatewayTwoDotOne{RunnerBase{id: i, strtype: GWY}}
+func (m *modelTwoDotOne) NewGateway(i int) NodeRunnerInterface {
+	gwy := &gatewayTwoDotOne{NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: GWY}}
 	gwy.init(config.numServers)
 	return gwy
 }
 
-func (m *modelTwoDotOne) NewServer(i int) RunnerInterface {
-	srv := &serverTwoDotOne{RunnerBase: RunnerBase{id: i, strtype: SRV}}
+func (m *modelTwoDotOne) NewServer(i int) NodeRunnerInterface {
+	srv := &serverTwoDotOne{NodeRunnerBase: NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}}
 	srv.init(config.numGateways)
 	return srv
 }
@@ -103,7 +103,7 @@ func (m *modelTwoDotOne) NewServer(i int) RunnerInterface {
 // modelTwoDotOne private methods: common Gateway/Server send/recv and run()
 //
 
-func (m *modelTwoDotOne) run(rb *RunnerBase, rxcallback processEventCb) {
+func (m *modelTwoDotOne) run(rb *NodeRunnerBase, rxcallback processEventCb) {
 	lastRefill := Now
 	leakyBucket := float64(MaxBucket)
 
@@ -129,12 +129,12 @@ func (m *modelTwoDotOne) run(rb *RunnerBase, rxcallback processEventCb) {
 	rb.closeTxChannels()
 }
 
-func (m *modelTwoDotOne) recv(r *RunnerBase, rxcallback processEventCb) {
+func (m *modelTwoDotOne) recv(r *NodeRunnerBase, rxcallback processEventCb) {
 	r.receiveEnqueue()
 	r.processPendingEvents(rxcallback)
 }
 
-func (m *modelTwoDotOne) send(r *RunnerBase) bool {
+func (m *modelTwoDotOne) send(r *NodeRunnerBase) bool {
 	r1 := r.selectRandomPeer(64)
 	r2 := r.selectRandomPeer(64)
 	if r1 == nil || r2 == nil {

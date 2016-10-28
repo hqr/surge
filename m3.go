@@ -23,12 +23,12 @@ type modelThree struct {
 }
 
 type gatewayThree struct {
-	RunnerBase
+	NodeRunnerBase
 	waitingResponse []int64
 }
 
 type serverThree struct {
-	RunnerBase
+	NodeRunnerBase
 }
 
 type TimedUniqueEvent struct {
@@ -36,7 +36,7 @@ type TimedUniqueEvent struct {
 	id int64
 }
 
-func newTimedUniqueEvent(src RunnerInterface, when time.Duration, tgt RunnerInterface, id int64) *TimedUniqueEvent {
+func newTimedUniqueEvent(src NodeRunnerInterface, when time.Duration, tgt NodeRunnerInterface, id int64) *TimedUniqueEvent {
 	ev := newTimedAnyEvent(src, when, tgt)
 	if id == 0 {
 		id, _ = uqrandom64(src.GetID())
@@ -112,7 +112,7 @@ func (r *gatewayThree) Run() {
 	}()
 }
 
-func (r *gatewayThree) selectTarget() RunnerInterface {
+func (r *gatewayThree) selectTarget() NodeRunnerInterface {
 	numPeers := cap(r.eps) - 1
 	assert(numPeers > 1)
 	id := rand.Intn(numPeers) + 1
@@ -175,9 +175,9 @@ func (r *serverThree) Run() {
 //
 // modelThree interface methods
 //
-func (m *modelThree) NewGateway(i int) RunnerInterface {
+func (m *modelThree) NewGateway(i int) NodeRunnerInterface {
 	gwy := &gatewayThree{
-		RunnerBase:      RunnerBase{id: i, strtype: GWY},
+		NodeRunnerBase:      NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: GWY},
 		waitingResponse: nil,
 	}
 	gwy.init(config.numServers)
@@ -186,8 +186,8 @@ func (m *modelThree) NewGateway(i int) RunnerInterface {
 	return gwy
 }
 
-func (m *modelThree) NewServer(i int) RunnerInterface {
-	srv := &serverThree{RunnerBase: RunnerBase{id: i, strtype: SRV}}
+func (m *modelThree) NewServer(i int) NodeRunnerInterface {
+	srv := &serverThree{NodeRunnerBase: NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}}
 	srv.init(config.numGateways)
 	return srv
 }

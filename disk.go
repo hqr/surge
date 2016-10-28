@@ -13,29 +13,46 @@ const (
 	DqdChunks
 )
 
+var idCounter int
 //==================================================================
 //
 // type: Disk
 //
 //==================================================================
-type Disk struct {
-	node       RunnerInterface
-	MBps       int
-	reserved   int
-	lastIOdone time.Time
-	writes     int64
-	reads      int64
-	writebytes int64
-	readbytes  int64
+
+// DiskRunnerBase implementing DiskRunnerInterface
+// It is same as RunnerBase for now. More methods
+// will be added as the simulation evolves.
+type DiskRunnerBase struct {
+	RunnerBase
 }
 
-func NewDisk(r RunnerInterface, mbps int) *Disk {
-	d := &Disk{node: r, MBps: mbps, reserved: 0, lastIOdone: Now}
+type Disk struct {
+	DiskRunnerBase
+	node           NodeRunnerInterface
+	MBps           int
+	reserved       int
+	lastIOdone     time.Time
+	writes         int64
+	reads          int64
+	writebytes     int64
+	readbytes      int64
+}
+
+func NewDisk(r NodeRunnerInterface, mbps int) *Disk {
+	idCounter++
+	d := &Disk{
+		DiskRunnerBase: DiskRunnerBase{RunnerBase{id: idCounter}},
+		node: r, MBps: mbps, reserved: 0, lastIOdone: Now}
 	return d
 }
 
 func (d *Disk) String() string {
 	return fmt.Sprintf("disk-%s,%d,%d,%d,%d", d.node.String(), d.writes, d.reads, d.writebytes, d.readbytes)
+}
+
+// Dummy Run function to satisfy DiskRunnerInterface
+func (d *Disk) Run() {
 }
 
 func (d *Disk) scheduleWrite(sizebytes int) time.Duration {

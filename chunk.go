@@ -14,12 +14,12 @@ import (
 type Chunk struct {
 	cid     int64
 	sid     int64 // short id
-	gateway RunnerInterface
+	gateway NodeRunnerInterface
 	crtime  time.Time // creation time
 	sizeb   int64     // bytes
 }
 
-func NewChunk(gwy RunnerInterface, sizebytes int) *Chunk {
+func NewChunk(gwy NodeRunnerInterface, sizebytes int) *Chunk {
 	uqid, printid := uqrandom64(gwy.GetID())
 	return &Chunk{cid: uqid, sid: printid, gateway: gwy, crtime: Now, sizeb: int64(sizebytes)}
 }

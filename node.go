@@ -47,21 +47,21 @@ const (
 //
 //===============================================================
 type GatewayCommon struct {
-	RunnerBase
+	NodeRunnerBase
 	ffi          FlowFactoryInterface
 	tiostats     int64
 	chunkstats   int64
 	replicastats int64
 	chunk        *Chunk
 	rb           RateBucketInterface
-	rptr         RunnerInterface // real object
+	rptr         NodeRunnerInterface // real object
 	putpipeline  *Pipeline
 	numreplicas  int
 }
 
 func NewGatewayCommon(i int, p *Pipeline) *GatewayCommon {
-	rbase := RunnerBase{id: i, strtype: GWY}
-	gwy := &GatewayCommon{RunnerBase: rbase}
+	rbase := NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: GWY}
+	gwy := &GatewayCommon{NodeRunnerBase: rbase}
 
 	gwy.putpipeline = p
 	gwy.init(config.numServers)
@@ -72,7 +72,7 @@ func NewGatewayCommon(i int, p *Pipeline) *GatewayCommon {
 
 // realobject stores to pointer the the gateway's instance that embeds this
 // instance of GatewayUch
-func (r *GatewayCommon) realobject() RunnerInterface {
+func (r *GatewayCommon) realobject() NodeRunnerInterface {
 	return r.rptr
 }
 
@@ -99,14 +99,14 @@ func (r *GatewayCommon) replicackCommon(tioevent *ReplicaPutAckEvent) int {
 //
 // stats
 //
-// GetStats implements the corresponding RunnerInterface method for the
+// GetStats implements the corresponding NodeRunnerInterface method for the
 // GatewayUch common counters. Some of them are inc-ed inside this module,
 // others - elsewhere, for instance in the concrete gateway's instance
 // that embeds this GatewayUch
 // The caller (such as, e.g., stats.go) will typically collect all the
 // atomic counters and reset them to zeros to collect new values with the
 // next iteration..
-func (r *GatewayCommon) GetStats(reset bool) NodeStats {
+func (r *GatewayCommon) GetStats(reset bool) RunnerStats {
 	var s = make(map[string]int64, 8)
 	if reset {
 		s["txbytes"] = atomic.SwapInt64(&r.txbytestats, 0)
@@ -133,22 +133,22 @@ func (r *GatewayCommon) GetStats(reset bool) NodeStats {
 //===============================================================
 type GatewayUch struct {
 	GatewayCommon
-	chunktargets []RunnerInterface
+	chunktargets []NodeRunnerInterface
 	replica      *PutReplica
 }
 
-// NewGatewayUch constructs GatewayUch. The latter embeds RunnerBase and must in turn
+// NewGatewayUch constructs GatewayUch. The latter embeds NodeRunnerBase and must in turn
 // be embedded by a concrete and ultimate modeled gateway.
 func NewGatewayUch(i int, p *Pipeline) *GatewayUch {
 	g := NewGatewayCommon(i, p)
 	gwy := &GatewayUch{GatewayCommon: *g}
-	gwy.chunktargets = make([]RunnerInterface, configStorage.numReplicas)
+	gwy.chunktargets = make([]NodeRunnerInterface, configStorage.numReplicas)
 	return gwy
 }
 
 // selectTargets randomly selects numReplicas targets for a new chunk
 func (r *GatewayUch) selectTargets() {
-	arr := make([]RunnerInterface, configStorage.numReplicas)
+	arr := make([]NodeRunnerInterface, configStorage.numReplicas)
 	numPeers := cap(r.eps) - 1
 	idx := 0
 	cnt := 0
@@ -320,7 +320,7 @@ type GatewayMcast struct {
 
 func NewGatewayMcast(i int, p *Pipeline) *GatewayMcast {
 	gwy := NewGatewayCommon(i, p)
-	srvrs := make([]RunnerInterface, configStorage.numReplicas)
+	srvrs := make([]NodeRunnerInterface, configStorage.numReplicas)
 	return &GatewayMcast{GatewayCommon: *gwy, rzvgroup: &RzvGroup{servers: srvrs}}
 }
 
@@ -366,7 +366,7 @@ func (r *GatewayMcast) NowIsDone() bool {
 	if atomic.LoadInt64(&r.NowMcasting) > 0 {
 		return false
 	}
-	return r.RunnerBase.NowIsDone()
+	return r.NodeRunnerBase.NowIsDone()
 }
 
 //===============================================================
@@ -375,27 +375,27 @@ func (r *GatewayMcast) NowIsDone() bool {
 //
 //===============================================================
 type ServerUch struct {
-	RunnerBase
+	NodeRunnerBase
 	flowsfrom      *FlowDir
 	disk           *Disk
-	rptr           RunnerInterface // real object
-	putpipeline    *Pipeline       // tio pipeline
-	rxbusydata     int64           // time.Duration receive-link busy for data
-	rxbusydatactrl int64           // time.Duration receive-link busy for data+control
-	diskbusy       int64           // time.Duration (disk)
+	rptr           NodeRunnerInterface // real object
+	putpipeline    *Pipeline           // tio pipeline
+	rxbusydata     int64               // time.Duration receive-link busy for data
+	rxbusydatactrl int64               // time.Duration receive-link busy for data+control
+	diskbusy       int64               // time.Duration (disk)
 	timeResetStats time.Time
 	rb             RateBucketInterface
 }
 
 // NewServerUchRegChannels constructs ServerUch and in itializes it
 // with Tx and Rx channels to/from all model's gateways.
-// ServerUch embeds RunnerBase and must in turn be embedded
+// ServerUch embeds NodeRunnerBase and must in turn be embedded
 //
 // (compare with NewServerUchExtraChannels)
 //
 func NewServerUchRegChannels(i int, p *Pipeline) *ServerUch {
-	rbase := RunnerBase{id: i, strtype: SRV}
-	srv := &ServerUch{RunnerBase: rbase}
+	rbase := NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}
+	srv := &ServerUch{NodeRunnerBase: rbase}
 
 	srv.putpipeline = p
 	//
@@ -411,8 +411,8 @@ func NewServerUchRegChannels(i int, p *Pipeline) *ServerUch {
 
 // (compare with NewServerUchRegChannels)
 func NewServerUchExtraChannels(i int, p *Pipeline) *ServerUch {
-	rbase := RunnerBase{id: i, strtype: SRV}
-	srv := &ServerUch{RunnerBase: rbase}
+	rbase := NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}
+	srv := &ServerUch{NodeRunnerBase: rbase}
 
 	srv.putpipeline = p
 	//
@@ -427,7 +427,11 @@ func NewServerUchExtraChannels(i int, p *Pipeline) *ServerUch {
 	return srv
 }
 
-func (r *ServerUch) realobject() RunnerInterface {
+func (r *ServerUch) NowIsDone() bool {
+	return r.disk.NowIsDone() && r.NodeRunnerBase.NowIsDone()
+}
+
+func (r *ServerUch) realobject() NodeRunnerInterface {
 	return r.rptr
 }
 
@@ -502,14 +506,14 @@ func (r *ServerUch) receiveReplicaData(ev *ReplicaDataEvent) int {
 //
 // stats
 //
-// GetStats implements the corresponding RunnerInterface method for the
+// GetStats implements the corresponding NodeRunnerInterface method for the
 // ServerUch common counters. Some of them may be inc-ed inside this module,
 // others - elsewhere, for instance in the concrete server's instance
 // that embeds this GatewayUch
 // The caller (such as, e.g., stats.go) will typically collect all the
 // atomic counters and reset them to zeros to collect new values with the
 // next iteration..
-func (r *ServerUch) GetStats(reset bool) NodeStats {
+func (r *ServerUch) GetStats(reset bool) RunnerStats {
 	var a, d, w int64
 	var s = make(map[string]int64, 8)
 	elapsed := int64(Now.Sub(time.Time{})) // run time
@@ -575,8 +579,8 @@ type GroupInterface interface {
 	getID() int // CH, random selection
 	getID64() int64
 	getCount() int
-	hasmember(r RunnerInterface) bool
-	getmembers() []RunnerInterface
+	hasmember(r NodeRunnerInterface) bool
+	getmembers() []NodeRunnerInterface
 
 	// NOTE: cloning based group send not currently used
 	SendGroup(ev EventInterface, how SendMethodEnum, cloner EventClonerInterface) bool
@@ -609,7 +613,7 @@ func (g *NgtGroup) getCount() int {
 	return configReplicast.sizeNgtGroup
 }
 
-func (g *NgtGroup) hasmember(r RunnerInterface) bool {
+func (g *NgtGroup) hasmember(r NodeRunnerInterface) bool {
 	firstidx := (g.id - 1) * configReplicast.sizeNgtGroup
 	for idx := 0; idx < configReplicast.sizeNgtGroup; idx++ {
 		srv := allServers[firstidx+idx]
@@ -620,7 +624,7 @@ func (g *NgtGroup) hasmember(r RunnerInterface) bool {
 	return false
 }
 
-func (g *NgtGroup) getmembers() []RunnerInterface {
+func (g *NgtGroup) getmembers() []NodeRunnerInterface {
 	firstidx := (g.id - 1) * configReplicast.sizeNgtGroup
 	return allServers[firstidx : firstidx+configReplicast.sizeNgtGroup]
 }
@@ -652,7 +656,7 @@ func (g *NgtGroup) String() string {
 //
 type RzvGroup struct {
 	id          int64
-	servers     []RunnerInterface
+	servers     []NodeRunnerInterface
 	ngtid       int
 	incremental bool
 }
@@ -690,7 +694,7 @@ func (g *RzvGroup) getCount() int {
 	return cnt
 }
 
-func (g *RzvGroup) hasmember(r RunnerInterface) bool {
+func (g *RzvGroup) hasmember(r NodeRunnerInterface) bool {
 	for _, srv := range g.servers {
 		if srv != nil && r == srv {
 			return true
@@ -699,7 +703,7 @@ func (g *RzvGroup) hasmember(r RunnerInterface) bool {
 	return false
 }
 
-func (g *RzvGroup) getmembers() []RunnerInterface {
+func (g *RzvGroup) getmembers() []NodeRunnerInterface {
 	return g.servers
 }
 

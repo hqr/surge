@@ -149,11 +149,11 @@ func (bid *PutBid) String() string {
 //
 type BidQueue struct {
 	pending       []*PutBid
-	r             RunnerInterface
+	r             NodeRunnerInterface
 	sortBy_crleft bool
 }
 
-func NewBidQueue(ri RunnerInterface, size int) *BidQueue {
+func NewBidQueue(ri NodeRunnerInterface, size int) *BidQueue {
 	if size == 0 {
 		size = initialBidQueueSize
 	}
@@ -282,7 +282,7 @@ type ServerRegBidQueue struct {
 	canceled int
 }
 
-func NewServerRegBidQueue(ri RunnerInterface, size int) *ServerRegBidQueue {
+func NewServerRegBidQueue(ri NodeRunnerInterface, size int) *ServerRegBidQueue {
 	q := NewBidQueue(ri, size)
 	return &ServerRegBidQueue{*q, 0}
 }
@@ -562,7 +562,7 @@ type ServerSparseBidQueue struct {
 	BidQueue
 }
 
-func NewServerSparseBidQueue(ri RunnerInterface, size int) *ServerSparseBidQueue {
+func NewServerSparseBidQueue(ri NodeRunnerInterface, size int) *ServerSparseBidQueue {
 	q := NewBidQueue(ri, size)
 	return &ServerSparseBidQueue{*q}
 }
@@ -665,7 +665,7 @@ type ServerSparseDblrBidQueue struct {
 	ServerSparseBidQueue
 }
 
-func NewServerSparseDblrBidQueue(ri RunnerInterface, size int) *ServerSparseDblrBidQueue {
+func NewServerSparseDblrBidQueue(ri NodeRunnerInterface, size int) *ServerSparseDblrBidQueue {
 	q := NewServerSparseBidQueue(ri, size)
 	q.sortBy_crleft = true
 	return &ServerSparseDblrBidQueue{*q}
@@ -802,7 +802,7 @@ type GatewayBidQueue struct {
 	BidQueue
 }
 
-func NewGatewayBidQueue(ri RunnerInterface) *GatewayBidQueue {
+func NewGatewayBidQueue(ri NodeRunnerInterface) *GatewayBidQueue {
 	size := configReplicast.sizeNgtGroup
 	q := NewBidQueue(ri, size)
 	return &GatewayBidQueue{BidQueue: *q}
@@ -1012,7 +1012,7 @@ func (q *GatewayBidQueue) findNextAdjacent(endprev time.Time, maxgap time.Durati
 	return nil
 }
 
-func (q *GatewayBidQueue) rejectBid(bid *PutBid, srv RunnerInterface) {
+func (q *GatewayBidQueue) rejectBid(bid *PutBid, srv NodeRunnerInterface) {
 	k, b := q.findBid(bidFindServer, srv)
 	if b == nil {
 		log("enough-bids stage: cleanup must be already done", q.r.String(), bid.String())

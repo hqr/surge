@@ -18,11 +18,11 @@ type modelTwo struct {
 }
 
 type gatewayTwo struct {
-	RunnerBase
+	NodeRunnerBase
 }
 
 type serverTwo struct {
-	RunnerBase
+	NodeRunnerBase
 }
 
 //
@@ -56,7 +56,7 @@ func (r *gatewayTwo) Run() {
 		return 0
 	}
 
-	go m2.run(&r.RunnerBase, rxcallback)
+	go m2.run(&r.NodeRunnerBase, rxcallback)
 }
 
 //==================================================================
@@ -74,7 +74,7 @@ func (r *serverTwo) Run() {
 		return 0
 	}
 
-	go m2.run(&r.RunnerBase, rxcallback)
+	go m2.run(&r.NodeRunnerBase, rxcallback)
 }
 
 //==================================================================
@@ -85,14 +85,14 @@ func (r *serverTwo) Run() {
 //
 // modelTwo interface methods
 //
-func (m *modelTwo) NewGateway(i int) RunnerInterface {
-	gwy := &gatewayTwo{RunnerBase{id: i, strtype: GWY}}
+func (m *modelTwo) NewGateway(i int) NodeRunnerInterface {
+	gwy := &gatewayTwo{NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: GWY}}
 	gwy.init(config.numServers)
 	return gwy
 }
 
-func (m *modelTwo) NewServer(i int) RunnerInterface {
-	srv := &serverTwo{RunnerBase: RunnerBase{id: i, strtype: SRV}}
+func (m *modelTwo) NewServer(i int) NodeRunnerInterface {
+	srv := &serverTwo{NodeRunnerBase: NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}}
 	srv.init(config.numGateways)
 	return srv
 }
@@ -100,7 +100,7 @@ func (m *modelTwo) NewServer(i int) RunnerInterface {
 //
 // modelTwo private methods: common Gateway/Server send/recv and run()
 //
-func (m *modelTwo) run(rb *RunnerBase, rxcallback processEventCb) {
+func (m *modelTwo) run(rb *NodeRunnerBase, rxcallback processEventCb) {
 	for rb.state == RstateRunning {
 		m2.recv(rb, rxcallback)
 		if !m2.send(rb) {
@@ -116,13 +116,13 @@ func (m *modelTwo) run(rb *RunnerBase, rxcallback processEventCb) {
 	rb.closeTxChannels()
 }
 
-func (m *modelTwo) recv(r *RunnerBase, rxcallback processEventCb) {
+func (m *modelTwo) recv(r *NodeRunnerBase, rxcallback processEventCb) {
 	r.receiveEnqueue()
 	time.Sleep(time.Microsecond)
 	r.processPendingEvents(rxcallback)
 }
 
-func (m *modelTwo) send(r *RunnerBase) bool {
+func (m *modelTwo) send(r *NodeRunnerBase) bool {
 	r1 := r.selectRandomPeer(64)
 	r2 := r.selectRandomPeer(64)
 	if r1 == nil || r2 == nil {

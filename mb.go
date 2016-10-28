@@ -15,7 +15,7 @@ type modelB struct {
 //========================================================================
 type gatewayB struct {
 	GatewayCommon
-	target     RunnerInterface
+	target     NodeRunnerInterface
 	replica    []*PutReplica
 	event      map[int64]*ReplicaPutRequestEvent
 	ack        map[int64]bool
@@ -250,7 +250,7 @@ func (r *serverB) receiveReplicaData(ev *ReplicaDataEvent) int {
 // modelB interface methods
 //
 //==================================================================
-func (m *modelB) NewGateway(i int) RunnerInterface {
+func (m *modelB) NewGateway(i int) NodeRunnerInterface {
 	gwy := NewGatewayCommon(i, mB.putpipeline)
 	maxval := int64(configNetwork.sizeFrame*8) + int64(configNetwork.sizeControlPDU*8)
 	gwy.rb = NewRateBucket(maxval, configNetwork.linkbps, maxval)
@@ -260,7 +260,7 @@ func (m *modelB) NewGateway(i int) RunnerInterface {
 	return rgwy
 }
 
-func (m *modelB) NewServer(i int) RunnerInterface {
+func (m *modelB) NewServer(i int) NodeRunnerInterface {
 	srv := NewServerUchRegChannels(i, mB.putpipeline)
 
 	srv.rb = &DummyRateBucket{}

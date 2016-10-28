@@ -10,10 +10,10 @@ import (
 // interfaces
 //
 type EventInterface interface {
-	GetSource() RunnerInterface
+	GetSource() NodeRunnerInterface
 	GetCreationTime() time.Time
 	GetTriggerTime() time.Time
-	GetTarget() RunnerInterface
+	GetTarget() NodeRunnerInterface
 	GetTio() TioInterface
 	GetGroup() GroupInterface
 	GetSize() int // size in  bytes
@@ -40,10 +40,10 @@ type EventClonerInterface interface {
 //
 type TimedAnyEvent struct {
 	crtime time.Time
-	source RunnerInterface
+	source NodeRunnerInterface
 	thtime time.Time
 	//
-	target      RunnerInterface
+	target      NodeRunnerInterface
 	tio         TioInterface
 	targetgroup GroupInterface
 	sizeb       int64 // bytes
@@ -51,7 +51,7 @@ type TimedAnyEvent struct {
 	tiostage    string
 }
 
-func newTimedAnyEvent(src RunnerInterface, when time.Duration, args ...interface{}) *TimedAnyEvent {
+func newTimedAnyEvent(src NodeRunnerInterface, when time.Duration, args ...interface{}) *TimedAnyEvent {
 	assert(when > 0)
 	triggertime := Now.Add(when)
 	ev := &TimedAnyEvent{
@@ -79,8 +79,8 @@ func (e *TimedAnyEvent) setArgs(args []interface{}) {
 
 func (e *TimedAnyEvent) setOneArg(a interface{}) {
 	switch a.(type) {
-	case RunnerInterface:
-		e.target = a.(RunnerInterface)
+	case NodeRunnerInterface:
+		e.target = a.(NodeRunnerInterface)
 	case TioInterface:
 		e.tio = a.(TioInterface)
 	case GroupInterface:
@@ -99,10 +99,10 @@ func (e *TimedAnyEvent) setOneArg(a interface{}) {
 //
 // interfaces
 //
-func (e *TimedAnyEvent) GetSource() RunnerInterface { return e.source }
+func (e *TimedAnyEvent) GetSource() NodeRunnerInterface { return e.source }
 func (e *TimedAnyEvent) GetCreationTime() time.Time { return e.crtime }
 func (e *TimedAnyEvent) GetTriggerTime() time.Time  { return e.thtime }
-func (e *TimedAnyEvent) GetTarget() RunnerInterface { return e.target }
+func (e *TimedAnyEvent) GetTarget() NodeRunnerInterface { return e.target }
 func (e *TimedAnyEvent) GetTio() TioInterface       { return e.tio.GetTio() }
 func (e *TimedAnyEvent) GetGroup() GroupInterface   { return e.targetgroup }
 func (e *TimedAnyEvent) GetSize() int               { return int(e.sizeb) }
@@ -139,7 +139,7 @@ type ReplicaPutRequestEvent struct {
 	num   int   // replica num
 }
 
-func newReplicaPutRequestEvent(gwy RunnerInterface, srv RunnerInterface, rep *PutReplica, tio TioInterface) *ReplicaPutRequestEvent {
+func newReplicaPutRequestEvent(gwy NodeRunnerInterface, srv NodeRunnerInterface, rep *PutReplica, tio TioInterface) *ReplicaPutRequestEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(gwy, at, srv, tio, configNetwork.sizeControlPDU)
 
@@ -153,7 +153,7 @@ type McastChunkPutRequestEvent struct {
 	rzvgroup *RzvGroup // rendezvous group that has been already negotiated via previous McastChunkPut...
 }
 
-func newMcastChunkPutRequestEvent(gwy RunnerInterface, group GroupInterface, chunk *Chunk, srv RunnerInterface, tio TioInterface) *McastChunkPutRequestEvent {
+func newMcastChunkPutRequestEvent(gwy NodeRunnerInterface, group GroupInterface, chunk *Chunk, srv NodeRunnerInterface, tio TioInterface) *McastChunkPutRequestEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(gwy, at, group, srv, tio, true, configNetwork.sizeControlPDU)
 	cntrlev := &zControlEvent{zEvent{*timedev}, chunk.cid}
@@ -180,7 +180,7 @@ type McastChunkPutAcceptEvent struct {
 	sizeb    int64 // size in bytes
 }
 
-func newMcastChunkPutAcceptEvent(gwy RunnerInterface, ngtgroup GroupInterface, chunk *Chunk, rzvgroup GroupInterface, tio TioInterface) *McastChunkPutAcceptEvent {
+func newMcastChunkPutAcceptEvent(gwy NodeRunnerInterface, ngtgroup GroupInterface, chunk *Chunk, rzvgroup GroupInterface, tio TioInterface) *McastChunkPutAcceptEvent {
 	at := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(gwy, at, ngtgroup, tio, tio.GetTarget(), true, configNetwork.sizeControlPDU)
 
@@ -203,7 +203,7 @@ func (e *BidEvent) String() string {
 	return fmt.Sprintf("[MBE %v=>%v,c#%d]", e.source.String(), e.target.String(), printid)
 }
 
-func newBidEvent(srv RunnerInterface, gwy RunnerInterface, group GroupInterface, chunkid int64, bid *PutBid, tio TioInterface) *BidEvent {
+func newBidEvent(srv NodeRunnerInterface, gwy NodeRunnerInterface, group GroupInterface, chunkid int64, bid *PutBid, tio TioInterface) *BidEvent {
 	atnet := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(srv, atnet, gwy, group, tio, configNetwork.sizeControlPDU)
 	return &BidEvent{zControlEvent{zEvent{*timedev}, chunkid}, bid}
@@ -221,7 +221,7 @@ func (e *ProxyBidsEvent) String() string {
 	return fmt.Sprintf("[ProxyBE %v=>%v,c#%d]", e.source.String(), e.target.String(), printid)
 }
 
-func newProxyBidsEvent(srv RunnerInterface, gwy RunnerInterface, group GroupInterface, chunkid int64, tio TioInterface, numbids int, chunksizeb int64, args ...*PutBid) *ProxyBidsEvent {
+func newProxyBidsEvent(srv NodeRunnerInterface, gwy NodeRunnerInterface, group GroupInterface, chunkid int64, tio TioInterface, numbids int, chunksizeb int64, args ...*PutBid) *ProxyBidsEvent {
 	atnet := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(srv, atnet, gwy, group, tio, configNetwork.sizeControlPDU)
 	bids := make([]*PutBid, numbids)
@@ -244,7 +244,7 @@ func (e *BidDoneEvent) String() string {
 	return fmt.Sprintf("[BDE %v=>%v,c#%d],%s", e.source.String(), e.target.String(), printid, reservedIOdone)
 }
 
-func newBidDoneEvent(srv RunnerInterface, proxy RunnerInterface, bid *PutBid, reservedIOdone time.Time) *BidDoneEvent {
+func newBidDoneEvent(srv NodeRunnerInterface, proxy NodeRunnerInterface, bid *PutBid, reservedIOdone time.Time) *BidDoneEvent {
 	atnet := configNetwork.durationControlPDU + config.timeClusterTrip
 	timedev := newTimedAnyEvent(srv, atnet, proxy, bid.tio, configNetwork.sizeControlPDU)
 	return &BidDoneEvent{zControlEvent{zEvent{*timedev}, bid.tio.cid}, bid, reservedIOdone}
@@ -256,7 +256,7 @@ type ReplicaPutRequestAckEvent struct {
 	num int // replica num
 }
 
-func newReplicaPutRequestAckEvent(srv RunnerInterface, gwy RunnerInterface, flow FlowInterface, tio TioInterface, diskdelay time.Duration) *ReplicaPutRequestAckEvent {
+func newReplicaPutRequestAckEvent(srv NodeRunnerInterface, gwy NodeRunnerInterface, flow FlowInterface, tio TioInterface, diskdelay time.Duration) *ReplicaPutRequestAckEvent {
 	atnet := configNetwork.durationControlPDU + config.timeClusterTrip + diskdelay
 	timedev := newTimedAnyEvent(srv, atnet, gwy, tio, configNetwork.sizeControlPDU)
 	assert(flow.GetCid() == tio.GetCid())
@@ -276,7 +276,7 @@ func (e *ReplicaPutAckEvent) String() string {
 	return fmt.Sprintf("[RPAE %v=>%v,c#%d(%d),at=%11.10v]", e.source.String(), e.target.String(), printid, e.num, dtriggered)
 }
 
-func newReplicaPutAckEvent(srv RunnerInterface, gwy RunnerInterface, tio TioInterface, atdisk time.Duration) *ReplicaPutAckEvent {
+func newReplicaPutAckEvent(srv NodeRunnerInterface, gwy NodeRunnerInterface, tio TioInterface, atdisk time.Duration) *ReplicaPutAckEvent {
 	atnet := configNetwork.durationControlPDU + config.timeClusterTrip
 	at := atnet + atdisk
 	timedev := newTimedAnyEvent(srv, at, gwy, tio, configNetwork.sizeControlPDU)
@@ -295,7 +295,7 @@ type ReplicaDataEvent struct {
 	zDataEvent
 }
 
-func newReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, cid int64, repnum int, flow FlowInterface, frsize int) *ReplicaDataEvent {
+func newReplicaDataEvent(gwy NodeRunnerInterface, srv NodeRunnerInterface, cid int64, repnum int, flow FlowInterface, frsize int) *ReplicaDataEvent {
 	tio := flow.GetTio()
 	assert(flow.GetCid() == tio.GetCid())
 	assert(cid == tio.GetCid())
@@ -307,7 +307,7 @@ func newReplicaDataEvent(gwy RunnerInterface, srv RunnerInterface, cid int64, re
 }
 
 // alternative c-tor
-func newRepDataEvent(gwy RunnerInterface, srv RunnerInterface, tio TioInterface, offset int64, frsize int) *ReplicaDataEvent {
+func newRepDataEvent(gwy NodeRunnerInterface, srv NodeRunnerInterface, tio TioInterface, offset int64, frsize int) *ReplicaDataEvent {
 	flow := tio.GetFlow()
 	at := sizeToDuration(frsize, "B", flow.getbw(), "b") + config.timeClusterTrip
 	timedev := newTimedAnyEvent(gwy, at, srv, tio, frsize)
@@ -327,7 +327,7 @@ func (e *ReplicaDataEvent) String() string {
 }
 
 // note: constructs ReplicaDataEvent with srv == nil and group != nil
-func newMcastChunkDataEvent(gwy RunnerInterface, rzvgroup GroupInterface, chunk *Chunk, flow FlowInterface, frsize int, tio TioInterface) *ReplicaDataEvent {
+func newMcastChunkDataEvent(gwy NodeRunnerInterface, rzvgroup GroupInterface, chunk *Chunk, flow FlowInterface, frsize int, tio TioInterface) *ReplicaDataEvent {
 	at := sizeToDuration(frsize, "B", flow.getbw(), "b") + config.timeClusterTrip
 	timedev := newTimedAnyEvent(gwy, at, rzvgroup, tio, tio.GetTarget(), true, frsize)
 

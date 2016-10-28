@@ -21,12 +21,12 @@ type modelFour struct {
 }
 
 type gatewayFour struct {
-	RunnerBase
+	NodeRunnerBase
 	tiostats int64
 }
 
 type serverFour struct {
-	RunnerBase
+	NodeRunnerBase
 }
 
 //
@@ -125,8 +125,8 @@ func (r *gatewayFour) M4putxferack(ev EventInterface) error {
 	return nil
 }
 
-func (r *gatewayFour) GetStats(reset bool) NodeStats {
-	s := r.RunnerBase.GetStats(true)
+func (r *gatewayFour) GetStats(reset bool) RunnerStats {
+	s := r.NodeRunnerBase.GetStats(true)
 	if reset {
 		s["tio"] = atomic.SwapInt64(&r.tiostats, 0)
 	} else {
@@ -193,15 +193,15 @@ func (r *serverFour) M4putxfer(ev EventInterface) error {
 //
 // modelFour interface methods
 //
-func (m *modelFour) NewGateway(i int) RunnerInterface {
-	gwy := &gatewayFour{RunnerBase{id: i, strtype: GWY}, 0}
+func (m *modelFour) NewGateway(i int) NodeRunnerInterface {
+	gwy := &gatewayFour{NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: GWY}, 0}
 	gwy.init(config.numServers)
 	gwy.initios()
 	return gwy
 }
 
-func (m *modelFour) NewServer(i int) RunnerInterface {
-	srv := &serverFour{RunnerBase: RunnerBase{id: i, strtype: SRV}}
+func (m *modelFour) NewServer(i int) NodeRunnerInterface {
+	srv := &serverFour{NodeRunnerBase: NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}}
 	srv.init(config.numGateways)
 	return srv
 }

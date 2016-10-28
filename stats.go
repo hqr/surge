@@ -43,12 +43,12 @@ type ModelStatsDescriptors struct {
 	x map[string]*StatsDescriptor
 }
 
-type NodeStats map[string]int64 // all named stats counters for a given node (server | gateway)
+type RunnerStats map[string]int64 // all named stats counters for a given Runner (server | gateway | Disk ...)
 
 type ModelStats struct {
 	totalgwy     map[string]int64
 	totalsrv     map[string]int64
-	allNodeStats []NodeStats
+	allRunnerStats []RunnerStats
 	iter         int64
 	lastUpdateTs time.Time
 }
@@ -60,7 +60,7 @@ var allDtors map[ModelName]*ModelStatsDescriptors
 var mdtors *ModelStatsDescriptors
 var mstats ModelStats
 var mdtsortednames []string
-var oneIterNodeStats []NodeStats
+var oneIterRunnerStats []RunnerStats
 
 //=================================================================================
 // init
@@ -105,13 +105,13 @@ func (mstats *ModelStats) init(mname ModelName) {
 		mstats.totalsrv[k] = 0
 	}
 
-	mstats.allNodeStats = make([]NodeStats, config.numGateways+config.numServers)
-	oneIterNodeStats = make([]NodeStats, config.numGateways+config.numServers)
+	mstats.allRunnerStats = make([]RunnerStats, config.numGateways+config.numServers)
+	oneIterRunnerStats = make([]RunnerStats, config.numGateways+config.numServers)
 
 	for ij := 0; ij < config.numGateways+config.numServers; ij++ {
-		mstats.allNodeStats[ij] = make(map[string]int64, len(mdtors.x))
+		mstats.allRunnerStats[ij] = make(map[string]int64, len(mdtors.x))
 		for n := range mdtors.x {
-			mstats.allNodeStats[ij][n] = 0
+			mstats.allRunnerStats[ij][n] = 0
 		}
 	}
 	mstats.iter = 0
@@ -139,7 +139,7 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 	mstats.lastUpdateTs = Now
 	for ij := 0; ij < config.numGateways+config.numServers; ij++ {
 		r := allNodes[ij]
-		oneIterNodeStats[ij] = r.GetStats(true)
+		oneIterRunnerStats[ij] = r.GetStats(true)
 	}
 	var newrxbytes string
 	for n := range mdtors.x {
@@ -150,12 +150,12 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 			if scope == StatsScopeUndef {
 				continue
 			}
-			nodestats := oneIterNodeStats[ij]
+			nodestats := oneIterRunnerStats[ij]
 			_, ok := nodestats[n]
 			assert(ok, "missing stats counter: "+n)
 			val := nodestats[n]
 			if d.kind == StatsKindCount || d.kind == StatsKindByteCount || d.kind == StatsKindSampleCount {
-				mstats.allNodeStats[ij][n] += val
+				mstats.allRunnerStats[ij][n] += val
 				if scope == StatsScopeGateway {
 					newgwy += val
 					mstats.totalgwy[n] += val
@@ -169,7 +169,7 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 			} else if d.kind == StatsKindPercentage {
 				// StatsKindPercentage implies averaging done elsewhere, e.g.
 				// the busy %% averaging continuously over cumulative time
-				mstats.allNodeStats[ij][n] = val
+				mstats.allRunnerStats[ij][n] = val
 				if scope == StatsScopeGateway {
 					newgwy += val
 				} else if scope == StatsScopeServer {
@@ -272,15 +272,15 @@ func (mstats *ModelStats) logNodeCounters(loglevel string, d *StatsDescriptor, e
 			continue
 		}
 		if d.kind == StatsKindSampleCount {
-			sp := float64(mstats.allNodeStats[ij][n]) / float64(mstats.iter)
+			sp := float64(mstats.allRunnerStats[ij][n]) / float64(mstats.iter)
 			if scope == StatsScopeServer {
 				spsrv += fmt.Sprintf("%.1f,", sp)
 			} else if scope == StatsScopeGateway {
 				spgwy += fmt.Sprintf("%.1f,", sp)
 			}
 		} else {
-			sp := float64(mstats.allNodeStats[ij][n]) * (float64(time.Millisecond) / float64(elapsed))
-			spSec := float64(mstats.allNodeStats[ij][n]) * (float64(time.Second) / float64(elapsed))
+			sp := float64(mstats.allRunnerStats[ij][n]) * (float64(time.Millisecond) / float64(elapsed))
+			spSec := float64(mstats.allRunnerStats[ij][n]) * (float64(time.Second) / float64(elapsed))
 			if scope == StatsScopeServer {
 				if d.kind == StatsKindByteCount {
 					spsrv += fmt.Sprintf("%s,", bytesMillisToMseconds(sp))
@@ -315,9 +315,9 @@ func (mstats *ModelStats) logNodePercentages(loglevel string, d *StatsDescriptor
 			continue
 		}
 		if scope == StatsScopeServer {
-			spsrv += fmt.Sprintf("%d,", mstats.allNodeStats[ij][n])
+			spsrv += fmt.Sprintf("%d,", mstats.allRunnerStats[ij][n])
 		} else if scope == StatsScopeGateway {
-			spgwy += fmt.Sprintf("%d,", mstats.allNodeStats[ij][n])
+			spgwy += fmt.Sprintf("%d,", mstats.allRunnerStats[ij][n])
 		}
 	}
 
@@ -390,9 +390,9 @@ func (mstats *ModelStats) logTotal(loglevel string, d *StatsDescriptor, elapsed 
 				continue
 			}
 			if scope == StatsScopeServer {
-				sumserver += mstats.allNodeStats[ij][n]
+				sumserver += mstats.allRunnerStats[ij][n]
 			} else if scope == StatsScopeGateway {
-				sumgateway += mstats.allNodeStats[ij][n]
+				sumgateway += mstats.allRunnerStats[ij][n]
 			}
 		}
 		ag := float64(sumgateway) / float64(config.numGateways)
