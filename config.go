@@ -7,6 +7,7 @@ package surge
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"time"
 )
@@ -165,6 +166,27 @@ var configReplicast = ConfigReplicast{
 	solicitedLinkPct: 90,
 	maxBidWait:       (configNetwork.durationControlPDU + config.timeClusterTrip) * 6, // 3*RTT
 }
+
+// Initializer for config module
+type ConfigInitializer struct {
+	BaseInitializer
+}
+
+func (ci *ConfigInitializer) Initialize() InitializerState {
+	ConfigInitialize()
+	return InitializerProcessed
+}
+
+// This should have the code in init() method below.
+func ConfigInitialize() {
+	fmt.Println("In Config Initialize")
+}
+
+// Initializer object
+var configInit = ConfigInitializer{BaseInitializer{name:"config"}}
+
+// Call AddInitializer before init() in init.go
+var configInited = AddInitializer(&configInit)
 
 //===============================================================
 // init
