@@ -209,6 +209,9 @@ func (m *modelNine) Configure() {
 	m8.Configure()
 }
 
+func (m *modelNine) PreConfig() {}
+func (m *modelNine) PostConfig() {}
+
 //==================================================================
 //
 // modelNine events

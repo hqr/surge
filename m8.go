@@ -709,3 +709,7 @@ func (m *modelEight) Configure() {
 	}
 	configReplicast.minduration = configReplicast.durationBidWindow - config.timeClusterTrip
 }
+
+func (m *modelEight) PreConfig() {}
+func (m *modelEight) PostConfig() {}
+

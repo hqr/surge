@@ -209,3 +209,7 @@ func (m *modelFour) NewServer(i int) NodeRunnerInterface {
 func (m *modelFour) Configure() {
 	config.timeClusterTrip = time.Microsecond * 2
 }
+
+func (m *modelFour) PreConfig() {}
+func (m *modelFour) PostConfig() {}
+

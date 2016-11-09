@@ -138,3 +138,6 @@ func (m *modelTwo) send(r *NodeRunnerBase) bool {
 }
 
 func (m *modelTwo) Configure() {}
+func (m *modelTwo) PreConfig() {}
+func (m *modelTwo) PostConfig() {}
+

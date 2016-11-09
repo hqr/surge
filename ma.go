@@ -854,3 +854,7 @@ func (m *modelSevenPrx) Configure() {
 		}
 	}
 }
+
+func (m *modelSevenPrx) PreConfig() {}
+func (m *modelSevenPrx) PostConfig() {}
+

@@ -13,6 +13,11 @@ import (
 
 var build string
 
+// TODO: Redesign the verbosity command line option
+//       This is just to have the old behaviour with the current framework
+//       This is a bit ugly and needs to be revisted
+var q, v, vv, vvv, vvvv bool
+
 const (
 	transportTypeDefault   = "default" // default for the model (or, the only supported)
 	transportTypeUnicast   = "unicast"
@@ -166,56 +171,57 @@ var configReplicast = ConfigReplicast{
 	maxBidWait:       (configNetwork.durationControlPDU + config.timeClusterTrip) * 6, // 3*RTT
 }
 
-//===============================================================
-// init
-//===============================================================
-func init() {
-	gwPtr := flag.Int("gateways", config.numGateways, "number of gateways")
-	srPtr := flag.Int("servers", config.numServers, "number of servers")
+func PreConfig() {
+	flag.IntVar(&config.numGateways, "gateways", config.numGateways, "number of gateways")
+	flag.IntVar(&config.numServers, "servers", config.numServers, "number of servers")
 
-	moPtr := flag.String("m", config.mprefix, "prefix that defines which models to run, use \"\" to run all")
+	flag.StringVar(&config.mprefix, "m", config.mprefix, "prefix that defines which models to run, use \"\" to run all")
 
-	trPtr := flag.Duration("ttr", config.timeToRun, "time to run, e.g. 1500us, 350ms, 15s (depending on the model and RAM/CPU, a 10ms run may take 30min and beyond)")
+	flag.DurationVar(&config.timeToRun, "ttr", config.timeToRun,
+		"time to run, e.g. 1500us, 350ms, 15s (depending on the model and RAM/CPU, a 10ms run may take 30min and beyond)")
 
-	lfPtr := flag.String("log", config.LogFile, "log file, use -log=\"\" for stdout")
+	flag.StringVar(&config.LogFile, "log", config.LogFile, "log file, use -log=\"\" for stdout")
 
-	qPtr := flag.Bool("q", false, "quiet mode, minimal logging")
-	vPtr := flag.Bool("v", false, "verbose")
-	vvPtr := flag.Bool("vv", false, "verbose-verbose")
-	vvvPtr := flag.Bool("vvv", false, "super-verbose")
-	vvvvPtr := flag.Bool("vvvv", false, "extra-super-verbose")
+	flag.BoolVar(&q, "q", false, "quiet mode, minimal logging")
+	flag.BoolVar(&v, "v", false, "verbose")
+	flag.BoolVar(&vv, "vv", false, "verbose-verbose")
+	flag.BoolVar(&vvv, "vvv", false, "super-verbose")
+	flag.BoolVar(&vvvv, "vvvv", false, "extra-super-verbose")
 
-	dbPtr := flag.Bool("d", config.DEBUG, "debug=true|false")
-	srandPtr := flag.Int("srand", config.srand, "random seed, use 0 (zero) for random seed selection")
+	flag.BoolVar(&config.DEBUG, "d", config.DEBUG, "debug=true|false")
+	flag.IntVar(&config.srand, "srand", config.srand, "random seed, use 0 (zero) for random seed selection")
 
-	replicasPtr := flag.Int("replicas", configStorage.numReplicas, "number of replicas")
-	chunksizePtr := flag.Int("chunksize", configStorage.sizeDataChunk, "chunk size (KB)")
-	diskthPtr := flag.Int("diskthroughput", configStorage.diskMBps, "disk throughput (MB/sec)")
+	flag.IntVar(&configStorage.numReplicas, "replicas", configStorage.numReplicas, "number of replicas")
+	flag.IntVar(&configStorage.sizeDataChunk, "chunksize", configStorage.sizeDataChunk, "chunk size (KB)")
+	flag.IntVar(&configStorage.diskMBps, "diskthroughput", configStorage.diskMBps, "disk throughput (MB/sec)")
 
-	readPtr := flag.Bool("r", configStorage.read, "read=false(100% write) | true(50/50% read/write)")
+	flag.BoolVar(&configStorage.read, "r", configStorage.read, "read=false(100% write) | true(50/50% read/write)")
 
-	diskQueuePtr := flag.Int("diskqueue", configStorage.maxDiskQueue, "disk queue size (KB)")
+	flag.IntVar(&configStorage.maxDiskQueue, "diskqueue", configStorage.maxDiskQueue, "disk queue size (KB)")
 
-	l2framePtr := flag.Int("l2frame", configNetwork.sizeFrame, "L2 frame size (bytes)")
-	linkbpsPtr := flag.Int64("linkbps", configNetwork.linkbps, "Network Link Bandwidth (bits/sec)")
-	transportPtr := flag.String("transport", configNetwork.transportType, "transport type: [default | unicast | multicast]")
+	flag.IntVar(&configNetwork.sizeFrame, "l2frame", configNetwork.sizeFrame, "L2 frame size (bytes)")
+	flag.Int64Var(&configNetwork.linkbps, "linkbps", configNetwork.linkbps, "Network Link Bandwidth (bits/sec)")
+	flag.StringVar(&configNetwork.transportType, "transport", configNetwork.transportType,
+		"transport type: [default | unicast | multicast]")
 
-	cmdWindowSzPtr := flag.Int("cmdwindowsz", configNetwork.cmdWindowSz, "Command window size in unit of chunks")
+	flag.IntVar(&configNetwork.cmdWindowSz, "cmdwindowsz", configNetwork.cmdWindowSz, "Command window size in unit of chunks")
 
-	groupsizePtr := flag.Int("groupsize", configReplicast.sizeNgtGroup, "group size: number of servers in a multicast group")
+	flag.IntVar(&configReplicast.sizeNgtGroup, "groupsize", configReplicast.sizeNgtGroup,
+		"group size: number of servers in a multicast group")
 
-	buildPtr := flag.String("build", build, "build ID (as in: 'git rev-parse'), or any user-defined string to be used as a logfile name suffix")
+	flag.StringVar(&build, "build", build,
+		"build ID (as in: 'git rev-parse'), or any user-defined string to be used as a logfile name suffix")
+}
+
+func ParseCommandLine() {
 	//
 	// parse command line
 	//
 	flag.Parse()
+}
 
-	config.numGateways = *gwPtr
-	config.numServers = *srPtr
+func PostConfig() {
 
-	config.mprefix = *moPtr
-
-	config.timeToRun = time.Duration(*trPtr)
 	config.timeStatsIval = config.timeToRun / 100
 	switch {
 	case config.timeToRun >= time.Second:
@@ -227,35 +233,19 @@ func init() {
 	config.timeTrackIval = config.timeToRun / 10
 
 	config.LogFileOrig = config.LogFile
-	config.LogFile = *lfPtr
 
-	if *qPtr {
+	if q {
 		config.LogLevel = ""
-	} else if *vPtr {
+	} else if v {
 		config.LogLevel = LogV
-	} else if *vvPtr {
+	} else if vv {
 		config.LogLevel = LogVV
-	} else if *vvvPtr {
+	} else if vvv {
 		config.LogLevel = LogVVV
-	} else if *vvvvPtr {
+	} else if vvvv {
 		config.LogLevel = LogVVVV
 	}
 
-	config.DEBUG = *dbPtr
-	config.srand = *srandPtr
-
-	configStorage.numReplicas = *replicasPtr
-	configStorage.sizeDataChunk = *chunksizePtr
-	configStorage.diskMBps = *diskthPtr
-	configStorage.read = *readPtr
-	configStorage.maxDiskQueue = *diskQueuePtr
-
-	configNetwork.sizeFrame = *l2framePtr
-	configNetwork.linkbps = *linkbpsPtr
-	configNetwork.transportType = *transportPtr
-	configNetwork.cmdWindowSz = *cmdWindowSzPtr
-
-	build = *buildPtr
 	//
 	// computed and assigned (here for convenience)
 	//
@@ -264,7 +254,8 @@ func init() {
 	configNetwork.linkbps = configNetwork.linkbps - configNetwork.linkbps*int64(configNetwork.overheadpct)/int64(100)
 
 	// the 4 confvars defaults below are based on the full linkbps bw
-	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
+	configNetwork.durationControlPDU =
+		time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
 
 	//
 	// NOTE: these two may be changed by the models that
@@ -274,7 +265,8 @@ func init() {
 	configNetwork.linkbpsControl = configNetwork.linkbps
 	configNetwork.linkbpsData = configNetwork.linkbps
 
-	configNetwork.netdurationDataChunk = time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbps)
+	configNetwork.netdurationDataChunk =
+		time.Duration(configStorage.sizeDataChunk*1024*8) * time.Second / time.Duration(configNetwork.linkbps)
 	configNetwork.netdurationFrame = time.Duration(configNetwork.sizeFrame*8) * time.Second / time.Duration(configNetwork.linkbps)
 
 	configStorage.maxDiskQueueChunks = configStorage.maxDiskQueue / configStorage.sizeDataChunk
@@ -288,7 +280,6 @@ func init() {
 	//
 	configStorage.diskbps = int64(configStorage.diskMBps) * 1024 * 1024 * 8
 
-	configReplicast.sizeNgtGroup = *groupsizePtr
 }
 
 // NOTE:

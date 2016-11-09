@@ -152,3 +152,7 @@ func (m *modelTwoDotOne) send(r *NodeRunnerBase) bool {
 func (m *modelTwoDotOne) Configure() {
 	config.timeClusterTrip = time.Microsecond * 4
 }
+
+func (m *modelTwoDotOne) PreConfig() {}
+func (m *modelTwoDotOne) PostConfig() {}
+

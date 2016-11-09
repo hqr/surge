@@ -82,6 +82,11 @@ func __init() {
 type ModelInterface interface {
 	NewGateway(id int) NodeRunnerInterface
 	NewServer(id int) NodeRunnerInterface
+	PreConfig()	// model can optionally define model specifc config
+	PostConfig()	// model can validate if the config is confroming to model requirements
+
+	// TODO: We wouldn't need this once we fully
+	//       transition to PreConfig/PostConfig
 	Configure() // model can optionally change global config and/or prepare to run
 }
 
@@ -151,15 +156,30 @@ func prepareToStopModel(model ModelInterface) {
 // MAIN LOOP
 //
 func RunAllModels() {
+
+	// Configuration Handling
+	PreConfig()
+	for _, mname := range allNamesSorted {
+		model, _ := allModels[ModelName(mname)]
+		model.PreConfig()
+	}
+
+	ParseCommandLine()
+
+	PostConfig()
 	cnt := 0
 	onename := ""
-	for _, o := range allNamesSorted {
-		if !strings.HasPrefix(o, config.mprefix) {
+	for _, mname := range allNamesSorted {
+		if !strings.HasPrefix(mname, config.mprefix) {
 			continue
 		}
 		cnt++
-		onename = o
+		onename = mname
+
+		model, _ := allModels[ModelName(mname)]
+		model.PostConfig()
 	}
+
 	if cnt == 1 {
 		nameLog(onename)
 	}
