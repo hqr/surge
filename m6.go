@@ -429,6 +429,9 @@ func (m *modelSix) Configure() {
 	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
 }
 
+func (m *modelSix) PreConfig() {}
+func (m *modelSix) PostConfig() {}
+
 //==================================================================
 //
 // modelSix events

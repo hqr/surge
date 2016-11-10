@@ -403,6 +403,9 @@ func (m *modelFive) Configure() {
 	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
 }
 
+func (m *modelFive) PreConfig() {}
+func (m *modelFive) PostConfig() {}
+
 //==================================================================
 //
 // model-specific events

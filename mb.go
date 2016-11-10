@@ -1,6 +1,8 @@
 package surge
 
 import (
+	"flag"
+	"fmt"
 	"sync/atomic"
 	"time"
 )
@@ -272,3 +274,27 @@ func (m *modelB) NewServer(i int) NodeRunnerInterface {
 }
 
 func (m *modelB) Configure() {}
+
+type ConfigModelB struct {
+	dummyVar	int
+}
+
+var configB  = ConfigModelB{
+	dummyVar: 0,
+}
+
+// Dummy Implementation of PreConfig and PostConfig
+// This just shows what we can do with model specific
+// Configuration
+func (m *modelB) PreConfig() {
+	// TODO: implement wrapper functions for flag.*Var in config.go so that
+	//       individual models need not import flag. The idea is flag should
+        //       managed only in config.go
+	flag.IntVar(&configB.dummyVar, "dummy", configB.dummyVar, "Dummy Variable")
+}
+
+func (m *modelB) PostConfig() {
+	if configB.dummyVar > 10 {
+		panic(fmt.Sprintf("DummyVar(%d) out of range\n", configB.dummyVar))
+	}
+}

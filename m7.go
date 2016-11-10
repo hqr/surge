@@ -548,3 +548,7 @@ func (m *modelSeven) Configure() {
 		configReplicast.minduration = configNetwork.netdurationDataChunk + configNetwork.netdurationFrame*(x/3)
 	}
 }
+
+func (m *modelSeven) PreConfig() {}
+func (m *modelSeven) PostConfig() {}
+
