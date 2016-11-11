@@ -42,13 +42,14 @@ type Disk struct {
 	pendingrbytes  int64
 	nextWrDone     time.Time
 	qMutex         sync.Mutex
+	latencySim     DiskLatencySimulator
 }
 
 func NewDisk(r NodeRunnerInterface, mbps int) *Disk {
 	idCounter++
 	d := &Disk{
 		DiskRunnerBase: DiskRunnerBase{RunnerBase{id: idCounter}},
-		node: r, MBps: mbps, reserved: 0, lastIOdone: Now}
+		node: r, MBps: mbps, reserved: 0, lastIOdone: Now, latencySim: &latencyNil}
 	return d
 }
 
@@ -84,6 +85,94 @@ func (d *Disk) NowIsDone() bool {
 	return true
 }
 
+//==========================================================================
+// Customizable Latency Simulation framework for Disk
+//==========================================================================
+
+// This structure defines the possible parameters that influences the latency
+// function for Disk. Its only queue size now, but will grow in future.
+type DiskLatencyParams struct {
+	qSize	float64
+}
+
+// Interface which implements the latency function
+type DiskLatencySimulator interface {
+	GetName() string
+	Latency(params DiskLatencyParams) time.Duration
+}
+
+var latencySimulators map[string]DiskLatencySimulator
+
+func RegisterDiskLatencySimulator(sim DiskLatencySimulator) {
+	assert(latencySimulators[sim.GetName()] == nil)
+	latencySimulators[sim.GetName()] = sim
+}
+
+func (d *Disk) SetDiskLatencySimulator(sim DiskLatencySimulator) {
+	if latencySimulators[sim.GetName()] == nil {
+		latencySimulators[sim.GetName()] = sim
+	}
+	d.latencySim = sim
+}
+
+func (d *Disk) SetDiskLatencySimulatorByname(name string) {
+	if latencySimulators[name] != nil {
+		d.latencySim = latencySimulators[name]
+	}
+}
+
+//---------------------------------------------------------
+// Implementation for DiskLatencySimulator
+//---------------------------------------------------------
+
+// Abstract base
+
+type LatencyBase struct {
+	name	string
+}
+
+var latencyBase = LatencyBase { name: "base" }
+
+func (l *LatencyBase) GetName() string {
+	return l.name
+}
+
+// Abstract method
+func (l *LatencyBase) Latency(params DiskLatencyParams) time.Duration {
+	assert(false)
+	return 0
+}
+
+// Zero induced latency
+
+type LatencyNil struct {
+	LatencyBase
+}
+
+var latencyNil = LatencyNil{LatencyBase{name: "latency-nil"}}
+
+func (l *LatencyNil) Latency(params DiskLatencyParams) time.Duration {
+	return 0
+}
+
+// Latency function using parabola equation
+
+type LatencyParabola struct {
+	LatencyBase
+}
+// Parabola equation (x -h)^2 = 4p(y-k) where h = 64, p = 10, k = 0
+var latencyParabola = LatencyParabola{LatencyBase{name: "latency-parabola-h64-p10-k0"}}
+
+func (l *LatencyParabola) Latency(params DiskLatencyParams) time.Duration {
+	// Parabola equation to simulate latency based on queue depth.
+	// parabola equation :  (x - 64)^2 = 4 * 10 * y
+
+	latencyF := ((params.qSize * params.qSize) - 64.0 * params.qSize + 1024.0) / 40.0;
+
+	// Delay is in microseconds.
+	return time.Duration(latencyF) * time.Microsecond
+}
+
 func (d *Disk) scheduleWrite(sizebytes int) time.Duration {
 	at := sizeToDuration(sizebytes, "B", int64(d.MBps), "MB")
 	w := d.writes
@@ -99,17 +188,7 @@ func (d *Disk) scheduleWrite(sizebytes int) time.Duration {
 	d.pendingwbytes += int64(sizebytes)
 	d.qMutex.Unlock()
 
-	// Simulate delay based on the queue depth
-	// We do this by a parabola equation of queue depth.
-	// parabola equation :  (x - 32)^2 = 4 * 10 * y
-	// This equation is currently a hardcoded equation where
-	// minimum delay is hard coded to be at queue size of 32.
-	// FIXME: This equation should not be hard coded and should
-	//        be made configurable.
-	latencyF := ((qSz * qSz) - 64.0 * qSz + 1024.0) / 40.0;
-
-	// Delay is in microseconds.
-	latency := time.Duration(latencyF) * time.Microsecond
+	latency := d.latencySim.Latency(DiskLatencyParams{qSize: qSz})
 	log(LogVV, fmt.Sprintf("Scheduling chunk write current QDepth:%v, Induced delay: %v", qSz, latency))
 	at += latency
 
@@ -138,4 +217,9 @@ func (d *Disk) queueDepth(in DiskQueueDepthEnum) (int, time.Duration) {
 	assert(in == DqdBuffers)
 	numDiskQueueBuffers := (int64(diff) + int64(configStorage.dskdurationFrame/2)) / int64(configStorage.dskdurationFrame)
 	return int(numDiskQueueBuffers), diff
+}
+
+func init() {
+	latencySimulators = make(map[string]DiskLatencySimulator, 8)
+	latencySimulators["latency-nil"] = &latencyNil
 }

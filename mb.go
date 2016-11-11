@@ -209,6 +209,7 @@ func (r *serverB) rxcallbackB(ev EventInterface) int {
 
 func (r *serverB) Run() {
 	r.state = RstateRunning
+	r.disk.SetDiskLatencySimulatorByname(configStorage.diskLatencySim)
 
 	go func() {
 		for r.state == RstateRunning {
@@ -291,6 +292,7 @@ func (m *modelB) PreConfig() {
 	//       individual models need not import flag. The idea is flag should
         //       managed only in config.go
 	flag.IntVar(&configB.dummyVar, "dummy", configB.dummyVar, "Dummy Variable")
+	RegisterDiskLatencySimulator(&latencyParabola)
 }
 
 func (m *modelB) PostConfig() {

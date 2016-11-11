@@ -81,6 +81,7 @@ type ConfigStorage struct {
 	dskdurationDataChunk time.Duration
 	dskdurationFrame     time.Duration
 	diskbps              int64
+	diskLatencySim       string
 	maxDiskQueueChunks   int
 }
 
@@ -91,6 +92,7 @@ var configStorage = ConfigStorage{
 	diskMBps:      400, // MB/sec
 	maxDiskQueue:  256, // KB
 	read:          false,
+	diskLatencySim:	"latency-nil",
 }
 
 //
@@ -194,6 +196,7 @@ func PreConfig() {
 	flag.IntVar(&configStorage.numReplicas, "replicas", configStorage.numReplicas, "number of replicas")
 	flag.IntVar(&configStorage.sizeDataChunk, "chunksize", configStorage.sizeDataChunk, "chunk size (KB)")
 	flag.IntVar(&configStorage.diskMBps, "diskthroughput", configStorage.diskMBps, "disk throughput (MB/sec)")
+	flag.StringVar(&configStorage.diskLatencySim, "disklatencysim", configStorage.diskLatencySim, "disk Latency Simulator function")
 
 	flag.BoolVar(&configStorage.read, "r", configStorage.read, "read=false(100% write) | true(50/50% read/write)")
 
