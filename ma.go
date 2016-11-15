@@ -831,7 +831,9 @@ func (m *modelSevenPrx) NewServer(i int) NodeRunnerInterface {
 	return prsrv
 }
 
-func (m *modelSevenPrx) Configure() {
+func (m *modelSevenPrx) PreConfig() {}
+
+func (m *modelSevenPrx) PostConfig() {
 	// minimal bid multipleir: same exact bid win done by proxy:
 	// no need to increase the "overlapping" chance
 	configReplicast.bidMultiplierPct = 140
@@ -854,7 +856,4 @@ func (m *modelSevenPrx) Configure() {
 		}
 	}
 }
-
-func (m *modelSevenPrx) PreConfig() {}
-func (m *modelSevenPrx) PostConfig() {}
 

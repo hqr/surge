@@ -424,13 +424,13 @@ func (m *modelSix) NewServer(i int) NodeRunnerInterface {
 	return rsrv
 }
 
-func (m *modelSix) Configure() {
-	configNetwork.sizeControlPDU = 100
-	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
-}
-
 func (m *modelSix) PreConfig() {}
-func (m *modelSix) PostConfig() {}
+
+func (m *modelSix) PostConfig() {
+	configNetwork.sizeControlPDU = 100
+	configNetwork.durationControlPDU =
+		time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
+}
 
 //==================================================================
 //

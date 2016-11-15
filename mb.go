@@ -1,7 +1,6 @@
 package surge
 
 import (
-	"fmt"
 	"sync/atomic"
 	"time"
 )

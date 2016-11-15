@@ -398,13 +398,14 @@ func (m *modelFive) NewServer(i int) NodeRunnerInterface {
 	return rsrv
 }
 
-func (m *modelFive) Configure() {
+func (m *modelFive) PreConfig() {}
+
+func (m *modelFive) PostConfig() {
 	configNetwork.sizeControlPDU = 100
-	configNetwork.durationControlPDU = time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
+	configNetwork.durationControlPDU =
+		time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
 }
 
-func (m *modelFive) PreConfig() {}
-func (m *modelFive) PostConfig() {}
 
 //==================================================================
 //

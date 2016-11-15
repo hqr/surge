@@ -700,7 +700,9 @@ func (m *modelEight) newServerEight(i int) *serverEight {
 	return rsrv
 }
 
-func (m *modelEight) Configure() {
+func (m *modelEight) PreConfig() {}
+
+func (m *modelEight) PostConfig() {
 	configReplicast.bidMultiplierPct = 110
 	configureReplicast(false)
 	if configReplicast.durationBidWindow < configNetwork.netdurationFrame*3 {
@@ -709,7 +711,4 @@ func (m *modelEight) Configure() {
 	}
 	configReplicast.minduration = configReplicast.durationBidWindow - config.timeClusterTrip
 }
-
-func (m *modelEight) PreConfig() {}
-func (m *modelEight) PostConfig() {}
 
