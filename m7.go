@@ -541,14 +541,13 @@ func (m *modelSeven) NewServer(i int) NodeRunnerInterface {
 	return rsrv
 }
 
-func (m *modelSeven) Configure() {
+func (m *modelSeven) PreConfig() {}
+
+func (m *modelSeven) PostConfig() {
 	configureReplicast(configNetwork.transportType == transportTypeUnicast)
 	x := (configReplicast.durationBidWindow - configReplicast.minduration) / configNetwork.netdurationFrame
 	if x > 4 {
 		configReplicast.minduration = configNetwork.netdurationDataChunk + configNetwork.netdurationFrame*(x/3)
 	}
 }
-
-func (m *modelSeven) PreConfig() {}
-func (m *modelSeven) PostConfig() {}
 

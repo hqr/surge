@@ -137,7 +137,6 @@ func (m *modelTwo) send(r *NodeRunnerBase) bool {
 	return r.Send(ev, SmethodDontWait)
 }
 
-func (m *modelTwo) Configure() {}
 func (m *modelTwo) PreConfig() {}
 func (m *modelTwo) PostConfig() {}
 

@@ -84,10 +84,6 @@ type ModelInterface interface {
 	NewServer(id int) NodeRunnerInterface
 	PreConfig()	// model can optionally define model specifc config
 	PostConfig()	// model can validate if the config is confroming to model requirements
-
-	// TODO: We wouldn't need this once we fully
-	//       transition to PreConfig/PostConfig
-	Configure() // model can optionally change global config and/or prepare to run
 }
 
 //============================================================================
@@ -175,9 +171,6 @@ func RunAllModels() {
 		}
 		cnt++
 		onename = mname
-
-		model, _ := allModels[ModelName(mname)]
-		model.PostConfig()
 	}
 
 	if cnt == 1 {
@@ -228,7 +221,7 @@ func RunAllModels() {
 		config = configCopy
 		configNetwork = configNetworkCopy
 		configStorage = configStorageCopy
-		model.Configure() // the model's custom config
+		model.PostConfig() // Model specific configuration
 
 		//
 		// log configuration

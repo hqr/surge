@@ -149,10 +149,9 @@ func (m *modelTwoDotOne) send(r *NodeRunnerBase) bool {
 	return r.Send(ev, SmethodDontWait)
 }
 
-func (m *modelTwoDotOne) Configure() {
+func (m *modelTwoDotOne) PreConfig() {}
+
+func (m *modelTwoDotOne) PostConfig() {
 	config.timeClusterTrip = time.Microsecond * 4
 }
-
-func (m *modelTwoDotOne) PreConfig() {}
-func (m *modelTwoDotOne) PostConfig() {}
 
