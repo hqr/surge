@@ -105,8 +105,9 @@ func configLog(partial bool) {
                 configNetwork.sizeControlPDU, configNetwork.cmdWindowSz)
 	s4 := fmt.Sprintf("\t    {durationControlPDU:%v netdurationFrame:%v netdurationDataChunk:%v}",
 		configNetwork.durationControlPDU, configNetwork.netdurationFrame, configNetwork.netdurationDataChunk)
-	s5 := fmt.Sprintf("\t    {sizeDataChunk:%vKB dskdurationDataChunk:%v diskbps:%.1fGbps}",
-		configStorage.sizeDataChunk, configStorage.dskdurationDataChunk, float64(configStorage.diskbps)/gigb)
+	s5 := fmt.Sprintf("\t    {sizeDataChunk:%vKB dskdurationDataChunk:%v diskbps:%.1fGbps, disklatencysim:%v}",
+		configStorage.sizeDataChunk, configStorage.dskdurationDataChunk,
+		float64(configStorage.diskbps)/gigb, configStorage.diskLatencySim)
 	s6 := fmt.Sprintf("\t    {durationBidWindow:%v}", configReplicast.durationBidWindow)
 
 	if partial {
