@@ -328,3 +328,67 @@ func configureReplicast(unicastBidMultiplier bool) {
 		configReplicast.durationBidWindow = configReplicast.minduration
 	}
 }
+
+// Wrapper methods for flag
+func RegisterCmdlineIntVar(dest *int, opt string, def int, desc string) bool {
+	if flag.Parsed() {
+		return false
+	}
+	flag.IntVar(dest, opt, def, desc)
+
+	return true
+}
+
+func RegisterCmdlineInt64Var(dest *int64, opt string, def int64, desc string) bool {
+	if flag.Parsed() {
+		return false
+	}
+	flag.Int64Var(dest, opt, def, desc)
+
+	return true
+}
+
+func RegisterCmdlineStringVar(dest *string, opt string, def string, desc string) bool {
+	if flag.Parsed() {
+		return false
+	}
+	flag.StringVar(dest, opt, def, desc)
+
+	return true
+}
+
+func RegisterCmdlineDurationVar(dest *time.Duration, opt string, def time.Duration, desc string) bool {
+	if flag.Parsed() {
+		return false
+	}
+	flag.DurationVar(dest, opt, def, desc)
+
+	return true
+}
+
+func RegisterCmdlineUintVar(dest *uint, opt string, def uint, desc string) bool {
+	if flag.Parsed() {
+		return false
+	}
+	flag.UintVar(dest, opt, def, desc)
+
+	return true
+}
+
+func RegisterCmdlineUint64Var(dest *uint64, opt string, def uint64, desc string) bool {
+	if flag.Parsed() {
+		return false
+	}
+	flag.Uint64Var(dest, opt, def, desc)
+
+	return true
+}
+
+func RegisterCmdlineFloat64Var(dest *float64, opt string, def float64, desc string) bool {
+	if flag.Parsed() {
+		return false
+	}
+	flag.Float64Var(dest, opt, def, desc)
+
+	return true
+}
