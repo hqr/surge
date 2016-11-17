@@ -17,6 +17,7 @@ const (
 
 // implements ModelInterface
 type modelTwoDotOne struct {
+	ModelGeneric
 }
 
 type gatewayTwoDotOne struct {
@@ -148,8 +149,6 @@ func (m *modelTwoDotOne) send(r *NodeRunnerBase) bool {
 	ev := newTimedAnyEvent(r, at, peer)
 	return r.Send(ev, SmethodDontWait)
 }
-
-func (m *modelTwoDotOne) PreConfig() {}
 
 func (m *modelTwoDotOne) PostConfig() {
 	config.timeClusterTrip = time.Microsecond * 4

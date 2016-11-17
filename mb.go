@@ -7,6 +7,7 @@ import (
 
 // implements ModelInterface
 type modelB struct {
+	ModelGeneric
 	putpipeline *Pipeline
 }
 
@@ -272,11 +273,7 @@ func (m *modelB) NewServer(i int) NodeRunnerInterface {
 	return rsrv
 }
 
-func (m *modelB) Configure() {}
-
 func (m *modelB) PreConfig() {
 	RegisterDiskLatencySimulator(&latencyParabola)
 }
 
-func (m *modelB) PostConfig() {
-}

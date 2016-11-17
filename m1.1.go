@@ -15,6 +15,7 @@ import (
 
 // implements ModelInterface
 type modelOneDotOne struct {
+	ModelGeneric
 }
 
 type gatewayOneDotOne struct {
@@ -113,8 +114,6 @@ func (m *modelOneDotOne) NewServer(i int) NodeRunnerInterface {
 	srv.init(config.numGateways)
 	return srv
 }
-
-func (m *modelOneDotOne) PreConfig() {}
 
 func (m *modelOneDotOne) PostConfig() {
 	config.timeClusterTrip = time.Microsecond * 4

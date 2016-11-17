@@ -15,6 +15,7 @@ import (
 
 // implements ModelInterface
 type modelTwo struct {
+	ModelGeneric
 }
 
 type gatewayTwo struct {
@@ -136,7 +137,3 @@ func (m *modelTwo) send(r *NodeRunnerBase) bool {
 	ev := newTimedAnyEvent(r, at, peer)
 	return r.Send(ev, SmethodDontWait)
 }
-
-func (m *modelTwo) PreConfig() {}
-func (m *modelTwo) PostConfig() {}
-

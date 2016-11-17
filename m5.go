@@ -38,6 +38,7 @@ import (
 
 // implements ModelInterface
 type modelFive struct {
+	ModelGeneric
 	putpipeline *Pipeline
 }
 
@@ -397,8 +398,6 @@ func (m *modelFive) NewServer(i int) NodeRunnerInterface {
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)
 	return rsrv
 }
-
-func (m *modelFive) PreConfig() {}
 
 func (m *modelFive) PostConfig() {
 	configNetwork.sizeControlPDU = 100
