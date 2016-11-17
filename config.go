@@ -7,6 +7,7 @@ package surge
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"time"
 )
@@ -39,6 +40,7 @@ type Config struct {
 	realtimeLogStats                     time.Duration
 	LogFile                              string
 	DEBUG                                bool
+	ValidateConfig                       bool	// Validate configuration and error out for invalid conifgs
 	channelBuffer                        int
 	srand                                int
 	// derived
@@ -63,6 +65,7 @@ var config = Config{
 	realtimeLogStats: time.Second * 60,
 	LogFile:          "/tmp/log.csv",
 	DEBUG:            true,
+	ValidateConfig:   false,
 
 	channelBuffer: 16,
 	srand:         1,
@@ -191,6 +194,7 @@ func PreConfig() {
 	flag.BoolVar(&vvvv, "vvvv", false, "extra-super-verbose")
 
 	flag.BoolVar(&config.DEBUG, "d", config.DEBUG, "debug=true|false")
+	flag.BoolVar(&config.ValidateConfig, "validateconfig", config.ValidateConfig, "true|false. Error out on invalid config if true, else Reset to default sane values.")
 	flag.IntVar(&config.srand, "srand", config.srand, "random seed, use 0 (zero) for random seed selection")
 
 	flag.IntVar(&configStorage.numReplicas, "replicas", configStorage.numReplicas, "number of replicas")
@@ -298,12 +302,21 @@ func configureReplicast(unicastBidMultiplier bool) {
 	rem := config.numServers % configReplicast.sizeNgtGroup
 	if rem > 0 {
 		config.numServers -= rem
-		if config.numServers == configReplicast.sizeNgtGroup {
-			log(LogBoth, "Cannot execute the model with a single negotiating group configured, exiting..")
-			os.Exit(1)
-		}
 		log(LogBoth, "NOTE: adjusting the number of servers down, to be a multiple of negotiating group size:", config.numServers)
 	}
+	if config.numServers <= configReplicast.sizeNgtGroup {
+		log(LogBoth, "Cannot execute the model with a single negotiating group configured..")
+		if config.ValidateConfig {
+			log(LogBoth, "Exiting..")
+			os.Exit(1)
+		}
+		config.numServers = configReplicast.sizeNgtGroup * 2
+		log(LogBoth,
+			fmt.Sprintf(
+				"Resetting to sane default values: groupsize=%d Servers=%d",
+				configReplicast.sizeNgtGroup, config.numServers))
+	}
+
 	configReplicast.numNgtGroups = config.numServers / configReplicast.sizeNgtGroup
 
 	configNetwork.linkbpsData = configNetwork.linkbps * int64(configReplicast.solicitedLinkPct) / int64(100)
