@@ -43,6 +43,7 @@ import (
 )
 
 type modelEight struct {
+	ModelGeneric
 	putpipeline *Pipeline
 }
 
@@ -699,8 +700,6 @@ func (m *modelEight) newServerEight(i int) *serverEight {
 	rsrv := &serverEight{ServerUch: *srv}
 	return rsrv
 }
-
-func (m *modelEight) PreConfig() {}
 
 func (m *modelEight) PostConfig() {
 	configReplicast.bidMultiplierPct = 110

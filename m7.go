@@ -44,6 +44,7 @@ import (
 )
 
 type modelSeven struct {
+	ModelGeneric
 	putpipeline *Pipeline
 }
 
@@ -540,8 +541,6 @@ func (m *modelSeven) NewServer(i int) NodeRunnerInterface {
 	rsrv.bids = bids
 	return rsrv
 }
-
-func (m *modelSeven) PreConfig() {}
 
 func (m *modelSeven) PostConfig() {
 	configureReplicast(configNetwork.transportType == transportTypeUnicast)

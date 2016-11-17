@@ -7,6 +7,7 @@ import (
 )
 
 type modelNine struct {
+	ModelGeneric
 	putpipeline *Pipeline
 }
 
@@ -204,8 +205,6 @@ func (m *modelNine) NewServer(i int) NodeRunnerInterface {
 	rsrv.rptr = rsrv
 	return rsrv
 }
-
-func (m *modelNine) PreConfig() {}
 
 func (m *modelNine) PostConfig() {
 	m8.PostConfig()

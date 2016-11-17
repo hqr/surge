@@ -9,6 +9,7 @@ import (
 )
 
 type modelSevenPrx struct {
+	ModelGeneric
 	putpipeline *Pipeline
 }
 
@@ -831,7 +832,6 @@ func (m *modelSevenPrx) NewServer(i int) NodeRunnerInterface {
 	return prsrv
 }
 
-func (m *modelSevenPrx) PreConfig() {}
 
 func (m *modelSevenPrx) PostConfig() {
 	// minimal bid multipleir: same exact bid win done by proxy:
@@ -840,6 +840,9 @@ func (m *modelSevenPrx) PostConfig() {
 	configureReplicast(false)
 
 	dskdur2netdurPct = configStorage.dskdurationDataChunk * 100 / configNetwork.netdurationDataChunk
+}
+
+func (m *modelSevenPrx) PostBuild() {
 
 	// setup extra channels: foreach group { proxy <=> other servers in the group }
 	for firstidx := 0; firstidx < config.numServers; firstidx += configReplicast.sizeNgtGroup {

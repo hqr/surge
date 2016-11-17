@@ -64,10 +64,6 @@ func __init() {
 	allModels = make(map[ModelName]ModelInterface, maxModels)
 	allModelProps = make(map[ModelName]map[string]interface{}, maxModels)
 
-	allGateways = make([]NodeRunnerInterface, config.numGateways)
-	allServers = make([]NodeRunnerInterface, config.numServers)
-	allNodes = make([]NodeRunnerInterface, config.numGateways+config.numServers)
-
 	if config.srand == 0 {
 		rand.Seed(time.Now().UTC().UnixNano())
 	} else {
@@ -84,7 +80,30 @@ type ModelInterface interface {
 	NewServer(id int) NodeRunnerInterface
 	PreConfig()	// model can optionally define model specifc config
 	PostConfig()	// model can validate if the config is confroming to model requirements
+	PreBuild()	// model can perform custom build steps before the generic build
+	PostBuild()	// model can perform custom build steps after the generic build
 }
+
+// Model Template
+type ModelGeneric struct {
+}
+
+// abstract method
+func (mg *ModelGeneric) NewGateway(id int) NodeRunnerInterface {
+	assert(false)
+	return nil
+}
+
+// abstract method
+func (mg *ModelGeneric) NewServer(id int) NodeRunnerInterface {
+	assert(false)
+	return nil
+}
+
+func (mg *ModelGeneric) PreConfig() {}
+func (mg *ModelGeneric) PostConfig() {}
+func (mg *ModelGeneric) PreBuild() {}
+func (mg *ModelGeneric) PostBuild() {}
 
 //============================================================================
 // common functions and main loop
@@ -106,6 +125,11 @@ func NowIsDone() bool {
 //
 func buildModel(model ModelInterface, name ModelName) {
 	ij := 0
+
+	allGateways = make([]NodeRunnerInterface, config.numGateways)
+	allServers = make([]NodeRunnerInterface, config.numServers)
+	allNodes = make([]NodeRunnerInterface, config.numGateways+config.numServers)
+
 	for i := 0; i < config.numGateways; i++ {
 		runnerid := i + 1
 		allGateways[i] = model.NewGateway(runnerid)
@@ -214,14 +238,18 @@ func RunAllModels() {
 		} else {
 			runtime.GOMAXPROCS(runtime.NumCPU()) // the default
 		}
-		model, _ := allModels[name]
-		buildModel(model, name)
 
 		eventsPastDeadline = 0
 		config = configCopy
 		configNetwork = configNetworkCopy
 		configStorage = configStorageCopy
+
+		model, _ := allModels[name]
 		model.PostConfig() // Model specific configuration
+
+		model.PreBuild() // Model specific build steps before generic build
+		buildModel(model, name)
+		model.PostBuild() // Model specific build steps after generic build
 
 		//
 		// log configuration
