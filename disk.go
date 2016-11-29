@@ -68,7 +68,7 @@ func (d *Disk) Run() {
 // returns true always for now.
 //
 func (d *Disk) NowIsDone() bool {
-	if d.nextWrDone.After(Now) {
+	if d.writes <= 1 || d.nextWrDone.After(Now) {
 		return true
 	}
 
@@ -76,11 +76,20 @@ func (d *Disk) NowIsDone() bool {
 	d.qMutex.Lock()
 	pendingwbytes := d.pendingwbytes
 	pendingwbytes -= int64(configStorage.sizeDataChunk * 1024)
-	if pendingwbytes >= 0 {
+	if pendingwbytes > 0 {
 		d.pendingwbytes = pendingwbytes
+	} else {
+		d.pendingwbytes = 0
 	}
+	qSz := float64(d.pendingwbytes) / float64(configStorage.sizeDataChunk * 1024)
 	d.qMutex.Unlock()
-	d.nextWrDone = Now.Add(configStorage.dskdurationDataChunk)
+	log(LogVVV, fmt.Sprintf("one-chunk write complete, new QDepth :%v", qSz))
+
+	// TODO: The delay is not taken into account here. We need to account for
+	//       the delay as well.
+	//       Temporary workaround is to add a 12 microsecond delay which is an average
+	//       delay for window sizes between 1 and 32.
+	d.nextWrDone = Now.Add(configStorage.dskdurationDataChunk + (12 * time.Microsecond))
 
 	return true
 }
@@ -175,7 +184,8 @@ func (l *LatencyParabola) Latency(params DiskLatencyParams) time.Duration {
 
 func (d *Disk) scheduleWrite(sizebytes int) time.Duration {
 	at := sizeToDuration(sizebytes, "B", int64(d.MBps), "MB")
-	w := d.writes
+	d.writes++
+	d.writebytes += int64(sizebytes)
 
 	// Simulate adding i/o to the queue.
 	d.qMutex.Lock()
@@ -184,23 +194,26 @@ func (d *Disk) scheduleWrite(sizebytes int) time.Duration {
 	// In the current implementation, we don't differentiate i/o and all of the
 	// existing models does one chunk per i/o, we assume queu size in units of chunks.
 	// FIXME: Quesize should be in units of i/o
-	qSz := float64(d.pendingwbytes) / float64(configStorage.sizeDataChunk * 1024)
 	d.pendingwbytes += int64(sizebytes)
+	qSz := float64(d.pendingwbytes) / float64(configStorage.sizeDataChunk * 1024)
 	d.qMutex.Unlock()
 
 	latency := d.latencySim.Latency(DiskLatencyParams{qSize: qSz})
 	log(LogVV, fmt.Sprintf("Scheduling chunk write current QDepth:%v, Induced delay: %v", qSz, latency))
 	at += latency
 
-	d.writes++
-	d.writebytes += int64(sizebytes)
-	if w > 0 && Now.Before(d.lastIOdone) {
+	if d.writes == 1 {
+		d.nextWrDone = Now.Add(at)
+	}
+	if Now.Before(d.lastIOdone) {
 		d.lastIOdone = d.lastIOdone.Add(at)
+		log(LogVVV, fmt.Sprintf("next-chunk complete in :%v", d.lastIOdone.Sub(time.Time{})))
 		at1 := d.lastIOdone.Sub(Now)
 		return at1
 	}
 
 	d.lastIOdone = Now.Add(at)
+	log(LogVVV, fmt.Sprintf("next-chunk complete in :%v", d.lastIOdone.Sub(time.Time{})))
 	return at
 }
 

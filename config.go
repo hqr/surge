@@ -43,6 +43,7 @@ type Config struct {
 	ValidateConfig                       bool	// Validate configuration and error out for invalid conifgs
 	channelBuffer                        int
 	srand                                int
+	learner				     string
 	// derived
 	LogFileOrig string
 }
@@ -69,6 +70,7 @@ var config = Config{
 
 	channelBuffer: 16,
 	srand:         1,
+	learner:	"simple-learner",
 }
 
 //
@@ -196,6 +198,7 @@ func PreConfig() {
 	flag.BoolVar(&config.DEBUG, "d", config.DEBUG, "debug=true|false")
 	flag.BoolVar(&config.ValidateConfig, "validateconfig", config.ValidateConfig, "true|false. Error out on invalid config if true, else Reset to default sane values.")
 	flag.IntVar(&config.srand, "srand", config.srand, "random seed, use 0 (zero) for random seed selection")
+	flag.StringVar(&config.learner, "learner", config.learner, "Macine learning module to be used for the model")
 
 	flag.IntVar(&configStorage.numReplicas, "replicas", configStorage.numReplicas, "number of replicas")
 	flag.IntVar(&configStorage.sizeDataChunk, "chunksize", configStorage.sizeDataChunk, "chunk size (KB)")
@@ -343,6 +346,15 @@ func configureReplicast(unicastBidMultiplier bool) {
 }
 
 // Wrapper methods for flag
+func RegisterCmdlineBoolVar(dest *bool, opt string, def bool, desc string) bool {
+	if flag.Parsed() {
+		return false
+	}
+	flag.BoolVar(dest, opt, def, desc)
+
+	return true
+}
+
 func RegisterCmdlineIntVar(dest *int, opt string, def int, desc string) bool {
 	if flag.Parsed() {
 		return false

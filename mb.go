@@ -1,6 +1,7 @@
 package surge
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
 )
@@ -21,7 +22,12 @@ type gatewayB struct {
 	event      map[int64]*ReplicaPutRequestEvent
 	ack        map[int64]bool
 	flow       *FlowLong
-	cmdwinsize int
+	cmdwinsize int32
+	currwinsize int32
+	warmupwinsize	int32
+	tputcalcwinsize	int32
+	tputcalcstart	time.Time
+	learner	    LearnerInterface
 }
 
 type serverB struct {
@@ -58,7 +64,16 @@ func (r *gatewayB) finishInit() {
 	r.flow = &FlowLong{from: r, to: target, rb: r.rb, tobandwidth: configNetwork.linkbps}
 
 	w := configNetwork.cmdWindowSz
-	r.cmdwinsize = w
+	r.cmdwinsize = int32(w)
+	r.currwinsize = r.cmdwinsize
+	r.tputcalcwinsize = r.cmdwinsize * 2
+	r.warmupwinsize = r.cmdwinsize * 4
+
+	if configModelB.useml {
+		r.learner = GetLearner(config.learner)
+		r.learner.Initialize()
+		w = maxCmdWinsize
+	}
 
 	// preallocate, to avoid runtime allocations & GC
 	chunk := make([]*Chunk, w)
@@ -73,6 +88,7 @@ func (r *gatewayB) finishInit() {
 		r.event[tio.GetID()] = newReplicaPutRequestEvent(r, target, r.replica[i], tio)
 		r.ack[tio.GetID()] = true
 	}
+
 }
 
 func (r *gatewayB) rxcallbackB(ev EventInterface) int {
@@ -101,11 +117,21 @@ func (r *gatewayB) Run() {
 				continue
 			}
 			for _, tioint := range r.tios {
+				if r.currwinsize <= 0 {
+					break
+				}
+
+				if configModelB.useml && r.warmupwinsize <= 0 {
+					if r.tputcalcwinsize == r.cmdwinsize {
+						r.tputcalcstart = Now
+					}
+				}
 				tio := tioint.(*TioOffset)
 				tid := tio.GetID()
 				if !r.ack[tid] {
 					continue
 				}
+
 				// putreqev renewal
 				putreqev, ok := r.event[tid]
 				assert(ok)
@@ -121,6 +147,7 @@ func (r *gatewayB) Run() {
 				tio.next(putreqev, SmethodWait)
 				r.rb.use(int64(configNetwork.sizeControlPDU * 8))
 				r.flow.timeTxDone = Now.Add(configNetwork.durationControlPDU)
+				atomic.AddInt32(&r.currwinsize, -1)
 				break
 			}
 
@@ -135,11 +162,40 @@ func (r *gatewayB) MBwriteack(ev EventInterface) error {
 	tid := tio.GetID()
 	r.ack[tid] = true
 
+	atomic.AddInt32(&r.currwinsize, 1)
 	atomic.AddInt64(&r.replicastats, 1)
 	atomic.AddInt64(&r.chunkstats, 1)
 
 	putreqev, _ := r.event[tid]
 	chunklatency := Now.Sub(putreqev.GetCreationTime())
+
+	if r.warmupwinsize > 1 {
+		r.warmupwinsize--
+	} else if configModelB.useml {
+		r.warmupwinsize = 0
+		r.tputcalcwinsize--
+		if r.tputcalcwinsize == 0 {
+			t := Now.Sub(r.tputcalcstart)
+			bitswritten := int(r.cmdwinsize) * configStorage.sizeDataChunk * 1024 * 8
+			tput := int64(float64(bitswritten) / t.Seconds())
+
+			log(LogVVV,
+				fmt.Sprintf("Training data : cmdwindowsz: %d => Throughput: %d", r.cmdwinsize, tput))
+			r.learner.Train(r.cmdwinsize, tput)
+			opt, err := r.learner.GetOptimalWinsize()
+			oldwinsize := r.cmdwinsize
+			if err == nil {
+				r.cmdwinsize = opt
+			} else {
+				r.cmdwinsize++
+			}
+			r.tputcalcwinsize = 2 * r.cmdwinsize
+			atomic.AddInt32(&r.currwinsize, (r.cmdwinsize - oldwinsize))
+			log("recalc-windowsz",
+				fmt.Sprintf("old-windowsz: %v, new-windowsz: %v", oldwinsize, r.cmdwinsize))
+
+		}
+	}
 	x := int64(chunklatency) / 1000
 	log("chunk-done", tio.String(), "latency", chunklatency, x)
 
@@ -273,7 +329,14 @@ func (m *modelB) NewServer(i int) NodeRunnerInterface {
 	return rsrv
 }
 
+type ConfigModelBStruct struct {
+	useml	bool
+}
+
+var configModelB = ConfigModelBStruct { useml: false }
+
 func (m *modelB) PreConfig() {
 	RegisterDiskLatencySimulator(&latencyParabola)
+	RegisterCmdlineBoolVar(&configModelB.useml, "useml", configModelB.useml,  "Use Machine learning for command window calculation")
 }
 
