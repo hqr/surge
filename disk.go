@@ -87,7 +87,9 @@ func (d *Disk) NowIsDone() bool {
 
 	// TODO: The delay is not taken into account here. We need to account for
 	//       the delay as well.
-	d.nextWrDone = Now.Add(configStorage.dskdurationDataChunk)
+	//       Temporary workaround is to add a 12 microsecond delay which is an average
+	//       delay for window sizes between 1 and 32.
+	d.nextWrDone = Now.Add(configStorage.dskdurationDataChunk + (12 * time.Microsecond))
 
 	return true
 }

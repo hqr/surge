@@ -179,6 +179,8 @@ func (r *gatewayB) MBwriteack(ev EventInterface) error {
 			bitswritten := int(r.cmdwinsize) * configStorage.sizeDataChunk * 1024 * 8
 			tput := int64(float64(bitswritten) / t.Seconds())
 
+			log(LogVVV,
+				fmt.Sprintf("Training data : cmdwindowsz: %d => Throughput: %d", r.cmdwinsize, tput))
 			r.learner.Train(r.cmdwinsize, tput)
 			opt, err := r.learner.GetOptimalWinsize()
 			oldwinsize := r.cmdwinsize
@@ -188,7 +190,6 @@ func (r *gatewayB) MBwriteack(ev EventInterface) error {
 				r.cmdwinsize++
 			}
 			r.tputcalcwinsize = 2 * r.cmdwinsize
-			//atomic.StoreInt32(&r.currwinsize, r.cmdwinsize)
 			atomic.AddInt32(&r.currwinsize, (r.cmdwinsize - oldwinsize))
 			log("recalc-windowsz",
 				fmt.Sprintf("old-windowsz: %v, new-windowsz: %v", oldwinsize, r.cmdwinsize))
