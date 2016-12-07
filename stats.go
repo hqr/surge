@@ -46,11 +46,11 @@ type ModelStatsDescriptors struct {
 type RunnerStats map[string]int64 // all named stats counters for a given Runner (server | gateway | Disk ...)
 
 type ModelStats struct {
-	totalgwy     map[string]int64
-	totalsrv     map[string]int64
+	totalgwy       map[string]int64
+	totalsrv       map[string]int64
 	allRunnerStats []RunnerStats
-	iter         int64
-	lastUpdateTs time.Time
+	iter           int64
+	lastUpdateTs   time.Time
 }
 
 //
@@ -178,7 +178,7 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 			}
 		}
 		if len(newrxbytes) > 0 {
-			log(fmt.Sprintf("new-srv-%s,%s", n, strings.TrimSuffix(newrxbytes, ",")))
+			log(LogV, fmt.Sprintf("new-srv-%s,%s", n, strings.TrimSuffix(newrxbytes, ",")))
 		}
 
 		// log one iteration

@@ -341,7 +341,7 @@ func (r *serverFive) M5putrequest(ev EventInterface) error {
 
 	// assuming (! FIXME) the new chunk has already arrived,
 	// compute disk queue delay with respect to the configured maxDiskQueueChunks
-	diskIOdone := r.disk.lastIOdone
+	diskIOdone := r.disk.lastIOdone()
 	delay := diskdelay(Now, diskIOdone)
 
 	f := r.flowsfrom.get(gwy, false)
@@ -385,7 +385,7 @@ func (m *modelFive) NewGateway(i int) NodeRunnerInterface {
 }
 
 func (m *modelFive) NewServer(i int) NodeRunnerInterface {
-	srv := NewServerUchRegChannels(i, m5.putpipeline)
+	srv := NewServerUchRegChannels(i, m5.putpipeline, DtypeConstLatency)
 
 	// receive side ratebucket use()-d directly by remote senders
 	srv.rb = NewRateBucketProtected(
@@ -404,7 +404,6 @@ func (m *modelFive) PostConfig() {
 	configNetwork.durationControlPDU =
 		time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
 }
-
 
 //==================================================================
 //

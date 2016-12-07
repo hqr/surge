@@ -418,9 +418,9 @@ func (r *serverSeven) Run() {
 				r.bids.deleteBid(k)
 				// read
 				if bid.tio.repnum == 50 {
-					r.disk.lastIOdone = r.disk.lastIOdone.Add(configStorage.dskdurationDataChunk)
+					r.disk.scheduleRead(configStorage.sizeDataChunk * 1024)
 					r.addBusyDuration(configStorage.sizeDataChunk*1024, configStorage.diskbps, DiskBusy)
-					log("read", bid.tio.String(), fmt.Sprintf("%-12.10v", r.disk.lastIOdone.Sub(time.Time{})))
+					log("read", bid.tio.String(), fmt.Sprintf("%-12.10v", r.disk.lastIOdone().Sub(time.Time{})))
 				}
 			}
 		default:
@@ -465,7 +465,7 @@ func (r *serverSeven) M7requestng(ev EventInterface) error {
 
 	// assuming (! FIXME) the new chunk has already arrived,
 	// compute disk queue delay with respect to the configured maxDiskQueueChunks
-	diskIOdone := r.disk.lastIOdone
+	diskIOdone := r.disk.lastIOdone()
 	delay := diskdelay(Now, diskIOdone)
 
 	var bid *PutBid
@@ -533,7 +533,7 @@ func (m *modelSeven) NewGateway(i int) NodeRunnerInterface {
 }
 
 func (m *modelSeven) NewServer(i int) NodeRunnerInterface {
-	srv := NewServerUchRegChannels(i, m7.putpipeline)
+	srv := NewServerUchRegChannels(i, m7.putpipeline, DtypeConstLatency)
 	rsrv := &serverSeven{ServerUch: *srv}
 	rsrv.ServerUch.rptr = rsrv
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)
@@ -549,4 +549,3 @@ func (m *modelSeven) PostConfig() {
 		configReplicast.minduration = configNetwork.netdurationDataChunk + configNetwork.netdurationFrame*(x/3)
 	}
 }
-

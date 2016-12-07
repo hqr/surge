@@ -208,7 +208,6 @@ func (r *serverB) rxcallbackB(ev EventInterface) int {
 
 func (r *serverB) Run() {
 	r.state = RstateRunning
-	r.disk.SetDiskLatencySimulatorByname(configStorage.diskLatencySim)
 
 	go func() {
 		for r.state == RstateRunning {
@@ -263,7 +262,7 @@ func (m *modelB) NewGateway(i int) NodeRunnerInterface {
 }
 
 func (m *modelB) NewServer(i int) NodeRunnerInterface {
-	srv := NewServerUchRegChannels(i, mB.putpipeline)
+	srv := NewServerUchRegChannels(i, mB.putpipeline, DtypeVarLatency) // TODO: tbd
 
 	srv.rb = &DummyRateBucket{}
 
@@ -273,7 +272,4 @@ func (m *modelB) NewServer(i int) NodeRunnerInterface {
 	return rsrv
 }
 
-func (m *modelB) PreConfig() {
-	RegisterDiskLatencySimulator(&latencyParabola)
-}
-
+func (m *modelB) Configure() {}

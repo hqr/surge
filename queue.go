@@ -191,12 +191,14 @@ func (q *RxQueue) processPendingEvents(rxcallback processEventCb) int {
 			diff := Now.Sub(t)
 			if diff > config.timeIncStep && diff > time.Nanosecond*10 {
 				eventsPastDeadline++
+				warn := "WARNING: receiving event past deadline"
 				if diff >= config.timeClusterTrip && diff >= time.Microsecond {
-					log(LogBoth, "WARNING: past trigger time", diff, eventsPastDeadline)
+					log(LogBoth, warn, diff, eventsPastDeadline)
 				} else {
-					log("WARNING: past trigger time", diff, eventsPastDeadline)
+					log(warn, diff, eventsPastDeadline)
 				}
 			}
+
 		}
 	}
 	return totalsize
@@ -326,10 +328,11 @@ func (q *RxQueueSorted) processPendingEvents(rxcallback processEventCb) int {
 			diff := Now.Sub(t)
 			if diff > config.timeIncStep && diff > time.Nanosecond*10 {
 				eventsPastDeadline++
+				warn := "WARNING: receiving timed event past deadline"
 				if diff >= config.timeClusterTrip && diff >= time.Microsecond {
-					log(LogBoth, "WARNING: past trigger time", diff, ev.String(), eventsPastDeadline)
+					log(LogBoth, warn, diff, ev.String(), eventsPastDeadline)
 				} else {
-					log("WARNING: past trigger time", diff, ev.String(), eventsPastDeadline)
+					log(warn, diff, ev.String(), eventsPastDeadline)
 				}
 			}
 		}

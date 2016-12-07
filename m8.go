@@ -604,7 +604,7 @@ func (r *serverEight) M8requestng(ev EventInterface) error {
 
 	// assuming (! FIXME) the new chunk has already arrived,
 	// compute disk queue delay with respect to the configured maxDiskQueueChunks
-	diskIOdone := r.disk.lastIOdone
+	diskIOdone := r.disk.lastIOdone()
 	delay := diskdelay(Now, diskIOdone)
 
 	var bid *PutBid
@@ -696,7 +696,7 @@ func (m *modelEight) NewServer(i int) NodeRunnerInterface {
 }
 
 func (m *modelEight) newServerEight(i int) *serverEight {
-	srv := NewServerUchRegChannels(i, m8.putpipeline)
+	srv := NewServerUchRegChannels(i, m8.putpipeline, DtypeConstLatency)
 	rsrv := &serverEight{ServerUch: *srv}
 	return rsrv
 }
@@ -710,4 +710,3 @@ func (m *modelEight) PostConfig() {
 	}
 	configReplicast.minduration = configReplicast.durationBidWindow - config.timeClusterTrip
 }
-

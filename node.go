@@ -377,7 +377,7 @@ func (r *GatewayMcast) NowIsDone() bool {
 type ServerUch struct {
 	NodeRunnerBase
 	flowsfrom      *FlowDir
-	disk           *Disk
+	disk           DiskInterface
 	rptr           NodeRunnerInterface // real object
 	putpipeline    *Pipeline           // tio pipeline
 	rxbusydata     int64               // time.Duration receive-link busy for data
@@ -393,7 +393,7 @@ type ServerUch struct {
 //
 // (compare with NewServerUchExtraChannels)
 //
-func NewServerUchRegChannels(i int, p *Pipeline) *ServerUch {
+func NewServerUchRegChannels(i int, p *Pipeline, dtype DiskTypeEnum) *ServerUch {
 	rbase := NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}
 	srv := &ServerUch{NodeRunnerBase: rbase}
 
@@ -403,14 +403,14 @@ func NewServerUchRegChannels(i int, p *Pipeline) *ServerUch {
 	//
 	srv.init(config.numGateways)
 
-	srv.disk = NewDisk(srv, configStorage.diskMBps)
+	srv.disk = NewDisk(srv, configStorage.diskMBps, dtype)
 	srv.timeResetStats = Now
 
 	return srv
 }
 
 // (compare with NewServerUchRegChannels)
-func NewServerUchExtraChannels(i int, p *Pipeline) *ServerUch {
+func NewServerUchExtraChannels(i int, p *Pipeline, dtype DiskTypeEnum) *ServerUch {
 	rbase := NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}
 	srv := &ServerUch{NodeRunnerBase: rbase}
 
@@ -421,14 +421,10 @@ func NewServerUchExtraChannels(i int, p *Pipeline) *ServerUch {
 	//
 	srv.initPeerChannels(config.numGateways)
 
-	srv.disk = NewDisk(srv, configStorage.diskMBps)
+	srv.disk = NewDisk(srv, configStorage.diskMBps, dtype)
 	srv.timeResetStats = Now
 
 	return srv
-}
-
-func (r *ServerUch) NowIsDone() bool {
-	return r.disk.NowIsDone() && r.NodeRunnerBase.NowIsDone()
 }
 
 func (r *ServerUch) realobject() NodeRunnerInterface {

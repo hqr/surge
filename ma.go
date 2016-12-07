@@ -303,10 +303,10 @@ func (r *serverSevenX) rxcallback(ev EventInterface) int {
 			r.bids.deleteBid(k)
 			// read
 			if bid.win.right.Sub(bid.win.left) > configReplicast.durationBidWindow {
-				tio := ev.GetTio().(*TioRr)
-				r.disk.lastIOdone = r.disk.lastIOdone.Add(configStorage.dskdurationDataChunk)
+				tio := ev.GetTio()
+				r.disk.scheduleRead(configStorage.sizeDataChunk * 1024)
 				r.addBusyDuration(configStorage.sizeDataChunk*1024, configStorage.diskbps, DiskBusy)
-				log("read", tio.String(), fmt.Sprintf("%-12.10v", r.disk.lastIOdone.Sub(time.Time{})))
+				log("read", tio.String(), fmt.Sprintf("%-12.10v", r.disk.lastIOdone().Sub(time.Time{})))
 			}
 
 			r.notifyProxyBidDone(bid)
@@ -353,7 +353,7 @@ func (r *serverSevenX) notifyProxyBidDone(bid *PutBid) {
 		assert(bid == q0.pending[0])
 		q0.deleteBid(0)
 
-		proxy.update_reservedIOdone(0, r.disk.lastIOdone)
+		proxy.update_reservedIOdone(0, r.disk.lastIOdone())
 		return
 	}
 	// resolve proxy
@@ -364,7 +364,7 @@ func (r *serverSevenX) notifyProxyBidDone(bid *PutBid) {
 	proxy = allServers[firstidx].(*serverSevenProxy)
 
 	// create bid-done event
-	bdoneEvent := newBidDoneEvent(r, proxy, bid, r.disk.lastIOdone)
+	bdoneEvent := newBidDoneEvent(r, proxy, bid, r.disk.lastIOdone())
 	log(LogV, "notify-bid-done", bdoneEvent.String())
 
 	// send
@@ -784,7 +784,7 @@ func (m *modelSevenPrx) NewGateway(i int) NodeRunnerInterface {
 //        Rx bursts beyond linkbpsControl
 func (m *modelSevenPrx) NewServer(i int) NodeRunnerInterface {
 	// first, init only the regular to/from gateways' channels
-	srv := NewServerUchExtraChannels(i, mA.putpipeline)
+	srv := NewServerUchExtraChannels(i, mA.putpipeline, DtypeConstLatency)
 
 	rsrv := &serverSevenX{ServerUch: *srv}
 	bids := NewServerSparseBidQueue(rsrv, 0)
@@ -832,7 +832,6 @@ func (m *modelSevenPrx) NewServer(i int) NodeRunnerInterface {
 	return prsrv
 }
 
-
 func (m *modelSevenPrx) PostConfig() {
 	// minimal bid multipleir: same exact bid win done by proxy:
 	// no need to increase the "overlapping" chance
@@ -859,4 +858,3 @@ func (m *modelSevenPrx) PostBuild() {
 		}
 	}
 }
-

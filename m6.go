@@ -368,7 +368,7 @@ func (r *serverSix) M6putrequest(ev EventInterface) error {
 
 	// assuming (! FIXME) the new chunk has already arrived,
 	// compute disk queue delay with respect to the configured maxDiskQueueChunks
-	diskIOdone := r.disk.lastIOdone
+	diskIOdone := r.disk.lastIOdone()
 	delay := diskdelay(Now, diskIOdone)
 
 	f := r.flowsfrom.get(gwy, false)
@@ -411,7 +411,7 @@ func (m *modelSix) NewGateway(i int) NodeRunnerInterface {
 }
 
 func (m *modelSix) NewServer(i int) NodeRunnerInterface {
-	srv := NewServerUchRegChannels(i, m6.putpipeline)
+	srv := NewServerUchRegChannels(i, m6.putpipeline, DtypeConstLatency)
 
 	// receive side ratebucket use()-d directly by remote senders
 	srv.rb = NewRateBucketProtected(

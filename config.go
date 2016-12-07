@@ -40,7 +40,7 @@ type Config struct {
 	realtimeLogStats                     time.Duration
 	LogFile                              string
 	DEBUG                                bool
-	ValidateConfig                       bool	// Validate configuration and error out for invalid conifgs
+	ValidateConfig                       bool // Validate configuration and error out for invalid configs
 	channelBuffer                        int
 	srand                                int
 	// derived
@@ -89,13 +89,13 @@ type ConfigStorage struct {
 }
 
 var configStorage = ConfigStorage{
-	numReplicas:   3,
-	sizeDataChunk: 128, // KB
-	sizeMetaChunk: 1,   // KB
-	diskMBps:      400, // MB/sec
-	maxDiskQueue:  256, // KB
-	read:          false,
-	diskLatencySim:	"latency-nil",
+	numReplicas:    3,
+	sizeDataChunk:  128, // KB
+	sizeMetaChunk:  1,   // KB
+	diskMBps:       400, // MB/sec
+	maxDiskQueue:   256, // KB
+	read:           false,
+	diskLatencySim: "latency-nil",
 }
 
 //
@@ -114,7 +114,7 @@ type ConfigNetwork struct {
 	durationControlPDU   time.Duration
 	linkbpsControl       int64
 	linkbpsData          int64
-	cmdWindowSz          int   // cmd Window size in number of chunks.
+	cmdWindowSz          int // cmd window size in number of chunks
 	netdurationDataChunk time.Duration
 	netdurationFrame     time.Duration
 }
@@ -129,7 +129,7 @@ var configNetwork = ConfigNetwork{
 	sizeControlPDU: 300,  // control PDU size (bytes); note that unicast use 100B default; see note above
 	overheadpct:    1,    // L2 + L3 + L4 + L5 + arp, etc. overhead (%)
 
-	cmdWindowSz:	2,
+	cmdWindowSz: 2,
 
 	transportType: transportTypeDefault, // transportType* const above
 }
