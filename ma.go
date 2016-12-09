@@ -833,7 +833,7 @@ func (m *modelSevenPrx) NewServer(i int) NodeRunnerInterface {
 }
 
 func (m *modelSevenPrx) PostConfig() {
-	// minimal bid multipleir: same exact bid win done by proxy:
+	// minimal bid multiplier: same exact bid win done by proxy:
 	// no need to increase the "overlapping" chance
 	configReplicast.bidMultiplierPct = 140
 	configureReplicast(false)
@@ -841,9 +841,8 @@ func (m *modelSevenPrx) PostConfig() {
 	dskdur2netdurPct = configStorage.dskdurationDataChunk * 100 / configNetwork.netdurationDataChunk
 }
 
+// setup extra channels: foreach group { proxy <=> other servers in the group }
 func (m *modelSevenPrx) PostBuild() {
-
-	// setup extra channels: foreach group { proxy <=> other servers in the group }
 	for firstidx := 0; firstidx < config.numServers; firstidx += configReplicast.sizeNgtGroup {
 		ngid := firstidx/configReplicast.sizeNgtGroup + 1
 		ngobj := NewNgtGroup(ngid)

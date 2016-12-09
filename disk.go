@@ -26,6 +26,8 @@ const (
 //
 type DiskInterface interface {
 	String() string
+	GetMBps() int
+	SetMBps(mbps int)
 	scheduleWrite(sizebytes int) time.Duration
 	scheduleRead(sizebytes int)
 	queueDepth(in DiskQueueDepthEnum) (int, time.Duration)
@@ -37,13 +39,14 @@ type DiskInterface interface {
 //
 func NewDisk(r NodeRunnerInterface, mbps int, dtype DiskTypeEnum) DiskInterface {
 	var d DiskInterface
+	chduration := sizeToDuration(configStorage.sizeDataChunk, "KB", int64(mbps), "MB")
 	switch dtype {
 	case DtypeVarLatency:
-		dc := &DiskConstLatency{node: r, MBps: mbps, iodone: Now}
+		dc := &DiskConstLatency{node: r, MBps: mbps, iodone: Now, dskdurationDataChunk: chduration}
 		d = &DiskVarLatency{*dc, Now}
 	default:
 		assert(dtype == DtypeConstLatency)
-		d = &DiskConstLatency{node: r, MBps: mbps, iodone: Now}
+		d = &DiskConstLatency{node: r, MBps: mbps, iodone: Now, dskdurationDataChunk: chduration}
 	}
 	return d
 }
@@ -55,18 +58,27 @@ func NewDisk(r NodeRunnerInterface, mbps int, dtype DiskTypeEnum) DiskInterface 
 //==================================================================
 type DiskConstLatency struct {
 	node       NodeRunnerInterface // host
-	MBps       int
-	reserved   int
 	iodone     time.Time
 	writes     int64
 	reads      int64 // niy
 	writebytes int64
 	readbytes  int64 // niy
+	MBps       int   // disk throughput
+	// computed
+	dskdurationDataChunk time.Duration
 }
 
 func (d *DiskConstLatency) String() string {
 	numchunks, _ := d.queueDepth(DqdChunks)
 	return fmt.Sprintf("diskc-%s,w#%d,r#%d,queue#%d", d.node.String(), d.writes, d.reads, numchunks)
+}
+
+func (d *DiskConstLatency) GetMBps() int {
+	return d.MBps
+}
+
+func (d *DiskConstLatency) SetMBps(mbps int) {
+	d.MBps = mbps
 }
 
 func (d *DiskConstLatency) scheduleWrite(sizebytes int) time.Duration {
@@ -89,7 +101,7 @@ func (d *DiskConstLatency) scheduleWrite(sizebytes int) time.Duration {
 func (d *DiskConstLatency) scheduleRead(sizebytes int) {
 	d.reads++
 	d.readbytes += int64(sizebytes)
-	d.iodone = d.iodone.Add(configStorage.dskdurationDataChunk)
+	d.iodone = d.iodone.Add(d.dskdurationDataChunk)
 }
 
 func (d *DiskConstLatency) queueDepth(in DiskQueueDepthEnum) (int, time.Duration) {
@@ -99,7 +111,7 @@ func (d *DiskConstLatency) queueDepth(in DiskQueueDepthEnum) (int, time.Duration
 	diff := d.iodone.Sub(Now)
 	// round up as well
 	if in == DqdChunks {
-		numDiskQueueChunks := (int64(diff) + int64(configStorage.dskdurationDataChunk/2)) / int64(configStorage.dskdurationDataChunk)
+		numDiskQueueChunks := (int64(diff) + int64(d.dskdurationDataChunk/2)) / int64(d.dskdurationDataChunk)
 		return int(numDiskQueueChunks), diff
 	}
 	assert(in == DqdBuffers)
@@ -144,13 +156,13 @@ func (d *DiskVarLatency) extraLatency(numchunks int) time.Duration {
 	case numchunks < 4:
 		return 0
 	case numchunks < 8:
-		return configStorage.dskdurationDataChunk
+		return d.dskdurationDataChunk
 	case numchunks < 12:
-		return 2 * configStorage.dskdurationDataChunk
+		return 2 * d.dskdurationDataChunk
 	case numchunks < 16:
-		return 4 * configStorage.dskdurationDataChunk
+		return 4 * d.dskdurationDataChunk
 	}
-	return 8 * configStorage.dskdurationDataChunk
+	return 8 * d.dskdurationDataChunk
 }
 
 func (d *DiskVarLatency) lastIOdone() time.Time {

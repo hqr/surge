@@ -271,5 +271,3 @@ func (m *modelB) NewServer(i int) NodeRunnerInterface {
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)
 	return rsrv
 }
-
-func (m *modelB) Configure() {}

@@ -17,7 +17,11 @@ var build string
 // TODO: Redesign the verbosity command line option
 //       This is just to have the old behaviour with the current framework
 //       This is a bit ugly and needs to be revisted
-var q, v, vv, vvv, vvvv bool
+type verbosity_vars struct {
+	q, v, vv, vvv, vvvv bool
+}
+
+var verbosity = verbosity_vars{}
 
 const (
 	transportTypeDefault   = "default" // default for the model (or, the only supported)
@@ -187,11 +191,11 @@ func PreConfig() {
 
 	flag.StringVar(&config.LogFile, "log", config.LogFile, "log file, use -log=\"\" for stdout")
 
-	flag.BoolVar(&q, "q", false, "quiet mode, minimal logging")
-	flag.BoolVar(&v, "v", false, "verbose")
-	flag.BoolVar(&vv, "vv", false, "verbose-verbose")
-	flag.BoolVar(&vvv, "vvv", false, "super-verbose")
-	flag.BoolVar(&vvvv, "vvvv", false, "extra-super-verbose")
+	flag.BoolVar(&verbosity.q, "q", false, "quiet mode, minimal logging")
+	flag.BoolVar(&verbosity.v, "v", false, "verbose")
+	flag.BoolVar(&verbosity.vv, "vv", false, "verbose-verbose")
+	flag.BoolVar(&verbosity.vvv, "vvv", false, "super-verbose")
+	flag.BoolVar(&verbosity.vvvv, "vvvv", false, "extra-super-verbose")
 
 	flag.BoolVar(&config.DEBUG, "d", config.DEBUG, "debug=true|false")
 	flag.BoolVar(&config.ValidateConfig, "validateconfig", config.ValidateConfig, "true|false. Error out on invalid config if true, else Reset to default sane values.")
@@ -241,15 +245,15 @@ func PostConfig() {
 
 	config.LogFileOrig = config.LogFile
 
-	if q {
+	if verbosity.q {
 		config.LogLevel = ""
-	} else if v {
+	} else if verbosity.v {
 		config.LogLevel = LogV
-	} else if vv {
+	} else if verbosity.vv {
 		config.LogLevel = LogVV
-	} else if vvv {
+	} else if verbosity.vvv {
 		config.LogLevel = LogVVV
-	} else if vvvv {
+	} else if verbosity.vvvv {
 		config.LogLevel = LogVVVV
 	}
 
