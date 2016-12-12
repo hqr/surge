@@ -2,7 +2,6 @@ package surge
 
 import (
 	"fmt"
-	"math/rand"
 	"sync/atomic"
 	"time"
 )
@@ -81,6 +80,7 @@ type targetCssd struct {
 	targetCcommon
 	usedKB    int64 // <= ssdCapacityGB * 1000 * 1000
 	migration map[int]*FlowLong
+	hddidx    int
 }
 
 //======================================================================
@@ -272,7 +272,9 @@ func (r *targetCcommon) rxcallbackB(ev EventInterface) int {
 		rr.receiveReplicaData(tioevent)
 	case *DataMigrationEvent:
 		migev := ev.(*DataMigrationEvent)
-		log("rxcallback: migration data", migev.String())
+		thdd := r.realobject().(*targetChdd)
+		log("rxcallback: migration data", thdd.String(), migev.String())
+		thdd.receiveMigrationData(migev)
 	default:
 		assert(false)
 	}
@@ -303,15 +305,21 @@ func (r *targetCcommon) MBwritebegin(ev EventInterface) error {
 //
 //==================================================================
 func (r *targetChdd) receiveReplicaData(ev *ReplicaDataEvent) int {
-	tio := ev.GetTio()
-	//
 	// queue to disk and ACK right away
 	atdisk := r.disk.scheduleWrite(ev.GetSize())
 	gwy := ev.GetSource()
+	tio := ev.GetTio()
 	putackev := newReplicaPutAckEvent(r, gwy, tio, atdisk)
 	tio.next(putackev, SmethodWait)
 
 	log("hdd-write-received", tio.String(), atdisk)
+	return ReplicaDone
+}
+
+func (r *targetChdd) receiveMigrationData(migev *DataMigrationEvent) int {
+	// queue to disk and ACK right away
+	atdisk := r.disk.scheduleWrite(migev.GetSize())
+	log("hdd-migration-received", r.String(), atdisk)
 	return ReplicaDone
 }
 
@@ -322,7 +330,6 @@ func (r *targetChdd) receiveReplicaData(ev *ReplicaDataEvent) int {
 //==================================================================
 func (r *targetCssd) receiveReplicaData(ev *ReplicaDataEvent) int {
 	tio := ev.GetTio()
-	//
 	// queue to disk and ACK right away
 	atdisk := r.disk.scheduleWrite(ev.GetSize())
 	gwy := ev.GetSource()
@@ -330,25 +337,46 @@ func (r *targetCssd) receiveReplicaData(ev *ReplicaDataEvent) int {
 	tio.next(putackev, SmethodWait)
 	log("ssd-write-received", tio.String(), atdisk)
 
-	// TODO FIXME: low/high wm-controlled migration here - randomize for now
-	if rand.Intn(3) == 1 {
-		tidx := rand.Intn(config.numServers)
-		target := allServers[tidx]
-		targetid := target.GetID()
-		if targetid != cssdID {
-			flow := r.migration[targetid]
-			migev := newDataMigrationEvent(r, target, flow, configStorage.sizeDataChunk*1024)
-			if flow.timeTxDone.Before(Now) {
-				log("ssd-migrate", flow.String())
-				// FIXME: encapsulate as r.Send(migev, SmethodWait)
-				txch, _ := r.getExtraChannels(target)
-				txch <- migev
-				r.rb.use(c_config.newwritebits)
-				flow.timeTxDone = Now.Add(configNetwork.netdurationDataChunk)
-			}
+	r.usedKB += int64(ev.GetSize())
+	// if enough space do nothing
+	x := r.usedKB*100/int64(c_config.ssdCapacityGB)/1000/1000 + 1
+	if x <= int64(c_config.ssdLowmark) {
+		return ReplicaDone
+	}
+	for true {
+		if r.migrate() {
+			break
 		}
 	}
 	return ReplicaDone
+}
+
+// FIXME: initial naive impl
+func (r *targetCssd) migrate() bool {
+	// round robin
+	r.hddidx = (r.hddidx + 1) % config.numServers
+	if allServers[r.hddidx].GetID() == cssdID {
+		r.hddidx = (r.hddidx + 1) % config.numServers
+	}
+
+	// FIXME: low/high wm migration - throttle accordingly
+	target := allServers[r.hddidx]
+	targetid := target.GetID()
+	flow := r.migration[targetid]
+	migev := newDataMigrationEvent(r, target, flow, configStorage.sizeDataChunk*1024)
+	if flow.timeTxDone.After(Now) {
+		time.Sleep(config.timeIncStep)
+		return false
+	}
+	log("ssd-migrate", flow.String())
+	// FIXME: encapsulate as r.Send(migev, SmethodWait)
+	txch, _ := r.getExtraChannels(target)
+	txch <- migev
+	r.rb.use(c_config.newwritebits)
+	flow.timeTxDone = Now.Add(configNetwork.netdurationDataChunk)
+
+	r.usedKB -= int64(configStorage.sizeDataChunk * 1024)
+	return true
 }
 
 //==================================================================
@@ -413,8 +441,8 @@ func (m *modelC) PreConfig() {
 	c_config.linkbps = 100 * 1000 * 1000 * 1000
 	c_config.ssdcmdwin = 4
 	c_config.ssdThroughputMBps = 700
-	c_config.ssdCapacityGB = 512
-	c_config.ssdLowmark = 60
+	c_config.ssdCapacityGB = 16
+	c_config.ssdLowmark = 20
 	c_config.ssdHighmark = 80
 	c_config.hddcmdwin = 8
 	c_config.hddThroughputMBps = 90
