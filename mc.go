@@ -1,6 +1,8 @@
 package surge
 
 import (
+	"fmt"
+	"math/rand"
 	"sync/atomic"
 	"time"
 )
@@ -72,11 +74,13 @@ type targetCcommon struct {
 
 type targetChdd struct {
 	targetCcommon
+	tssd *targetCssd
 }
 
 type targetCssd struct {
 	targetCcommon
-	usedKB int64 // <= ssdCapacityGB * 1000 * 1000
+	usedKB    int64 // <= ssdCapacityGB * 1000 * 1000
+	migration map[int]*FlowLong
 }
 
 //======================================================================
@@ -105,21 +109,21 @@ func init() {
 //
 //==================================================================
 func (r *gatewayC) postBuildInit() {
+	// because (local) initiator's memory bw >> any disk bw
 	// r.rb = NewRateBucket(c_config.newwritebits, c_config.linkbps, 0)
 	r.rb = &DummyRateBucket{}
-
+	var tssd *targetCssd
 	r.tgtrts = make(map[int]*tgtrt, config.numServers)
 	// init per target runtime
 	for i := 0; i < config.numServers; i++ {
 		t := tgtrt{}
 		t.target = allServers[i]
 		t.flow = &FlowLong{from: r, to: t.target, rb: r.rb, tobandwidth: c_config.linkbps}
-
 		w := c_config.hddcmdwin
 		if t.target.GetID() == cssdID {
 			w = c_config.ssdcmdwin
+			tssd = t.target.(*targetCssd)
 		}
-
 		t.replica = make([]*PutReplica, w)
 		t.ctrlevent = make(map[int64]*ReplicaPutRequestEvent, w)
 		t.dataevent = make(map[int64]*ReplicaDataEvent, w)
@@ -138,6 +142,18 @@ func (r *gatewayC) postBuildInit() {
 			t.ack[tid] = true
 		}
 		r.tgtrts[t.target.GetID()] = &t
+	}
+	// init targets (NOTE: grouping/raiding not supported)
+	tssd.migration = make(map[int]*FlowLong, config.numServers-1)
+	for i := 0; i < config.numServers; i++ {
+		tin := allServers[i]
+		targetid := tin.GetID()
+		if targetid != cssdID {
+			thdd := tin.(*targetChdd)
+			thdd.tssd = tssd
+
+			tssd.migration[targetid] = &FlowLong{from: tssd, to: thdd, rb: tssd.rb, tobandwidth: c_config.linkbps}
+		}
 	}
 }
 
@@ -239,13 +255,14 @@ func (r *gatewayC) MBwriteack(ev EventInterface) error {
 //
 //==================================================================
 func (r *targetCcommon) rxcallbackB(ev EventInterface) int {
-	tio := ev.GetTio()
 	switch ev.(type) {
 	case *ReplicaPutRequestEvent:
+		tio := ev.GetTio()
 		tioevent := ev.(*ReplicaPutRequestEvent)
 		log("rxcallback: new write", tioevent.String(), tio.String())
 		tio.doStage(r.realobject())
 	case *ReplicaDataEvent:
+		tio := ev.GetTio()
 		tioevent := ev.(*ReplicaDataEvent)
 		log("rxcallback: replica data", tioevent.String(), tio.String())
 		//
@@ -253,6 +270,9 @@ func (r *targetCcommon) rxcallbackB(ev EventInterface) int {
 		//
 		rr := r.realobject().(replicaReceiverInterface)
 		rr.receiveReplicaData(tioevent)
+	case *DataMigrationEvent:
+		migev := ev.(*DataMigrationEvent)
+		log("rxcallback: migration data", migev.String())
 	default:
 		assert(false)
 	}
@@ -308,10 +328,26 @@ func (r *targetCssd) receiveReplicaData(ev *ReplicaDataEvent) int {
 	gwy := ev.GetSource()
 	putackev := newReplicaPutAckEvent(r, gwy, tio, atdisk)
 	tio.next(putackev, SmethodWait)
-
-	// TODO: low, high watermark migration here..
-
 	log("ssd-write-received", tio.String(), atdisk)
+
+	// TODO FIXME: low/high wm-controlled migration here - randomize for now
+	if rand.Intn(3) == 1 {
+		tidx := rand.Intn(config.numServers)
+		target := allServers[tidx]
+		targetid := target.GetID()
+		if targetid != cssdID {
+			flow := r.migration[targetid]
+			migev := newDataMigrationEvent(r, target, flow, configStorage.sizeDataChunk*1024)
+			if flow.timeTxDone.Before(Now) {
+				log("ssd-migrate", flow.String())
+				// FIXME: encapsulate as r.Send(migev, SmethodWait)
+				txch, _ := r.getExtraChannels(target)
+				txch <- migev
+				r.rb.use(c_config.newwritebits)
+				flow.timeTxDone = Now.Add(configNetwork.netdurationDataChunk)
+			}
+		}
+	}
 	return ReplicaDone
 }
 
@@ -344,7 +380,7 @@ func (m *modelC) newServerSsd(runnerid int) NodeRunnerInterface {
 
 	csrv := &targetCcommon{*srv}
 
-	rsrv := &targetCssd{*csrv, 0} // postbuild will set initial capacity
+	rsrv := &targetCssd{targetCcommon: *csrv} // postbuild will set remaining fields
 	rsrv.ServerUch.rptr = rsrv
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)
 
@@ -360,7 +396,7 @@ func (m *modelC) newServerHdd(runnerid int) NodeRunnerInterface {
 
 	csrv := &targetCcommon{*srv}
 
-	rsrv := &targetChdd{*csrv}
+	rsrv := &targetChdd{targetCcommon: *csrv} // postbuild will finalize
 	rsrv.ServerUch.rptr = rsrv
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways+1) // plus ssd => hdd migration
 
@@ -371,7 +407,7 @@ func (m *modelC) newServerHdd(runnerid int) NodeRunnerInterface {
 
 // (c) model specific config
 // the model transmits chunks in one shot (no network => no framing)
-// FIXME: harcoded, use flags
+// TODO: harcoded, use flags
 func (m *modelC) PreConfig() {
 	// this model's config
 	c_config.linkbps = 100 * 1000 * 1000 * 1000
@@ -399,7 +435,7 @@ func (m *modelC) PreConfig() {
 }
 
 func (m *modelC) PostBuild() {
-	assert(config.numGateways == 1)
+	assert(config.numGateways == 1, "mc: multiple initiators not supported yet")
 	for i := 0; i < config.numGateways; i++ {
 		gwy := allGateways[i].(*gatewayC)
 		gwy.postBuildInit()
@@ -420,4 +456,23 @@ func (m *modelC) PostBuild() {
 			thdd.setExtraChannels(tssd, 0, rxch, txch)
 		}
 	}
+}
+
+//==================================================================
+//
+// events
+//
+//==================================================================
+type DataMigrationEvent struct {
+	zDataEvent
+}
+
+func newDataMigrationEvent(from NodeRunnerInterface, to NodeRunnerInterface, flow FlowInterface, size int) *DataMigrationEvent {
+	at := configNetwork.netdurationDataChunk + config.timeClusterTrip
+	timedev := newTimedAnyEvent(from, at, to, size)
+	return &DataMigrationEvent{zDataEvent{zEvent{*timedev}, 0, 1, flow.getoffset(), flow.getbw()}}
+}
+
+func (e *DataMigrationEvent) String() string {
+	return fmt.Sprintf("[DME %v=>%v]", e.source.String(), e.target.String())
 }
