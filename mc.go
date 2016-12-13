@@ -282,17 +282,6 @@ func (r *targetCcommon) rxcallbackB(ev EventInterface) int {
 	return ev.GetSize()
 }
 
-func (r *targetCcommon) Run() {
-	r.state = RstateRunning
-	go func() {
-		for r.state == RstateRunning {
-			r.receiveEnqueue()
-			r.processPendingEvents(r.rxcallbackB)
-		}
-		r.closeTxChannels()
-	}()
-}
-
 func (r *targetCcommon) MBwritebegin(ev EventInterface) error {
 	tioevent := ev.(*ReplicaPutRequestEvent)
 	log(r.String(), "::MBwritebegin()", tioevent.GetTio().String(), tioevent.String())
@@ -304,6 +293,17 @@ func (r *targetCcommon) MBwritebegin(ev EventInterface) error {
 // targetChdd
 //
 //==================================================================
+func (r *targetChdd) Run() {
+	r.state = RstateRunning
+	go func() {
+		for r.state == RstateRunning {
+			r.receiveEnqueue()
+			r.processPendingEvents(r.rxcallbackB)
+		}
+		r.closeTxChannels()
+	}()
+}
+
 func (r *targetChdd) receiveReplicaData(ev *ReplicaDataEvent) int {
 	// queue to disk and ACK right away
 	atdisk := r.disk.scheduleWrite(ev.GetSize())
@@ -328,6 +328,23 @@ func (r *targetChdd) receiveMigrationData(migev *DataMigrationEvent) int {
 // targetCssd
 //
 //==================================================================
+func (r *targetCssd) Run() {
+	r.state = RstateRunning
+	go func() {
+		for r.state == RstateRunning {
+			r.receiveEnqueue()
+			r.processPendingEvents(r.rxcallbackB)
+
+			// check free space
+			x := r.usedKB*100/int64(c_config.ssdCapacityGB)/1000/1000 + 1
+			if x > int64(c_config.ssdLowmark) {
+				r.migrate()
+			}
+		}
+		r.closeTxChannels()
+	}()
+}
+
 func (r *targetCssd) receiveReplicaData(ev *ReplicaDataEvent) int {
 	tio := ev.GetTio()
 	// queue to disk and ACK right away
@@ -338,45 +355,32 @@ func (r *targetCssd) receiveReplicaData(ev *ReplicaDataEvent) int {
 	log("ssd-write-received", tio.String(), atdisk)
 
 	r.usedKB += int64(ev.GetSize())
-	// if enough space do nothing
-	x := r.usedKB*100/int64(c_config.ssdCapacityGB)/1000/1000 + 1
-	if x <= int64(c_config.ssdLowmark) {
-		return ReplicaDone
-	}
-	for true {
-		if r.migrate() {
-			break
-		}
-	}
 	return ReplicaDone
 }
 
 // FIXME: initial naive impl
-func (r *targetCssd) migrate() bool {
+// TODO:  must throttle writing bw
+func (r *targetCssd) migrate() {
 	// round robin
 	r.hddidx = (r.hddidx + 1) % config.numServers
 	if allServers[r.hddidx].GetID() == cssdID {
 		r.hddidx = (r.hddidx + 1) % config.numServers
 	}
-
-	// FIXME: low/high wm migration - throttle accordingly
 	target := allServers[r.hddidx]
 	targetid := target.GetID()
 	flow := r.migration[targetid]
 	migev := newDataMigrationEvent(r, target, flow, configStorage.sizeDataChunk*1024)
 	if flow.timeTxDone.After(Now) {
-		time.Sleep(config.timeIncStep)
-		return false
+		return
 	}
 	log("ssd-migrate", flow.String())
-	// FIXME: encapsulate as r.Send(migev, SmethodWait)
+	// FIXME: encapsulate as r.Send(migev, SmethodWait), see ma as well
 	txch, _ := r.getExtraChannels(target)
 	txch <- migev
 	r.rb.use(c_config.newwritebits)
 	flow.timeTxDone = Now.Add(configNetwork.netdurationDataChunk)
 
 	r.usedKB -= int64(configStorage.sizeDataChunk * 1024)
-	return true
 }
 
 //==================================================================
