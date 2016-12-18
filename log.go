@@ -101,13 +101,11 @@ func configLog(partial bool) {
 		float64(configNetwork.linkbps)/gigb,
 		float64(configNetwork.linkbpsControl)/gigb,
 		float64(configNetwork.linkbpsData)/gigb)
-	s3 := fmt.Sprintf("\t    {sizeFrame:%vB sizeControlPDU:%vB, cmdWindowSz:%v}", configNetwork.sizeFrame,
-                configNetwork.sizeControlPDU, configNetwork.cmdWindowSz)
+	s3 := fmt.Sprintf("\t    {sizeFrame:%vB sizeControlPDU:%vB}", configNetwork.sizeFrame, configNetwork.sizeControlPDU)
 	s4 := fmt.Sprintf("\t    {durationControlPDU:%v netdurationFrame:%v netdurationDataChunk:%v}",
 		configNetwork.durationControlPDU, configNetwork.netdurationFrame, configNetwork.netdurationDataChunk)
-	s5 := fmt.Sprintf("\t    {sizeDataChunk:%vKB dskdurationDataChunk:%v diskbps:%.1fGbps, disklatencysim:%v}",
-		configStorage.sizeDataChunk, configStorage.dskdurationDataChunk,
-		float64(configStorage.diskbps)/gigb, configStorage.diskLatencySim)
+	s5 := fmt.Sprintf("\t    {sizeDataChunk:%vKB dskdurationDataChunk:%v diskbps:%.1fGbps}",
+		configStorage.sizeDataChunk, configStorage.dskdurationDataChunk, float64(configStorage.diskbps)/gigb)
 	s6 := fmt.Sprintf("\t    {durationBidWindow:%v}", configReplicast.durationBidWindow)
 
 	if partial {

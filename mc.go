@@ -35,11 +35,12 @@ type modelC_config struct {
 	// internal I <=> T <=> T bandwidth
 	linkbps int64
 	// ssd
-	ssdcmdwin         int
-	ssdThroughputMBps int
-	ssdCapacityGB     int
-	ssdLowmark        int
-	ssdHighmark       int
+	ssdcmdwin          int
+	ssdThroughputMBps  int
+	ssdCapacityGB      int
+	ssdLowmark         int
+	ssdHighmark        int
+	timeShareNumChunks int
 	// hdd
 	hddcmdwin         int
 	hddThroughputMBps int
@@ -78,9 +79,12 @@ type targetChdd struct {
 
 type targetCssd struct {
 	targetCcommon
-	usedKB    int64 // <= ssdCapacityGB * 1000 * 1000
-	migration map[int]*FlowLong
-	hddidx    int
+	usedKB              int64 // <= ssdCapacityGB * 1000 * 1000
+	migration           map[int]*FlowLong
+	hddidx              int
+	numReceived         int
+	numMigrated         int
+	receivingPercentage int
 }
 
 //======================================================================
@@ -330,16 +334,36 @@ func (r *targetChdd) receiveMigrationData(migev *DataMigrationEvent) int {
 //==================================================================
 func (r *targetCssd) Run() {
 	r.state = RstateRunning
+	r.receivingPercentage = 100
 	go func() {
 		for r.state == RstateRunning {
-			r.receiveEnqueue()
-			r.processPendingEvents(r.rxcallbackB)
+			num := c_config.timeShareNumChunks * r.receivingPercentage / 100
+			for r.state == RstateRunning && r.numReceived < num {
+				r.receiveEnqueue()
+				r.processPendingEvents(r.rxcallbackB)
+			}
 
-			// check free space
-			x := r.usedKB*100/int64(c_config.ssdCapacityGB)/1000/1000 + 1
-			if x > int64(c_config.ssdLowmark) {
+			for r.state == RstateRunning && r.numMigrated < c_config.timeShareNumChunks-num {
 				r.migrate()
 			}
+
+			// recompute - TODO: hysteresis on the way back from high wm
+			x64 := float64(r.usedKB) * 100 / float64(c_config.ssdCapacityGB) / 1000 / 1000
+			x := int(x64)
+			switch {
+			case x < c_config.ssdLowmark:
+				r.receivingPercentage = 100
+			case x <= c_config.ssdHighmark:
+				p := float64(x-c_config.ssdLowmark) / float64(c_config.ssdHighmark-c_config.ssdLowmark) * 100
+				r.receivingPercentage = 100 - int(p)
+			case x > c_config.ssdHighmark && x <= 100:
+				r.receivingPercentage = 0
+			default:
+				assert(false)
+			}
+			log("ssd-write/migrate-percentage", "p", r.receivingPercentage, "received", r.numReceived, "migrated", r.numMigrated, "used", r.usedKB)
+			// on to a new cycle
+			r.numReceived, r.numMigrated = 0, 0
 		}
 		r.closeTxChannels()
 	}()
@@ -354,14 +378,13 @@ func (r *targetCssd) receiveReplicaData(ev *ReplicaDataEvent) int {
 	tio.next(putackev, SmethodWait)
 	log("ssd-write-received", tio.String(), atdisk)
 
-	r.usedKB += int64(ev.GetSize())
+	r.usedKB += int64(ev.GetSize()) / 1024
+	r.numReceived++
 	return ReplicaDone
 }
 
-// FIXME: initial naive impl
-// TODO:  must throttle writing bw
 func (r *targetCssd) migrate() {
-	// round robin
+	// round robin btw hdds
 	r.hddidx = (r.hddidx + 1) % config.numServers
 	if allServers[r.hddidx].GetID() == cssdID {
 		r.hddidx = (r.hddidx + 1) % config.numServers
@@ -380,7 +403,8 @@ func (r *targetCssd) migrate() {
 	r.rb.use(c_config.newwritebits)
 	flow.timeTxDone = Now.Add(configNetwork.netdurationDataChunk)
 
-	r.usedKB -= int64(configStorage.sizeDataChunk * 1024)
+	r.usedKB -= int64(configStorage.sizeDataChunk)
+	r.numMigrated++
 }
 
 //==================================================================
@@ -443,16 +467,21 @@ func (m *modelC) newServerHdd(runnerid int) NodeRunnerInterface {
 func (m *modelC) PreConfig() {
 	// this model's config
 	c_config.linkbps = 100 * 1000 * 1000 * 1000
-	c_config.ssdcmdwin = 4
-	c_config.ssdThroughputMBps = 700
-	c_config.ssdCapacityGB = 16
-	c_config.ssdLowmark = 20
-	c_config.ssdHighmark = 80
-	c_config.hddcmdwin = 8
-	c_config.hddThroughputMBps = 90
+	c_config.ssdcmdwin = 8
+	c_config.ssdThroughputMBps = 1400
+	c_config.ssdCapacityGB = 1
+	c_config.ssdLowmark = 5
+	c_config.ssdHighmark = 60
+	c_config.hddcmdwin = 4
+	c_config.hddThroughputMBps = 180
 
-	// write size including control (bits)
-	c_config.newwritebits = int64(configNetwork.sizeControlPDU)*8 + int64(configStorage.sizeDataChunk)*1024*8
+	// ssd target divides its time between a) receiving/writing chunks
+	// and b) migrating older chunks to hdd target(s);
+	// the corresponding time sharing is expressed as a total number
+	// of both kinds of chunks, while the ratio between these two numbers
+	// is controlled at runtime by the low and high watermarks as far as
+	// the remaining capacity
+	c_config.timeShareNumChunks = 10
 
 	// common config
 	config.timeClusterTrip = time.Nanosecond * 10
@@ -464,6 +493,10 @@ func (m *modelC) PreConfig() {
 	configNetwork.sizeFrame = configStorage.sizeDataChunk * 1024
 	configNetwork.overheadpct = 0
 	configStorage.maxDiskQueue = 0
+
+	if configStorage.sizeDataChunk < 1024 {
+		configStorage.sizeDataChunk = 1024
+	}
 }
 
 func (m *modelC) PostBuild() {
