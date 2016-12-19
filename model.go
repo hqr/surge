@@ -78,10 +78,10 @@ func __init() {
 type ModelInterface interface {
 	NewGateway(id int) NodeRunnerInterface
 	NewServer(id int) NodeRunnerInterface
-	PreConfig()	// model can optionally define model specifc config
-	PostConfig()	// model can validate if the config is confroming to model requirements
-	PreBuild()	// model can perform custom build steps before the generic build
-	PostBuild()	// model can perform custom build steps after the generic build
+	Configure() // model specific config
+
+	PreBuild()
+	PostBuild()
 }
 
 // Model Template
@@ -100,9 +100,8 @@ func (mg *ModelGeneric) NewServer(id int) NodeRunnerInterface {
 	return nil
 }
 
-func (mg *ModelGeneric) PreConfig() {}
-func (mg *ModelGeneric) PostConfig() {}
-func (mg *ModelGeneric) PreBuild() {}
+func (mg *ModelGeneric) Configure() {}
+func (mg *ModelGeneric) PreBuild()  {}
 func (mg *ModelGeneric) PostBuild() {}
 
 //============================================================================
@@ -176,17 +175,9 @@ func prepareToStopModel(model ModelInterface) {
 // MAIN LOOP
 //
 func RunAllModels() {
+	// CLI and global defaults
+	Configure()
 
-	// Configuration Handling
-	PreConfig()
-	for _, mname := range allNamesSorted {
-		model, _ := allModels[ModelName(mname)]
-		model.PreConfig()
-	}
-
-	ParseCommandLine()
-
-	PostConfig()
 	cnt := 0
 	onename := ""
 	for _, mname := range allNamesSorted {
@@ -245,7 +236,7 @@ func RunAllModels() {
 		configStorage = configStorageCopy
 
 		model, _ := allModels[name]
-		model.PostConfig() // Model specific configuration
+		model.Configure()
 
 		model.PreBuild() // Model specific build steps before generic build
 		buildModel(model, name)

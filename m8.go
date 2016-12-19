@@ -696,12 +696,12 @@ func (m *modelEight) NewServer(i int) NodeRunnerInterface {
 }
 
 func (m *modelEight) newServerEight(i int) *serverEight {
-	srv := NewServerUchRegChannels(i, m8.putpipeline, DtypeConstLatency)
+	srv := NewServerUchRegChannels(i, m8.putpipeline, DtypeConstLatency, 0)
 	rsrv := &serverEight{ServerUch: *srv}
 	return rsrv
 }
 
-func (m *modelEight) PostConfig() {
+func (m *modelEight) Configure() {
 	configReplicast.bidMultiplierPct = 110
 	configureReplicast(false)
 	if configReplicast.durationBidWindow < configNetwork.netdurationFrame*3 {

@@ -178,7 +178,7 @@ func (r *serverThree) Run() {
 //
 func (m *modelThree) NewGateway(i int) NodeRunnerInterface {
 	gwy := &gatewayThree{
-		NodeRunnerBase:      NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: GWY},
+		NodeRunnerBase:  NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: GWY},
 		waitingResponse: nil,
 	}
 	gwy.init(config.numServers)
@@ -193,7 +193,6 @@ func (m *modelThree) NewServer(i int) NodeRunnerInterface {
 	return srv
 }
 
-func (m *modelThree) PostConfig() {
+func (m *modelThree) Configure() {
 	config.timeClusterTrip = time.Microsecond * 2
 }
-

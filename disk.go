@@ -26,8 +26,8 @@ const (
 //
 type DiskInterface interface {
 	String() string
+	GetDurationChunk() time.Duration
 	GetMBps() int
-	SetMBps(mbps int)
 	scheduleWrite(sizebytes int) time.Duration
 	scheduleRead(sizebytes int)
 	queueDepth(in DiskQueueDepthEnum) (int, time.Duration)
@@ -77,8 +77,8 @@ func (d *DiskConstLatency) GetMBps() int {
 	return d.MBps
 }
 
-func (d *DiskConstLatency) SetMBps(mbps int) {
-	d.MBps = mbps
+func (d *DiskConstLatency) GetDurationChunk() time.Duration {
+	return d.dskdurationDataChunk
 }
 
 func (d *DiskConstLatency) scheduleWrite(sizebytes int) time.Duration {
@@ -160,6 +160,8 @@ func (d *DiskVarLatency) extraLatency(numchunks int) time.Duration {
 	case numchunks < 12:
 		return 2 * d.dskdurationDataChunk
 	case numchunks < 16:
+		return 3 * d.dskdurationDataChunk
+	case numchunks < 20:
 		return 4 * d.dskdurationDataChunk
 	}
 	return 8 * d.dskdurationDataChunk

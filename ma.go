@@ -784,7 +784,7 @@ func (m *modelSevenPrx) NewGateway(i int) NodeRunnerInterface {
 //        Rx bursts beyond linkbpsControl
 func (m *modelSevenPrx) NewServer(i int) NodeRunnerInterface {
 	// first, init only the regular to/from gateways' channels
-	srv := NewServerUchExtraChannels(i, mA.putpipeline, DtypeConstLatency)
+	srv := NewServerUchExtraChannels(i, mA.putpipeline, DtypeConstLatency, 0)
 
 	rsrv := &serverSevenX{ServerUch: *srv}
 	bids := NewServerSparseBidQueue(rsrv, 0)
@@ -832,7 +832,7 @@ func (m *modelSevenPrx) NewServer(i int) NodeRunnerInterface {
 	return prsrv
 }
 
-func (m *modelSevenPrx) PostConfig() {
+func (m *modelSevenPrx) Configure() {
 	// minimal bid multiplier: same exact bid win done by proxy:
 	// no need to increase the "overlapping" chance
 	configReplicast.bidMultiplierPct = 140

@@ -330,7 +330,7 @@ func (q *RxQueueSorted) processPendingEvents(rxcallback processEventCb) int {
 				eventsPastDeadline++
 				warn := "WARNING: receiving timed event past deadline"
 				if diff >= config.timeClusterTrip && diff >= time.Microsecond {
-					log(LogBoth, warn, diff, ev.String(), eventsPastDeadline)
+					log(warn, diff, ev.String(), eventsPastDeadline)
 				} else {
 					log(warn, diff, ev.String(), eventsPastDeadline)
 				}

@@ -180,7 +180,7 @@ var configReplicast = ConfigReplicast{
 	maxBidWait:       (configNetwork.durationControlPDU + config.timeClusterTrip) * 6, // 3*RTT
 }
 
-func PreConfig() {
+func Configure() {
 	flag.IntVar(&config.numGateways, "gateways", config.numGateways, "number of gateways")
 	flag.IntVar(&config.numServers, "servers", config.numServers, "number of servers")
 
@@ -222,17 +222,14 @@ func PreConfig() {
 
 	flag.StringVar(&build, "build", build,
 		"build ID (as in: 'git rev-parse'), or any user-defined string to be used as a logfile name suffix")
-}
-
-func ParseCommandLine() {
 	//
 	// parse command line
 	//
 	flag.Parse()
-}
 
-func PostConfig() {
-
+	//
+	// compute some constants
+	//
 	config.timeStatsIval = config.timeToRun / 100
 	switch {
 	case config.timeToRun >= time.Second:
@@ -256,7 +253,6 @@ func PostConfig() {
 	} else if verbosity.vvvv {
 		config.LogLevel = LogVVVV
 	}
-
 	//
 	// computed and assigned (here for convenience)
 	//
@@ -267,7 +263,6 @@ func PostConfig() {
 	// the 4 confvars defaults below are based on the full linkbps bw
 	configNetwork.durationControlPDU =
 		time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)
-
 	//
 	// NOTE: these two may be changed by the models that
 	//       separately provision network bandwidth for control and data
@@ -290,7 +285,6 @@ func PostConfig() {
 	// Note: MiB effectively, here and in sizeToDuration()
 	//
 	configStorage.diskbps = int64(configStorage.diskMBps) * 1024 * 1024 * 8
-
 }
 
 // NOTE:

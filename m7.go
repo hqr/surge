@@ -533,7 +533,7 @@ func (m *modelSeven) NewGateway(i int) NodeRunnerInterface {
 }
 
 func (m *modelSeven) NewServer(i int) NodeRunnerInterface {
-	srv := NewServerUchRegChannels(i, m7.putpipeline, DtypeConstLatency)
+	srv := NewServerUchRegChannels(i, m7.putpipeline, DtypeConstLatency, 0)
 	rsrv := &serverSeven{ServerUch: *srv}
 	rsrv.ServerUch.rptr = rsrv
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)
@@ -542,7 +542,7 @@ func (m *modelSeven) NewServer(i int) NodeRunnerInterface {
 	return rsrv
 }
 
-func (m *modelSeven) PostConfig() {
+func (m *modelSeven) Configure() {
 	configureReplicast(configNetwork.transportType == transportTypeUnicast)
 	x := (configReplicast.durationBidWindow - configReplicast.minduration) / configNetwork.netdurationFrame
 	if x > 4 {

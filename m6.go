@@ -411,7 +411,7 @@ func (m *modelSix) NewGateway(i int) NodeRunnerInterface {
 }
 
 func (m *modelSix) NewServer(i int) NodeRunnerInterface {
-	srv := NewServerUchRegChannels(i, m6.putpipeline, DtypeConstLatency)
+	srv := NewServerUchRegChannels(i, m6.putpipeline, DtypeConstLatency, 0)
 
 	// receive side ratebucket use()-d directly by remote senders
 	srv.rb = NewRateBucketProtected(
@@ -425,7 +425,7 @@ func (m *modelSix) NewServer(i int) NodeRunnerInterface {
 	return rsrv
 }
 
-func (m *modelSix) PostConfig() {
+func (m *modelSix) Configure() {
 	configNetwork.sizeControlPDU = 100
 	configNetwork.durationControlPDU =
 		time.Duration(configNetwork.sizeControlPDU*8) * time.Second / time.Duration(configNetwork.linkbps)

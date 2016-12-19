@@ -206,8 +206,8 @@ func (m *modelNine) NewServer(i int) NodeRunnerInterface {
 	return rsrv
 }
 
-func (m *modelNine) PostConfig() {
-	m8.PostConfig()
+func (m *modelNine) Configure() {
+	m8.Configure()
 }
 
 //==================================================================

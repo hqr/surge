@@ -393,7 +393,7 @@ type ServerUch struct {
 //
 // (compare with NewServerUchExtraChannels)
 //
-func NewServerUchRegChannels(i int, p *Pipeline, dtype DiskTypeEnum) *ServerUch {
+func NewServerUchRegChannels(i int, p *Pipeline, dtype DiskTypeEnum, mbps int) *ServerUch {
 	rbase := NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}
 	srv := &ServerUch{NodeRunnerBase: rbase}
 
@@ -402,15 +402,17 @@ func NewServerUchRegChannels(i int, p *Pipeline, dtype DiskTypeEnum) *ServerUch 
 	// initPeerChannels() + initCases()
 	//
 	srv.init(config.numGateways)
-
-	srv.disk = NewDisk(srv, configStorage.diskMBps, dtype)
+	if mbps == 0 {
+		mbps = configStorage.diskMBps
+	}
+	srv.disk = NewDisk(srv, mbps, dtype)
 	srv.timeResetStats = Now
 
 	return srv
 }
 
 // (compare with NewServerUchRegChannels)
-func NewServerUchExtraChannels(i int, p *Pipeline, dtype DiskTypeEnum) *ServerUch {
+func NewServerUchExtraChannels(i int, p *Pipeline, dtype DiskTypeEnum, mbps int) *ServerUch {
 	rbase := NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}
 	srv := &ServerUch{NodeRunnerBase: rbase}
 
@@ -420,8 +422,10 @@ func NewServerUchExtraChannels(i int, p *Pipeline, dtype DiskTypeEnum) *ServerUc
 	// the caller will init extra channels followed by initCases()
 	//
 	srv.initPeerChannels(config.numGateways)
-
-	srv.disk = NewDisk(srv, configStorage.diskMBps, dtype)
+	if mbps == 0 {
+		mbps = configStorage.diskMBps
+	}
+	srv.disk = NewDisk(srv, mbps, dtype)
 	srv.timeResetStats = Now
 
 	return srv

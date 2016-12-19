@@ -115,7 +115,6 @@ func (m *modelOneDotOne) NewServer(i int) NodeRunnerInterface {
 	return srv
 }
 
-func (m *modelOneDotOne) PostConfig() {
+func (m *modelOneDotOne) Configure() {
 	config.timeClusterTrip = time.Microsecond * 4
 }
-

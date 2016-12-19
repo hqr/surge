@@ -28,7 +28,7 @@ type modelC struct {
 	putpipeline *Pipeline
 }
 
-// gets inited in PreConfig()
+// gets inited in Configure()
 type modelC_config struct {
 	// computed
 	newwritebits int64
@@ -37,10 +37,11 @@ type modelC_config struct {
 	// ssd
 	ssdcmdwin          int
 	ssdThroughputMBps  int
-	ssdCapacityGB      int
+	ssdCapacityMB      int
 	ssdLowmark         int
 	ssdHighmark        int
 	timeShareNumChunks int
+	migcmdwin          int
 	// hdd
 	hddcmdwin         int
 	hddThroughputMBps int
@@ -79,12 +80,14 @@ type targetChdd struct {
 
 type targetCssd struct {
 	targetCcommon
-	usedKB              int64 // <= ssdCapacityGB * 1000 * 1000
-	migration           map[int]*FlowLong
-	hddidx              int
-	numReceived         int
-	numMigrated         int
-	receivingPercentage int
+	usedKB               int64 // <= ssdCapacityMB * 1000
+	migration            map[int]*FlowLong
+	hddidx               int
+	numReceiveDelta      int
+	numMigrateDelta      int
+	receivingPercentage  int
+	numMigrateAckPending int
+	hysteresis           bool
 }
 
 //======================================================================
@@ -152,16 +155,16 @@ func (r *gatewayC) postBuildInit() {
 	for i := 0; i < config.numServers; i++ {
 		tin := allServers[i]
 		targetid := tin.GetID()
-		if targetid != cssdID {
-			thdd := tin.(*targetChdd)
-			thdd.tssd = tssd
-
-			tssd.migration[targetid] = &FlowLong{from: tssd, to: thdd, rb: tssd.rb, tobandwidth: c_config.linkbps}
+		if targetid == cssdID {
+			continue
 		}
+		thdd := tin.(*targetChdd)
+		thdd.tssd = tssd
+		tssd.migration[targetid] = &FlowLong{from: tssd, to: thdd, rb: tssd.rb, tobandwidth: c_config.linkbps}
 	}
 }
 
-func (r *gatewayC) rxcallbackB(ev EventInterface) int {
+func (r *gatewayC) rxcallbackC(ev EventInterface) int {
 	tio := ev.GetTio()
 	tio.doStage(r, ev)
 	if tio.Done() {
@@ -176,12 +179,12 @@ func (r *gatewayC) Run() {
 	go func() {
 		for r.state == RstateRunning {
 			r.receiveEnqueue()
-			r.processPendingEvents(r.rxcallbackB)
+			r.processPendingEvents(r.rxcallbackC)
 			for _, tgtrt := range r.tgtrts {
 				if r.rb.below(c_config.newwritebits) {
 					break
 				}
-				// TODO: load balance here..
+				// TODO: ML load balance here..
 				r.writeto(tgtrt)
 			}
 		}
@@ -258,17 +261,13 @@ func (r *gatewayC) MBwriteack(ev EventInterface) error {
 // targetCcommon
 //
 //==================================================================
-func (r *targetCcommon) rxcallbackB(ev EventInterface) int {
+func (r *targetCcommon) rxcallbackC(ev EventInterface) int {
 	switch ev.(type) {
 	case *ReplicaPutRequestEvent:
 		tio := ev.GetTio()
-		tioevent := ev.(*ReplicaPutRequestEvent)
-		log("rxcallback: new write", tioevent.String(), tio.String())
 		tio.doStage(r.realobject())
 	case *ReplicaDataEvent:
-		tio := ev.GetTio()
 		tioevent := ev.(*ReplicaDataEvent)
-		log("rxcallback: replica data", tioevent.String(), tio.String())
 		//
 		// cast to the right i-face and call the right target
 		//
@@ -277,8 +276,11 @@ func (r *targetCcommon) rxcallbackB(ev EventInterface) int {
 	case *DataMigrationEvent:
 		migev := ev.(*DataMigrationEvent)
 		thdd := r.realobject().(*targetChdd)
-		log("rxcallback: migration data", thdd.String(), migev.String())
 		thdd.receiveMigrationData(migev)
+	case *DataMigrationAck:
+		migack := ev.(*DataMigrationAck)
+		tssd := r.realobject().(*targetCssd)
+		tssd.receiveMigrationAck(migack)
 	default:
 		assert(false)
 	}
@@ -302,7 +304,7 @@ func (r *targetChdd) Run() {
 	go func() {
 		for r.state == RstateRunning {
 			r.receiveEnqueue()
-			r.processPendingEvents(r.rxcallbackB)
+			r.processPendingEvents(r.rxcallbackC)
 		}
 		r.closeTxChannels()
 	}()
@@ -320,11 +322,20 @@ func (r *targetChdd) receiveReplicaData(ev *ReplicaDataEvent) int {
 	return ReplicaDone
 }
 
-func (r *targetChdd) receiveMigrationData(migev *DataMigrationEvent) int {
-	// queue to disk and ACK right away
-	atdisk := r.disk.scheduleWrite(migev.GetSize())
-	log("hdd-migration-received", r.String(), atdisk)
-	return ReplicaDone
+func (r *targetChdd) receiveMigrationData(migev *DataMigrationEvent) {
+	// NOTE: assume fixed writing time - compare with the regular writes (above)
+	atdisk := r.disk.GetDurationChunk() // r.disk.scheduleWrite(migev.GetSize())
+	tssd := migev.GetSource()
+	assert(tssd == r.tssd)
+
+	migack := newDataMigrationAck(r, tssd, atdisk)
+	txch, _ := r.getExtraChannels(tssd)
+	select {
+	case txch <- migack:
+		log("migration-ack-sent", migack.String())
+	default:
+		log("warn:hdd-migrate-ack", migack.String())
+	}
 }
 
 //==================================================================
@@ -335,38 +346,60 @@ func (r *targetChdd) receiveMigrationData(migev *DataMigrationEvent) int {
 func (r *targetCssd) Run() {
 	r.state = RstateRunning
 	r.receivingPercentage = 100
+	r.hysteresis = false
+	maxtime := time.Duration(c_config.timeShareNumChunks) * r.disk.GetDurationChunk()
 	go func() {
 		for r.state == RstateRunning {
-			num := c_config.timeShareNumChunks * r.receivingPercentage / 100
-			for r.state == RstateRunning && r.numReceived < num {
+			// round up
+			num := (c_config.timeShareNumChunks*r.receivingPercentage + 50) / 100
+			begin := Now
+			for r.state == RstateRunning && r.numReceiveDelta < num {
 				r.receiveEnqueue()
-				r.processPendingEvents(r.rxcallbackB)
+				r.processPendingEvents(r.rxcallbackC)
+				if Now.Sub(begin) > 2*maxtime {
+					log("warn:ssd-rx-timeout")
+					break
+				}
 			}
-
-			for r.state == RstateRunning && r.numMigrated < c_config.timeShareNumChunks-num {
+			begin = Now
+			for r.state == RstateRunning && r.numMigrateDelta < c_config.timeShareNumChunks-num {
 				r.migrate()
+				if Now.Sub(begin) > maxtime {
+					log("warn:ssd-migrate-timeout")
+					break
+				}
 			}
 
-			// recompute - TODO: hysteresis on the way back from high wm
-			x64 := float64(r.usedKB) * 100 / float64(c_config.ssdCapacityGB) / 1000 / 1000
-			x := int(x64)
-			switch {
-			case x < c_config.ssdLowmark:
-				r.receivingPercentage = 100
-			case x <= c_config.ssdHighmark:
-				p := float64(x-c_config.ssdLowmark) / float64(c_config.ssdHighmark-c_config.ssdLowmark) * 100
-				r.receivingPercentage = 100 - int(p)
-			case x > c_config.ssdHighmark && x <= 100:
-				r.receivingPercentage = 0
-			default:
-				assert(false)
-			}
-			log("ssd-write/migrate-percentage", "p", r.receivingPercentage, "received", r.numReceived, "migrated", r.numMigrated, "used", r.usedKB)
+			r.recomputeRP()
+			log("ssd-write-migrate-pct", "%", r.receivingPercentage, "#r", r.numReceiveDelta, "#m", r.numMigrateDelta, "u", r.usedKB)
 			// on to a new cycle
-			r.numReceived, r.numMigrated = 0, 0
+			r.numReceiveDelta, r.numMigrateDelta = 0, 0
 		}
 		r.closeTxChannels()
 	}()
+}
+
+// recompute receive/migrate ratio r.receivingPercentage
+func (r *targetCssd) recomputeRP() {
+	x64 := float64(r.usedKB) * 100 / float64(c_config.ssdCapacityMB) / 1000
+	x := int(x64)
+	switch {
+	case x <= c_config.ssdLowmark:
+		r.receivingPercentage = 100
+		r.hysteresis = false
+	case r.hysteresis:
+		assert(x <= 100)
+		r.receivingPercentage = 0
+	case x < c_config.ssdHighmark:
+		p := float64(x-c_config.ssdLowmark) / float64(c_config.ssdHighmark-c_config.ssdLowmark) * 100
+		r.receivingPercentage = 100 - int(p)
+	case x >= c_config.ssdHighmark && x <= 100:
+		r.receivingPercentage = 0
+		r.hysteresis = true
+		log("warn:hysteresis")
+	default:
+		assert(false)
+	}
 }
 
 func (r *targetCssd) receiveReplicaData(ev *ReplicaDataEvent) int {
@@ -379,12 +412,16 @@ func (r *targetCssd) receiveReplicaData(ev *ReplicaDataEvent) int {
 	log("ssd-write-received", tio.String(), atdisk)
 
 	r.usedKB += int64(ev.GetSize()) / 1024
-	r.numReceived++
+	r.numReceiveDelta++
 	return ReplicaDone
 }
 
 func (r *targetCssd) migrate() {
-	// round robin btw hdds
+	if r.numMigrateAckPending >= c_config.migcmdwin {
+		log("warn:ssd-skip-migrate-need-acks")
+		return
+	}
+	// round robin
 	r.hddidx = (r.hddidx + 1) % config.numServers
 	if allServers[r.hddidx].GetID() == cssdID {
 		r.hddidx = (r.hddidx + 1) % config.numServers
@@ -392,19 +429,29 @@ func (r *targetCssd) migrate() {
 	target := allServers[r.hddidx]
 	targetid := target.GetID()
 	flow := r.migration[targetid]
-	migev := newDataMigrationEvent(r, target, flow, configStorage.sizeDataChunk*1024)
 	if flow.timeTxDone.After(Now) {
 		return
 	}
-	log("ssd-migrate", flow.String())
 	// FIXME: encapsulate as r.Send(migev, SmethodWait), see ma as well
 	txch, _ := r.getExtraChannels(target)
-	txch <- migev
-	r.rb.use(c_config.newwritebits)
-	flow.timeTxDone = Now.Add(configNetwork.netdurationDataChunk)
+	migev := newDataMigrationEvent(r, target, flow, configStorage.sizeDataChunk*1024)
+	select {
+	case txch <- migev:
+		r.rb.use(c_config.newwritebits)
+		flow.timeTxDone = Now.Add(configNetwork.netdurationDataChunk)
 
-	r.usedKB -= int64(configStorage.sizeDataChunk)
-	r.numMigrated++
+		r.usedKB -= int64(configStorage.sizeDataChunk)
+		r.numMigrateDelta++      // in range [0, c_config.timeShareNumChunks]
+		r.numMigrateAckPending++ // in range [0, c_config.migcmdwin]
+		log("ssd-migrate", flow.String())
+	default:
+		log("warn:ssd-migrate", flow.String())
+	}
+}
+
+func (r *targetCssd) receiveMigrationAck(migack *DataMigrationAck) {
+	r.numMigrateAckPending--
+	log("migration-ack-received", migack.String())
 }
 
 //==================================================================
@@ -430,50 +477,48 @@ func (m *modelC) NewServer(runnerid int) NodeRunnerInterface {
 }
 
 func (m *modelC) newServerSsd(runnerid int) NodeRunnerInterface {
-	srv := NewServerUchExtraChannels(runnerid, mC.putpipeline, DtypeVarLatency)
-	srv.disk.SetMBps(c_config.ssdThroughputMBps)
+	srv := NewServerUchExtraChannels(runnerid, mC.putpipeline, DtypeVarLatency, c_config.ssdThroughputMBps)
 	srv.rb = &DummyRateBucket{}
 
 	csrv := &targetCcommon{*srv}
 
-	rsrv := &targetCssd{targetCcommon: *csrv} // postbuild will set remaining fields
+	rsrv := &targetCssd{targetCcommon: *csrv}
 	rsrv.ServerUch.rptr = rsrv
 	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways)
 
-	rsrv.initExtraChannels(config.numServers - 1)
+	rsrv.initExtraChannels(config.numServers - 1) // plus ssd => hdd migration
 	rsrv.initCases()
 	return rsrv
 }
 
 func (m *modelC) newServerHdd(runnerid int) NodeRunnerInterface {
-	srv := NewServerUchRegChannels(runnerid, mC.putpipeline, DtypeVarLatency)
-	srv.disk.SetMBps(c_config.hddThroughputMBps)
+	srv := NewServerUchExtraChannels(runnerid, mC.putpipeline, DtypeVarLatency, c_config.hddThroughputMBps)
 	srv.rb = &DummyRateBucket{}
 
 	csrv := &targetCcommon{*srv}
 
 	rsrv := &targetChdd{targetCcommon: *csrv} // postbuild will finalize
 	rsrv.ServerUch.rptr = rsrv
-	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways+1) // plus ssd => hdd migration
+	rsrv.flowsfrom = NewFlowDir(rsrv, config.numGateways+1)
 
-	rsrv.initExtraChannels(1)
+	rsrv.initExtraChannels(1) // plus ssd => hdd migration
 	rsrv.initCases()
 	return rsrv
 }
 
-// (c) model specific config
-// the model transmits chunks in one shot (no network => no framing)
-// TODO: harcoded, use flags
-func (m *modelC) PreConfig() {
-	// this model's config
+// model specific config - TODO: harcoded, use flags
+func (m *modelC) Configure() {
 	c_config.linkbps = 100 * 1000 * 1000 * 1000
-	c_config.ssdcmdwin = 8
+	c_config.ssdcmdwin = 16
 	c_config.ssdThroughputMBps = 1400
-	c_config.ssdCapacityGB = 1
-	c_config.ssdLowmark = 5
+	c_config.ssdCapacityMB = 100
+	c_config.ssdLowmark = 30
 	c_config.ssdHighmark = 60
-	c_config.hddcmdwin = 4
+	c_config.hddcmdwin = 2
 	c_config.hddThroughputMBps = 180
+
+	// max number of un-acked pending migration chunks in flight
+	c_config.migcmdwin = 32
 
 	// ssd target divides its time between a) receiving/writing chunks
 	// and b) migrating older chunks to hdd target(s);
@@ -490,10 +535,13 @@ func (m *modelC) PreConfig() {
 	}
 	configNetwork.linkbps = c_config.linkbps
 	configNetwork.sizeControlPDU = 100
+	// sub-lun migration:
+	// the model transmits chunks in one shot (no network => no framing)
 	configNetwork.sizeFrame = configStorage.sizeDataChunk * 1024
 	configNetwork.overheadpct = 0
 	configStorage.maxDiskQueue = 0
 
+	// NOTE: do not allow smaller chunk sizes
 	if configStorage.sizeDataChunk < 1024 {
 		configStorage.sizeDataChunk = 1024
 	}
@@ -540,4 +588,18 @@ func newDataMigrationEvent(from NodeRunnerInterface, to NodeRunnerInterface, flo
 
 func (e *DataMigrationEvent) String() string {
 	return fmt.Sprintf("[DME %v=>%v]", e.source.String(), e.target.String())
+}
+
+type DataMigrationAck struct {
+	zControlEvent
+}
+
+func (e *DataMigrationAck) String() string {
+	dtriggered := e.thtime.Sub(time.Time{})
+	return fmt.Sprintf("[DMA %v=>%v,%11.10v]", e.source.String(), e.target.String(), dtriggered)
+}
+
+func newDataMigrationAck(from NodeRunnerInterface, to NodeRunnerInterface, at time.Duration) *DataMigrationAck {
+	timedev := newTimedAnyEvent(from, at, to)
+	return &DataMigrationAck{zControlEvent{zEvent{*timedev}, 0}}
 }

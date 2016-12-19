@@ -262,7 +262,7 @@ func (m *modelB) NewGateway(i int) NodeRunnerInterface {
 }
 
 func (m *modelB) NewServer(i int) NodeRunnerInterface {
-	srv := NewServerUchRegChannels(i, mB.putpipeline, DtypeVarLatency) // TODO: tbd
+	srv := NewServerUchRegChannels(i, mB.putpipeline, DtypeVarLatency, 0) // TODO: use var latency
 
 	srv.rb = &DummyRateBucket{}
 
