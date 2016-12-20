@@ -152,7 +152,7 @@ func (flow *FlowLong) String() string {
 	f := flow.from.String()
 	bwstr := fmt.Sprintf("%.2f", float64(flow.tobandwidth)/1000.0/1000.0/1000.0)
 	t := flow.to.String()
-	return fmt.Sprintf("[flow-long %s=>%s,bw=%sGbps]", f, t, bwstr)
+	return fmt.Sprintf("[flow %s=>%s,bw=%sGbps]", f, t, bwstr)
 }
 
 func (flow *FlowLong) getbw() int64               { return flow.tobandwidth }
