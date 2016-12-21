@@ -360,16 +360,28 @@ func (r *targetCssd) Run() {
 
 				ok := r.migrate()
 				migrateok = migrateok && ok
-				// handle queued writes
-				if r.numReceiveDelta < toreceive && r.wqueue.depth() > 0 {
-					firstev := r.wqueue.popEvent()
-					dataev := firstev.(*ReplicaDataEvent)
-					fromqueue++
-					r.write(dataev)
+				// handle queued (delayed) writes
+				if r.wqueue.depth() > 0 {
+					x64 := float64(r.usedKB) * 100 / float64(c_config.ssdCapacityMB) / 1000
+					x := int(x64)
+					if r.numReceiveDelta < toreceive ||
+						// the second condition takes care of the case when the entire ssdcmdwin
+						// gets queued up, which would mean no TIOs between initiator and SSD target
+						// hence, we here make sure to have at least one at all times
+						// unless above high watermark of course
+						(x < c_config.ssdHighmark && r.wqueue.depth() >= c_config.ssdcmdwin) {
+						firstev := r.wqueue.popEvent()
+						dataev := firstev.(*ReplicaDataEvent)
+						fromqueue++
+						r.write(dataev)
+					}
 				}
 			}
 			log("ssd-run-cycle", "%", r.receivingPercentage, "#r", r.numReceiveDelta, "#m", r.numMigrateDelta)
-			log("ssd-run-cycle", "u", r.usedKB, "d", r.wqueue.depth(), "mok", migrateok, "wq", fromqueue)
+			log("ssd-run-cycle", "used", r.usedKB, "depth", r.wqueue.depth(), "from-wqueue", fromqueue)
+			if !migrateok || r.hysteresis {
+				log("ssd-run-cycle", "mok", migrateok, "hysteresis", r.hysteresis)
+			}
 			r.recomputeRP()
 			r.numReceiveDelta, r.numMigrateDelta = 0, 0
 		}
@@ -537,8 +549,8 @@ func (m *modelC) Configure() {
 	c_config.ssdcmdwin = 32
 	c_config.ssdThroughputMBps = 1400
 	c_config.ssdCapacityMB = 100
-	c_config.ssdLowmark = 30
-	c_config.ssdHighmark = 60
+	c_config.ssdLowmark = 40
+	c_config.ssdHighmark = 70
 	c_config.hddcmdwin = 8
 	c_config.hddThroughputMBps = 180
 
