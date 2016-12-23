@@ -296,14 +296,14 @@ func oneModelTimeLoop(model ModelInterface, stdout *bufio.Writer) {
 	timestampLog(true)
 	// advance the model's TIME and report stats periodically
 	for {
-		if Now.Equal(nextTrackTime) || Now.After(nextTrackTime) {
+		if !Now.Before(nextTrackTime) {
 			pct += 10
 			fmt.Printf("\r====  %2d%% done", pct)
 			stdout.Flush()
 			nextTrackTime = nextTrackTime.Add(config.timeTrackIval)
 		}
 		if NowIsDone() {
-			if Now.Equal(nextStatsTime) || Now.After(nextStatsTime) {
+			if !Now.Before(nextStatsTime) {
 				// new stats iteration
 				mstats.update(config.timeStatsIval)
 				nextStatsTime = Now.Add(config.timeStatsIval)
@@ -322,7 +322,7 @@ func oneModelTimeLoop(model ModelInterface, stdout *bufio.Writer) {
 		}
 
 		// past time-to-run gracefully terminate all model's runners
-		if Now.Equal(endtime) || Now.After(endtime) {
+		if !Now.Before(endtime) {
 			prepareToStopModel(model)
 			break
 		}

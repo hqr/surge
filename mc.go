@@ -40,6 +40,7 @@ type modelC_config struct {
 	ssdCapacityMB      int
 	ssdLowmark         int
 	ssdHighmark        int
+	ssdHystmark        int
 	timeShareNumChunks int
 	migcmdwin          int
 	// hdd
@@ -104,7 +105,11 @@ func init() {
 	mC.putpipeline = p
 
 	d := NewStatsDescriptors("c")
-	d.registerCommonProtoStats()
+	d.Register("rxbusy", StatsKindPercentage, StatsScopeServer) // TODO: use/implement StatsScopeNode
+	d.Register("qdepth", StatsKindSampleCount, StatsScopeNode)
+	d.Register("chunk", StatsKindCount, StatsScopeGateway)
+	d.Register("txbytes", StatsKindByteCount, StatsScopeGateway|StatsScopeServer)
+	d.Register("rxbytes", StatsKindByteCount, StatsScopeServer|StatsScopeGateway)
 
 	props := make(map[string]interface{}, 1)
 	props["description"] = "Storage server with SSD and HDD tiers, limited SSD capacity, and SSD to HDD auto-migration (watermarked)"
@@ -295,6 +300,13 @@ func (r *targetCcommon) MBwritebegin(ev EventInterface) error {
 	return nil
 }
 
+func (r *targetCcommon) GetStats(reset bool) RunnerStats {
+	s := r.ServerUch.GetStats(reset)
+	numchunks, _ := r.disk.queueDepth(DqdChunks)
+	s["qdepth"] = int64(numchunks)
+	return s
+}
+
 //==================================================================
 //
 // targetChdd
@@ -313,21 +325,30 @@ func (r *targetChdd) Run() {
 
 func (r *targetChdd) receiveReplicaData(ev *ReplicaDataEvent) bool {
 	// queue to disk and ACK right away
-	atdisk := r.disk.scheduleWrite(ev.GetSize())
+	sizeb := ev.GetSize()
+	assert(sizeb == configStorage.sizeDataChunk*1024)
+
+	atdisk := r.disk.scheduleWrite(sizeb)
 	gwy := ev.GetSource()
 	tio := ev.GetTio()
 	putackev := newReplicaPutAckEvent(r, gwy, tio, atdisk)
 	tio.next(putackev, SmethodWait)
+
+	r.addBusyDuration(sizeb, c_config.linkbps, NetDataBusy)
+	r.addBusyDuration(sizeb, r.disk.getbps(), DiskBusy)
 
 	log("hdd-write-received", tio.String(), atdisk)
 	return true
 }
 
 func (r *targetChdd) receiveMigrationData(migev *DataMigrationEvent) {
-	// this path is assumed sequential and therefore faster
-	atdisk := r.disk.scheduleWrite(migev.GetSize() >> 4)
+	// this path is assumed sequential and highly optimized, and therefore 4x faster
+	sizeb := migev.GetSize() >> 4
+	atdisk := r.disk.scheduleWrite(sizeb)
 	tssd := migev.GetSource()
 	assert(tssd == r.tssd)
+
+	r.addBusyDuration(sizeb, r.disk.getbps(), DiskBusy)
 
 	migack := newDataMigrationAck(r, tssd, atdisk)
 	txch, _ := r.getExtraChannels(tssd)
@@ -362,14 +383,14 @@ func (r *targetCssd) Run() {
 				migrateok = migrateok && ok
 				// handle queued (delayed) writes
 				if r.wqueue.depth() > 0 {
-					x64 := float64(r.usedKB) * 100 / float64(c_config.ssdCapacityMB) / 1000
-					x := int(x64)
+					// x64 := float64(r.usedKB) * 100 / float64(c_config.ssdCapacityMB) / 1000
+					// x := int(x64)
 					if r.numReceiveDelta < toreceive ||
 						// the second condition takes care of the case when the entire ssdcmdwin
 						// gets queued up, which would mean no TIOs between initiator and SSD target
 						// hence, we here make sure to have at least one at all times
 						// unless above high watermark of course
-						(x < c_config.ssdHighmark && r.wqueue.depth() >= c_config.ssdcmdwin) {
+						(!r.hysteresis && r.wqueue.depth() >= c_config.ssdcmdwin) {
 						firstev := r.wqueue.popEvent()
 						dataev := firstev.(*ReplicaDataEvent)
 						fromqueue++
@@ -378,7 +399,7 @@ func (r *targetCssd) Run() {
 				}
 			}
 			log("ssd-run-cycle", "%", r.receivingPercentage, "#r", r.numReceiveDelta, "#m", r.numMigrateDelta)
-			log("ssd-run-cycle", "used", r.usedKB, "depth", r.wqueue.depth(), "from-wqueue", fromqueue)
+			log("ssd-run-cycle", "used", r.usedKB, "wqueue", r.wqueue.depth(), "from-wqueue", fromqueue)
 			if !migrateok || r.hysteresis {
 				log("ssd-run-cycle", "mok", migrateok, "hysteresis", r.hysteresis)
 			}
@@ -396,8 +417,9 @@ func (r *targetCssd) recomputeRP() {
 	switch {
 	case x <= c_config.ssdLowmark:
 		r.receivingPercentage = 100
+	case x < c_config.ssdHystmark:
 		r.hysteresis = false
-	case r.hysteresis:
+	case r.hysteresis: // true for x between hystmark and highmark
 		assert(x <= 100)
 		r.receivingPercentage = 0
 	case x < c_config.ssdHighmark:
@@ -416,6 +438,8 @@ func (r *targetCssd) recomputeRP() {
 }
 
 func (r *targetCssd) receiveReplicaData(ev *ReplicaDataEvent) bool {
+	r.addBusyDuration(ev.GetSize(), c_config.linkbps, NetDataBusy)
+
 	toreceive := (c_config.timeShareNumChunks*r.receivingPercentage + 50) / 100
 	if r.numReceiveDelta >= toreceive {
 		r.wqueue.insertEvent(ev)
@@ -442,6 +466,7 @@ func (r *targetCssd) write(dataev *ReplicaDataEvent) {
 	tio.next(putackev, SmethodWait)
 	log("ssd-write-received", tio.String(), atdisk)
 
+	r.addBusyDuration(dataev.GetSize(), r.disk.getbps(), DiskBusy)
 	r.usedKB += int64(dataev.GetSize()) / 1024
 	r.numReceiveDelta++
 }
@@ -551,6 +576,9 @@ func (m *modelC) Configure() {
 	c_config.ssdCapacityMB = 100
 	c_config.ssdLowmark = 40
 	c_config.ssdHighmark = 70
+
+	c_config.ssdHystmark = (c_config.ssdLowmark + c_config.ssdHighmark) / 2
+
 	c_config.hddcmdwin = 8
 	c_config.hddThroughputMBps = 180
 

@@ -393,7 +393,7 @@ type ServerUch struct {
 //
 // (compare with NewServerUchExtraChannels)
 //
-func NewServerUchRegChannels(i int, p *Pipeline, dtype DiskTypeEnum, mbps int) *ServerUch {
+func NewServerUchRegChannels(i int, p *Pipeline, dtype DiskTypeEnum, MBps int) *ServerUch {
 	rbase := NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}
 	srv := &ServerUch{NodeRunnerBase: rbase}
 
@@ -402,17 +402,17 @@ func NewServerUchRegChannels(i int, p *Pipeline, dtype DiskTypeEnum, mbps int) *
 	// initPeerChannels() + initCases()
 	//
 	srv.init(config.numGateways)
-	if mbps == 0 {
-		mbps = configStorage.diskMBps
+	if MBps == 0 {
+		MBps = configStorage.diskMBps
 	}
-	srv.disk = NewDisk(srv, mbps, dtype)
+	srv.disk = NewDisk(srv, MBps, dtype)
 	srv.timeResetStats = Now
 
 	return srv
 }
 
 // (compare with NewServerUchRegChannels)
-func NewServerUchExtraChannels(i int, p *Pipeline, dtype DiskTypeEnum, mbps int) *ServerUch {
+func NewServerUchExtraChannels(i int, p *Pipeline, dtype DiskTypeEnum, MBps int) *ServerUch {
 	rbase := NodeRunnerBase{RunnerBase: RunnerBase{id: i}, strtype: SRV}
 	srv := &ServerUch{NodeRunnerBase: rbase}
 
@@ -422,10 +422,10 @@ func NewServerUchExtraChannels(i int, p *Pipeline, dtype DiskTypeEnum, mbps int)
 	// the caller will init extra channels followed by initCases()
 	//
 	srv.initPeerChannels(config.numGateways)
-	if mbps == 0 {
-		mbps = configStorage.diskMBps
+	if MBps == 0 {
+		MBps = configStorage.diskMBps
 	}
-	srv.disk = NewDisk(srv, mbps, dtype)
+	srv.disk = NewDisk(srv, MBps, dtype)
 	srv.timeResetStats = Now
 
 	return srv
@@ -552,20 +552,20 @@ func (r *ServerUch) GetStats(reset bool) RunnerStats {
 	return s
 }
 
-// link busy time based on the link's full bandwidth
+// link busy time based on the link's full bandwidth (maxbandwidth param)
 // e.g., when a 10GE link is constantly used to send/receive at 5Gpbs,
 // the link's busy percentage will compute as 50%
-func (r *ServerUch) addBusyDuration(sizeb int, bandwidth int64, kind int) {
+func (r *ServerUch) addBusyDuration(sizeb int, maxbandwidth int64, kind int) {
 	switch kind {
 	case NetControlBusy:
-		d := time.Duration(sizeb*8) * time.Second / time.Duration(configNetwork.linkbps)
+		d := time.Duration(sizeb*8) * time.Second / time.Duration(maxbandwidth)
 		atomic.AddInt64(&r.rxbusydatactrl, int64(d))
 	case NetDataBusy:
-		d := time.Duration(sizeb*8) * time.Second / time.Duration(configNetwork.linkbps)
+		d := time.Duration(sizeb*8) * time.Second / time.Duration(maxbandwidth)
 		atomic.AddInt64(&r.rxbusydata, int64(d))
 		atomic.AddInt64(&r.rxbusydatactrl, int64(d))
 	case DiskBusy:
-		d := time.Duration(sizeb*8) * time.Second / time.Duration(configStorage.diskbps)
+		d := time.Duration(sizeb*8) * time.Second / time.Duration(maxbandwidth)
 		atomic.AddInt64(&r.diskbusy, int64(d))
 	}
 }
