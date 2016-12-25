@@ -262,6 +262,14 @@ func (r *gatewayC) MBwriteack(ev EventInterface) error {
 	return nil
 }
 
+func (r *gatewayC) GetStats(reset bool) RunnerStats {
+	s := r.GatewayCommon.GetStats(reset)
+	if reset {
+		log(r.String(), "new-chunks", s["chunk"])
+	}
+	return s
+}
+
 //==================================================================
 //
 // targetCcommon
@@ -304,6 +312,7 @@ func (r *targetCcommon) GetStats(reset bool) RunnerStats {
 	s := r.ServerUch.GetStats(reset)
 	numchunks, _ := r.disk.queueDepth(DqdChunks)
 	s["qdepth"] = int64(numchunks)
+	log(r.String(), "sample-qdepth", numchunks)
 	return s
 }
 

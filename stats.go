@@ -168,7 +168,6 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 		r := allNodes[ij]
 		oneIterRunnerStats[ij] = r.GetStats(true)
 	}
-	var newrxbytes string
 	for n := range mdtors.x {
 		d := mdtors.x[n]
 		newgwy, newsrv := int64(0), int64(0)
@@ -193,9 +192,6 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 				} else if isSrv(ij) {
 					newsrv += val
 					mstats.totalsrv[n] += val
-					if strings.Contains(n, "rxbytes") {
-						newrxbytes += fmt.Sprintf("%d,", val)
-					}
 				}
 			} else if d.kind == StatsKindPercentage {
 				// simply remember the more precise value
@@ -209,45 +205,50 @@ func (mstats *ModelStats) update(elapsed time.Duration) {
 				}
 			}
 		}
-		if len(newrxbytes) > 0 {
-			log(LogV, fmt.Sprintf("new-srv-%s,%s", n, strings.TrimSuffix(newrxbytes, ",")))
-		}
-		// LogV one iteration
-		if newgwy != 0 {
-			if d.kind == StatsKindCount || d.kind == StatsKindByteCount {
-				spgwy := float64(newgwy) * (float64(time.Millisecond) / float64(elapsed))
-				if d.kind == StatsKindByteCount {
-					log(LogV, fmt.Sprintf("new-gwy-%s,%d,total-gwy-%s,%s,%s/s, %s",
-						n, newgwy, n, bytesToKMG(mstats.totalgwy[n]), n, bytesMillisToKMGseconds(spgwy)))
-				} else {
-					log(LogV, fmt.Sprintf("new-gwy-%ss,%d,total-gwy-%ss,%d,%ss/ms, %.0f",
-						n, newgwy, n, mstats.totalgwy[n], n, spgwy))
-				}
-			} else if d.kind == StatsKindSampleCount {
-				avesample := float64(newgwy) / float64(config.numGateways)
-				log(LogV, fmt.Sprintf("new-gwy-average-%s,%.1f", n, avesample))
-			} else if d.kind == StatsKindPercentage {
-				busygwy := float64(newgwy) / float64(config.numGateways)
-				log(LogV, fmt.Sprintf("gwy-%s(%%),%.0f", n, busygwy))
+		mstats.logUpdate(elapsed, n, newgwy, newsrv)
+	}
+}
+
+//
+// LogV sum/avg(all gateways) and sum/avg(all servers) for this current timeStatsIval iteration
+//
+func (mstats *ModelStats) logUpdate(elapsed time.Duration, n string, newgwy int64, newsrv int64) {
+	d := mdtors.x[n]
+	loglevel := LogV
+	if newgwy != 0 {
+		if d.kind == StatsKindCount || d.kind == StatsKindByteCount {
+			spgwy := float64(newgwy) * (float64(time.Millisecond) / float64(elapsed))
+			if d.kind == StatsKindByteCount {
+				log(loglevel, fmt.Sprintf("new-gwy-%s,%d,total-gwy-%s,%s,%s/s, %s",
+					n, newgwy, n, bytesToKMG(mstats.totalgwy[n]), n, bytesMillisToKMGseconds(spgwy)))
+			} else {
+				log(loglevel, fmt.Sprintf("new-gwy-%ss,%d,total-gwy-%ss,%d,%ss/ms, %.0f",
+					n, newgwy, n, mstats.totalgwy[n], n, spgwy))
 			}
+		} else if d.kind == StatsKindSampleCount {
+			avesample := float64(newgwy) / float64(config.numGateways)
+			log(loglevel, fmt.Sprintf("new-gwy-average-%s,%.1f", n, avesample))
+		} else if d.kind == StatsKindPercentage {
+			busygwy := float64(newgwy) / float64(config.numGateways)
+			log(loglevel, fmt.Sprintf("gwy-%s(%%),%.0f", n, busygwy))
 		}
-		if newsrv != 0 {
-			if d.kind == StatsKindCount || d.kind == StatsKindByteCount {
-				spsrv := float64(newsrv) * (float64(time.Millisecond) / float64(elapsed))
-				if d.kind == StatsKindByteCount {
-					log(LogV, fmt.Sprintf("new-srv-%s,%d,total-srv-%s,%s,%s/s, %s",
-						n, newsrv, n, bytesToKMG(mstats.totalsrv[n]), n, bytesMillisToKMGseconds(spsrv)))
-				} else {
-					log(LogV, fmt.Sprintf("new-srv-%ss,%d,total-srv-%ss,%d,%ss/ms, %.0f",
-						n, newsrv, n, mstats.totalsrv[n], n, spsrv))
-				}
-			} else if d.kind == StatsKindSampleCount {
-				avesample := float64(newsrv) / float64(config.numServers)
-				log(LogV, fmt.Sprintf("new-srv-average-%s,%.1f", n, avesample))
-			} else if d.kind == StatsKindPercentage {
-				busysrv := float64(newsrv) / float64(config.numServers)
-				log(LogV, fmt.Sprintf("srv-%s(%%),%.0f", n, busysrv))
+	}
+	if newsrv != 0 {
+		if d.kind == StatsKindCount || d.kind == StatsKindByteCount {
+			spsrv := float64(newsrv) * (float64(time.Millisecond) / float64(elapsed))
+			if d.kind == StatsKindByteCount {
+				log(loglevel, fmt.Sprintf("new-srv-%s,%d,total-srv-%s,%s,%s/s, %s",
+					n, newsrv, n, bytesToKMG(mstats.totalsrv[n]), n, bytesMillisToKMGseconds(spsrv)))
+			} else {
+				log(loglevel, fmt.Sprintf("new-srv-%ss,%d,total-srv-%ss,%d,%ss/ms, %.0f",
+					n, newsrv, n, mstats.totalsrv[n], n, spsrv))
 			}
+		} else if d.kind == StatsKindSampleCount {
+			avesample := float64(newsrv) / float64(config.numServers)
+			log(loglevel, fmt.Sprintf("new-srv-average-%s,%.1f", n, avesample))
+		} else if d.kind == StatsKindPercentage {
+			busysrv := float64(newsrv) / float64(config.numServers)
+			log(loglevel, fmt.Sprintf("srv-%s(%%),%.0f", n, busysrv))
 		}
 	}
 }
